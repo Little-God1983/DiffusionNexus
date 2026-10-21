@@ -28,28 +28,28 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
 1. COMPONENT INVENTORY
 --------------------------------------------------------------------------------
 
-  MIT            Avalonia 11.3.13
+  MIT            Avalonia 11.3.22
   see sect. 3    Avalonia.Angle.Windows.Natives 2.1.25547.20250602
   MIT            Avalonia.BuildServices 11.3.2
-  MIT            Avalonia.Controls.ColorPicker 11.3.13
+  MIT            Avalonia.Controls.ColorPicker 11.3.22
   MIT            Avalonia.Controls.DataGrid 11.3.13
   MIT            Avalonia.Controls.ItemsRepeater 11.1.5
   MIT            Avalonia.Controls.PanAndZoom 11.3.0
-  MIT            Avalonia.Desktop 11.3.13
-  MIT            Avalonia.Diagnostics 11.3.13
-  MIT            Avalonia.Fonts.Inter 11.3.13
-  MIT            Avalonia.FreeDesktop 11.3.13
-  MIT            Avalonia.Native 11.3.13
-  MIT            Avalonia.Remote.Protocol 11.3.13
-  MIT            Avalonia.Skia 11.3.13
-  MIT            Avalonia.Themes.Fluent 11.3.13
-  MIT            Avalonia.Themes.Simple 11.3.13
-  MIT            Avalonia.Win32 11.3.13
-  MIT            Avalonia.X11 11.3.13
+  MIT            Avalonia.Desktop 11.3.22
+  MIT            Avalonia.Diagnostics 11.3.22
+  MIT            Avalonia.Fonts.Inter 11.3.22
+  MIT            Avalonia.FreeDesktop 11.3.22
+  MIT            Avalonia.Native 11.3.22
+  MIT            Avalonia.Remote.Protocol 11.3.22
+  MIT            Avalonia.Skia 11.3.22
+  MIT            Avalonia.Themes.Fluent 11.3.22
+  MIT            Avalonia.Themes.Simple 11.3.22
+  MIT            Avalonia.Win32 11.3.22
+  MIT            Avalonia.X11 11.3.22
   BSD-3-Clause   BitMiracle.LibTiff.NET 2.4.660
   MIT            CommunityToolkit.HighPerformance 8.4.2
   MIT            CommunityToolkit.Mvvm 8.4.2
-  MIT            FFMpegCore 5.4.0
+  MIT            FFMpegCore 5.5.0
   MIT            FFMpegCore.Extensions.Downloader 5.0.0
   MIT            HarfBuzzSharp 8.3.1.1
   MIT            HarfBuzzSharp.NativeAssets.Linux 8.3.1.1
@@ -59,19 +59,19 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   LGPL-2.1-only  HPPH 1.0.0
   LGPL-2.1-only  HPPH.SkiaSharp 1.0.0
   MIT            Humanizer.Core 2.14.1
-  MIT            Instances 3.0.2
+  MIT            Instances 3.1.0
   MIT            JetBrains.Annotations 2025.2.0
-  LGPL-2.1-or-later LibVLCSharp 3.10.0
-  LGPL-2.1-or-later LibVLCSharp.Avalonia 3.10.0
-  MIT            LLamaSharp 0.27.0
-  MIT            LLamaSharp.Backend.Cpu 0.27.0
-  MIT            LLamaSharp.Backend.Cuda12 0.27.0
-  MIT            LLamaSharp.Backend.Cuda12.Linux 0.27.0
-  MIT            LLamaSharp.Backend.Cuda12.Windows 0.27.0
+  LGPL-2.1-or-later LibVLCSharp 3.10.2
+  LGPL-2.1-or-later LibVLCSharp.Avalonia 3.10.2
+  MIT            LLamaSharp 0.30.0
+  MIT            LLamaSharp.Backend.Cpu 0.30.0
+  MIT            LLamaSharp.Backend.Cuda12 0.30.0
+  MIT            LLamaSharp.Backend.Cuda12.Linux 0.30.0
+  MIT            LLamaSharp.Backend.Cuda12.Windows 0.30.0
   MIT            MicroCom.Runtime 0.11.0
   see sect. 3    Microsoft.AI.DirectML 1.15.4
-  MIT            Microsoft.Bcl.AsyncInterfaces 10.0.5
-  MIT            Microsoft.Bcl.Memory 10.0.5
+  MIT            Microsoft.Bcl.AsyncInterfaces 10.0.13
+  MIT            Microsoft.Bcl.Memory 10.0.13
   MIT            Microsoft.Build.Framework 18.0.2
   MIT            Microsoft.CodeAnalysis.Analyzers 3.11.0
   MIT            Microsoft.CodeAnalysis.Common 5.0.0
@@ -79,36 +79,36 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   MIT            Microsoft.CodeAnalysis.CSharp.Workspaces 5.0.0
   MIT            Microsoft.CodeAnalysis.Workspaces.Common 5.0.0
   MIT            Microsoft.CodeAnalysis.Workspaces.MSBuild 5.0.0
-  MIT            Microsoft.Data.Sqlite.Core 10.0.12
-  MIT            Microsoft.EntityFrameworkCore 10.0.12
-  MIT            Microsoft.EntityFrameworkCore.Abstractions 10.0.12
-  MIT            Microsoft.EntityFrameworkCore.Analyzers 10.0.12
-  MIT            Microsoft.EntityFrameworkCore.Design 10.0.10
-  MIT            Microsoft.EntityFrameworkCore.Relational 10.0.12
-  MIT            Microsoft.EntityFrameworkCore.Sqlite 10.0.12
-  MIT            Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.12
-  MIT            Microsoft.Extensions.AI.Abstractions 10.4.1
-  MIT            Microsoft.Extensions.Caching.Abstractions 10.0.12
-  MIT            Microsoft.Extensions.Caching.Memory 10.0.12
-  MIT            Microsoft.Extensions.Configuration 10.0.12
-  MIT            Microsoft.Extensions.Configuration.Abstractions 10.0.12
-  MIT            Microsoft.Extensions.Configuration.Binder 10.0.12
-  MIT            Microsoft.Extensions.DependencyInjection 10.0.12
-  MIT            Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12
-  MIT            Microsoft.Extensions.DependencyModel 10.0.12
-  MIT            Microsoft.Extensions.Diagnostics 10.0.12
-  MIT            Microsoft.Extensions.Diagnostics.Abstractions 10.0.12
-  MIT            Microsoft.Extensions.Http 10.0.12
-  MIT            Microsoft.Extensions.Logging 10.0.12
-  MIT            Microsoft.Extensions.Logging.Abstractions 10.0.12
-  MIT            Microsoft.Extensions.Options 10.0.12
-  MIT            Microsoft.Extensions.Options.ConfigurationExtensions 10.0.12
-  MIT            Microsoft.Extensions.Primitives 10.0.12
+  MIT            Microsoft.Data.Sqlite.Core 10.0.13
+  MIT            Microsoft.EntityFrameworkCore 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Abstractions 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Analyzers 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Design 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Relational 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Sqlite 10.0.13
+  MIT            Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.13
+  MIT            Microsoft.Extensions.AI.Abstractions 10.11.0
+  MIT            Microsoft.Extensions.Caching.Abstractions 10.0.13
+  MIT            Microsoft.Extensions.Caching.Memory 10.0.13
+  MIT            Microsoft.Extensions.Configuration 10.0.13
+  MIT            Microsoft.Extensions.Configuration.Abstractions 10.0.13
+  MIT            Microsoft.Extensions.Configuration.Binder 10.0.13
+  MIT            Microsoft.Extensions.DependencyInjection 10.0.13
+  MIT            Microsoft.Extensions.DependencyInjection.Abstractions 10.0.13
+  MIT            Microsoft.Extensions.DependencyModel 10.0.13
+  MIT            Microsoft.Extensions.Diagnostics 10.0.13
+  MIT            Microsoft.Extensions.Diagnostics.Abstractions 10.0.13
+  MIT            Microsoft.Extensions.Http 10.0.13
+  MIT            Microsoft.Extensions.Logging 10.0.13
+  MIT            Microsoft.Extensions.Logging.Abstractions 10.0.13
+  MIT            Microsoft.Extensions.Options 10.0.13
+  MIT            Microsoft.Extensions.Options.ConfigurationExtensions 10.0.13
+  MIT            Microsoft.Extensions.Primitives 10.0.13
   see sect. 3    Microsoft.ML.OnnxRuntime.DirectML 1.24.4
   see sect. 3    Microsoft.ML.OnnxRuntime.Managed 1.24.4
   MIT            Microsoft.VisualStudio.SolutionPersistence 1.0.52
   MIT            Mono.TextTemplating 3.0.0
-  MIT            Newtonsoft.Json 13.0.3
+  MIT            Newtonsoft.Json 13.0.4
   Apache-2.0     Serilog 4.4.0
   Apache-2.0     Serilog.Sinks.File 7.0.0
   see sect. 3    SixLabors.ImageSharp 3.1.12
@@ -117,10 +117,10 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   MIT            SkiaSharp.NativeAssets.macOS 3.119.4
   MIT            SkiaSharp.NativeAssets.WebAssembly 2.88.9
   MIT            SkiaSharp.NativeAssets.Win32 3.119.4
-  Apache-2.0     SQLitePCLRaw.bundle_e_sqlite3 2.1.12
-  Apache-2.0     SQLitePCLRaw.core 2.1.12
-  Apache-2.0     SQLitePCLRaw.lib.e_sqlite3 2.1.12
-  Apache-2.0     SQLitePCLRaw.provider.e_sqlite3 2.1.12
+  Apache-2.0     SQLitePCLRaw.bundle_e_sqlite3 2.1.14
+  Apache-2.0     SQLitePCLRaw.core 2.1.14
+  Apache-2.0     SQLitePCLRaw.lib.e_sqlite3 2.1.14
+  Apache-2.0     SQLitePCLRaw.provider.e_sqlite3 2.1.14
   MIT            StableDiffusion.NET 6.0.0
   MIT            StableDiffusion.NET.Backend.Cuda12.Windows 6.0.0
   MIT            System.CodeDom 10.0.10
@@ -130,11 +130,11 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   MIT            System.Composition.Hosting 9.0.0
   MIT            System.Composition.Runtime 9.0.0
   MIT            System.Composition.TypedParts 9.0.0
-  MIT            System.Interactive.Async 7.0.0
-  MIT            System.Linq.Async 7.0.0
+  MIT            System.Interactive.Async 7.0.1
+  MIT            System.Linq.Async 7.0.1
   MIT            System.Management 10.0.10
-  MIT            System.Numerics.Tensors 10.0.5
-  MIT            System.Security.Cryptography.ProtectedData 10.0.12
+  MIT            System.Numerics.Tensors 10.0.13
+  MIT            System.Security.Cryptography.ProtectedData 10.0.13
   MIT            Tmds.DBus.Protocol 0.21.3
   LGPL-2.1-or-later VideoLAN.LibVLC.Windows 3.0.23.1
   see sect. 3    WeCantSpell.Hunspell 7.0.1
@@ -150,13 +150,13 @@ Applies to the following components:
       Copyright © Serilog Contributors
   - Serilog.Sinks.File 7.0.0
       Copyright (c) Serilog Contributors
-  - SQLitePCLRaw.bundle_e_sqlite3 2.1.12
+  - SQLitePCLRaw.bundle_e_sqlite3 2.1.14
       Copyright 2014-2024 SourceGear, LLC
-  - SQLitePCLRaw.core 2.1.12
+  - SQLitePCLRaw.core 2.1.14
       Copyright 2014-2024 SourceGear, LLC
-  - SQLitePCLRaw.lib.e_sqlite3 2.1.12
+  - SQLitePCLRaw.lib.e_sqlite3 2.1.14
       Copyright 2014-2024 SourceGear, LLC
-  - SQLitePCLRaw.provider.e_sqlite3 2.1.12
+  - SQLitePCLRaw.provider.e_sqlite3 2.1.14
       Copyright 2014-2024 SourceGear, LLC
 
 
@@ -897,9 +897,9 @@ That's all there is to it!
 ### LGPL-2.1-or-later
 
 Applies to the following components:
-  - LibVLCSharp 3.10.0
+  - LibVLCSharp 3.10.2
       Copyright (c) VideoLAN
-  - LibVLCSharp.Avalonia 3.10.0
+  - LibVLCSharp.Avalonia 3.10.2
       Copyright (c) VideoLAN
   - VideoLAN.LibVLC.Windows 3.0.23.1
       Copyright (c) VideoLAN
@@ -1411,11 +1411,11 @@ That's all there is to it!
 ### MIT
 
 Applies to the following components:
-  - Avalonia 11.3.13
+  - Avalonia 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
   - Avalonia.BuildServices 11.3.2
       Copyright 2023-2025 © The AvaloniaUI Project
-  - Avalonia.Controls.ColorPicker 11.3.13
+  - Avalonia.Controls.ColorPicker 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
   - Avalonia.Controls.DataGrid 11.3.13
       Copyright 2013-2026 © The AvaloniaUI Project
@@ -1423,33 +1423,33 @@ Applies to the following components:
       Copyright 2013-2024 © The AvaloniaUI Project
   - Avalonia.Controls.PanAndZoom 11.3.0
       Copyright © Wiesław Šoltés 2025
-  - Avalonia.Desktop 11.3.13
+  - Avalonia.Desktop 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Diagnostics 11.3.13
+  - Avalonia.Diagnostics 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Fonts.Inter 11.3.13
+  - Avalonia.Fonts.Inter 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.FreeDesktop 11.3.13
+  - Avalonia.FreeDesktop 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Native 11.3.13
+  - Avalonia.Native 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Remote.Protocol 11.3.13
+  - Avalonia.Remote.Protocol 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Skia 11.3.13
+  - Avalonia.Skia 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Themes.Fluent 11.3.13
+  - Avalonia.Themes.Fluent 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Themes.Simple 11.3.13
+  - Avalonia.Themes.Simple 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.Win32 11.3.13
+  - Avalonia.Win32 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
-  - Avalonia.X11 11.3.13
+  - Avalonia.X11 11.3.22
       Copyright 2013-2026 © The AvaloniaUI Project
   - CommunityToolkit.HighPerformance 8.4.2
       (c) .NET Foundation and Contributors. All rights reserved.
   - CommunityToolkit.Mvvm 8.4.2
       (c) .NET Foundation and Contributors. All rights reserved.
-  - FFMpegCore 5.4.0
+  - FFMpegCore 5.5.0
       Copyright (c) Malte Rosenbjerg, Vlad Jerca, Max Bagryantsev
   - FFMpegCore.Extensions.Downloader 5.0.0
       Copyright (c) Kerry Cao, Malte Rosenbjerg
@@ -1465,25 +1465,25 @@ Applies to the following components:
       © Microsoft Corporation. All rights reserved.
   - Humanizer.Core 2.14.1
       Copyright (c) .NET Foundation and Contributors
-  - Instances 3.0.2
+  - Instances 3.1.0
       Rosenbjerg Softworks
   - JetBrains.Annotations 2025.2.0
       Copyright (c) 2016-2025 JetBrains s.r.o.
-  - LLamaSharp 0.27.0
+  - LLamaSharp 0.30.0
       MIT, SciSharp STACK 2026
-  - LLamaSharp.Backend.Cpu 0.27.0
+  - LLamaSharp.Backend.Cpu 0.30.0
       Copyright 2023 The llama.cpp Authors. All rights reserved.
-  - LLamaSharp.Backend.Cuda12 0.27.0
+  - LLamaSharp.Backend.Cuda12 0.30.0
       Copyright 2023 The llama.cpp Authors. All rights reserved.
-  - LLamaSharp.Backend.Cuda12.Linux 0.27.0
+  - LLamaSharp.Backend.Cuda12.Linux 0.30.0
       Copyright 2023 The llama.cpp Authors. All rights reserved.
-  - LLamaSharp.Backend.Cuda12.Windows 0.27.0
+  - LLamaSharp.Backend.Cuda12.Windows 0.30.0
       Copyright 2023 The llama.cpp Authors. All rights reserved.
   - MicroCom.Runtime 0.11.0
       Copyright 2021 © Nikita Tsukanov
-  - Microsoft.Bcl.AsyncInterfaces 10.0.5
+  - Microsoft.Bcl.AsyncInterfaces 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Bcl.Memory 10.0.5
+  - Microsoft.Bcl.Memory 10.0.13
       © Microsoft Corporation. All rights reserved.
   - Microsoft.Build.Framework 18.0.2
       © Microsoft Corporation. All rights reserved.
@@ -1499,61 +1499,61 @@ Applies to the following components:
       © Microsoft Corporation. All rights reserved.
   - Microsoft.CodeAnalysis.Workspaces.MSBuild 5.0.0
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Data.Sqlite.Core 10.0.12
+  - Microsoft.Data.Sqlite.Core 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore 10.0.12
+  - Microsoft.EntityFrameworkCore 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Abstractions 10.0.12
+  - Microsoft.EntityFrameworkCore.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Analyzers 10.0.12
+  - Microsoft.EntityFrameworkCore.Analyzers 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Design 10.0.10
+  - Microsoft.EntityFrameworkCore.Design 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Relational 10.0.12
+  - Microsoft.EntityFrameworkCore.Relational 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Sqlite 10.0.12
+  - Microsoft.EntityFrameworkCore.Sqlite 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.12
+  - Microsoft.EntityFrameworkCore.Sqlite.Core 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.AI.Abstractions 10.4.1
+  - Microsoft.Extensions.AI.Abstractions 10.11.0
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Caching.Abstractions 10.0.12
+  - Microsoft.Extensions.Caching.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Caching.Memory 10.0.12
+  - Microsoft.Extensions.Caching.Memory 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Configuration 10.0.12
+  - Microsoft.Extensions.Configuration 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Configuration.Abstractions 10.0.12
+  - Microsoft.Extensions.Configuration.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Configuration.Binder 10.0.12
+  - Microsoft.Extensions.Configuration.Binder 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.DependencyInjection 10.0.12
+  - Microsoft.Extensions.DependencyInjection 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.DependencyInjection.Abstractions 10.0.12
+  - Microsoft.Extensions.DependencyInjection.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.DependencyModel 10.0.12
+  - Microsoft.Extensions.DependencyModel 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Diagnostics 10.0.12
+  - Microsoft.Extensions.Diagnostics 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Diagnostics.Abstractions 10.0.12
+  - Microsoft.Extensions.Diagnostics.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Http 10.0.12
+  - Microsoft.Extensions.Http 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Logging 10.0.12
+  - Microsoft.Extensions.Logging 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Logging.Abstractions 10.0.12
+  - Microsoft.Extensions.Logging.Abstractions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Options 10.0.12
+  - Microsoft.Extensions.Options 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Options.ConfigurationExtensions 10.0.12
+  - Microsoft.Extensions.Options.ConfigurationExtensions 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - Microsoft.Extensions.Primitives 10.0.12
+  - Microsoft.Extensions.Primitives 10.0.13
       © Microsoft Corporation. All rights reserved.
   - Microsoft.VisualStudio.SolutionPersistence 1.0.52
       © Microsoft Corporation. All rights reserved.
   - Mono.TextTemplating 3.0.0
       Copyright (c) Mikayla Hutchinson
-  - Newtonsoft.Json 13.0.3
+  - Newtonsoft.Json 13.0.4
       Copyright © James Newton-King 2008
   - SkiaSharp 3.119.4
       © Microsoft Corporation. All rights reserved.
@@ -1583,15 +1583,15 @@ Applies to the following components:
       © Microsoft Corporation. All rights reserved.
   - System.Composition.TypedParts 9.0.0
       © Microsoft Corporation. All rights reserved.
-  - System.Interactive.Async 7.0.0
+  - System.Interactive.Async 7.0.1
       Copyright (c) .NET Foundation and Contributors.
-  - System.Linq.Async 7.0.0
+  - System.Linq.Async 7.0.1
       Copyright (c) .NET Foundation and Contributors.
   - System.Management 10.0.10
       © Microsoft Corporation. All rights reserved.
-  - System.Numerics.Tensors 10.0.5
+  - System.Numerics.Tensors 10.0.13
       © Microsoft Corporation. All rights reserved.
-  - System.Security.Cryptography.ProtectedData 10.0.12
+  - System.Security.Cryptography.ProtectedData 10.0.13
       © Microsoft Corporation. All rights reserved.
   - Tmds.DBus.Protocol 0.21.3
       Tom Deseyn
@@ -1610,7 +1610,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 Notice files that ship inside the .NET runtime packs embedded by self-contained
 publishing, and inside any package that carries its own, reproduced verbatim.
 
-### Microsoft.AspNetCore.App.Runtime.win-x64 10.0.12 (runtime pack)
+### Microsoft.AspNetCore.App.Runtime.win-x64 10.0.13 (runtime pack)
 Source: THIRD-PARTY-NOTICES.TXT
 
 .NET Core uses third-party libraries or other resources that may be
@@ -2726,7 +2726,7 @@ THE SOFTWARE.
 
 --------------------------------------------------------------------------------
 
-### Microsoft.NETCore.App.Runtime.win-x64 10.0.12 (runtime pack)
+### Microsoft.NETCore.App.Runtime.win-x64 10.0.13 (runtime pack)
 Source: THIRD-PARTY-NOTICES.TXT
 
 .NET Runtime uses third-party libraries or other resources that may be

@@ -32,7 +32,7 @@
          this project's MIT grant: publish.ps1 embeds the library into the shipped
          single-file exe, so we would be passing on rights we do not hold. Do not
          reintroduce Xabe. -->
-    <PackageReference Include="FFMpegCore" Version="5.4.0" />
+    <PackageReference Include="FFMpegCore" Version="5.5.0" />
     <PackageReference Include="FFMpegCore.Extensions.Downloader" Version="5.0.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
