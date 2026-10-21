@@ -1,7 +1,7 @@
 [
   {
     "id": "Avalonia",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -28,7 +28,7 @@
   },
   {
     "id": "Avalonia.Controls.ColorPicker",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -64,7 +64,7 @@
   },
   {
     "id": "Avalonia.Desktop",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -73,7 +73,7 @@
   },
   {
     "id": "Avalonia.Diagnostics",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -82,7 +82,7 @@
   },
   {
     "id": "Avalonia.Fonts.Inter",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -91,7 +91,7 @@
   },
   {
     "id": "Avalonia.FreeDesktop",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -100,7 +100,7 @@
   },
   {
     "id": "Avalonia.Native",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -109,7 +109,7 @@
   },
   {
     "id": "Avalonia.Remote.Protocol",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -118,7 +118,7 @@
   },
   {
     "id": "Avalonia.Skia",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -127,7 +127,7 @@
   },
   {
     "id": "Avalonia.Themes.Fluent",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -136,7 +136,7 @@
   },
   {
     "id": "Avalonia.Themes.Simple",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -145,7 +145,7 @@
   },
   {
     "id": "Avalonia.Win32",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -154,7 +154,7 @@
   },
   {
     "id": "Avalonia.X11",
-    "version": "11.3.13",
+    "version": "11.3.22",
     "license": "MIT",
     "copyright": "Copyright 2013-2026 © The AvaloniaUI Project",
     "authors": "Avalonia Team",
@@ -190,7 +190,7 @@
   },
   {
     "id": "FFMpegCore",
-    "version": "5.4.0",
+    "version": "5.5.0",
     "license": "MIT",
     "copyright": "",
     "authors": "Malte Rosenbjerg, Vlad Jerca, Max Bagryantsev",
@@ -280,7 +280,7 @@
   },
   {
     "id": "Instances",
-    "version": "3.0.2",
+    "version": "3.1.0",
     "license": "MIT",
     "copyright": "Rosenbjerg Softworks",
     "authors": "Malte Rosenbjerg",
@@ -298,7 +298,7 @@
   },
   {
     "id": "LibVLCSharp",
-    "version": "3.10.0",
+    "version": "3.10.2",
     "license": "LGPL-2.1-or-later",
     "copyright": "",
     "authors": "VideoLAN",
@@ -307,7 +307,7 @@
   },
   {
     "id": "LibVLCSharp.Avalonia",
-    "version": "3.10.0",
+    "version": "3.10.2",
     "license": "LGPL-2.1-or-later",
     "copyright": "",
     "authors": "VideoLAN",
@@ -316,7 +316,7 @@
   },
   {
     "id": "LLamaSharp",
-    "version": "0.27.0",
+    "version": "0.30.0",
     "license": "MIT",
     "copyright": "MIT, SciSharp STACK 2026",
     "authors": "Rinne, Martin Evans, jlsantiago and all the other contributors in https://github.com/SciSharp/LLamaSharp/graphs/contributors.",
@@ -325,7 +325,7 @@
   },
   {
     "id": "LLamaSharp.Backend.Cpu",
-    "version": "0.27.0",
+    "version": "0.30.0",
     "license": "MIT",
     "copyright": "Copyright 2023 The llama.cpp Authors. All rights reserved.",
     "authors": "llama.cpp Authors",
@@ -334,7 +334,7 @@
   },
   {
     "id": "LLamaSharp.Backend.Cuda12",
-    "version": "0.27.0",
+    "version": "0.30.0",
     "license": "MIT",
     "copyright": "Copyright 2023 The llama.cpp Authors. All rights reserved.",
     "authors": "llama.cpp Authors",
@@ -343,7 +343,7 @@
   },
   {
     "id": "LLamaSharp.Backend.Cuda12.Linux",
-    "version": "0.27.0",
+    "version": "0.30.0",
     "license": "MIT",
     "copyright": "Copyright 2023 The llama.cpp Authors. All rights reserved.",
     "authors": "llama.cpp Authors",
@@ -352,7 +352,7 @@
   },
   {
     "id": "LLamaSharp.Backend.Cuda12.Windows",
-    "version": "0.27.0",
+    "version": "0.30.0",
     "license": "MIT",
     "copyright": "Copyright 2023 The llama.cpp Authors. All rights reserved.",
     "authors": "llama.cpp Authors",
@@ -379,7 +379,7 @@
   },
   {
     "id": "Microsoft.Bcl.AsyncInterfaces",
-    "version": "10.0.5",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -388,7 +388,7 @@
   },
   {
     "id": "Microsoft.Bcl.Memory",
-    "version": "10.0.5",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -460,7 +460,7 @@
   },
   {
     "id": "Microsoft.Data.Sqlite.Core",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -469,7 +469,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -478,7 +478,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -487,7 +487,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Analyzers",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -496,7 +496,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Design",
-    "version": "10.0.10",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -505,7 +505,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Relational",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -514,7 +514,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Sqlite",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -523,7 +523,7 @@
   },
   {
     "id": "Microsoft.EntityFrameworkCore.Sqlite.Core",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -532,7 +532,7 @@
   },
   {
     "id": "Microsoft.Extensions.AI.Abstractions",
-    "version": "10.4.1",
+    "version": "10.11.0",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -541,7 +541,7 @@
   },
   {
     "id": "Microsoft.Extensions.Caching.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -550,7 +550,7 @@
   },
   {
     "id": "Microsoft.Extensions.Caching.Memory",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -559,7 +559,7 @@
   },
   {
     "id": "Microsoft.Extensions.Configuration",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -568,7 +568,7 @@
   },
   {
     "id": "Microsoft.Extensions.Configuration.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -577,7 +577,7 @@
   },
   {
     "id": "Microsoft.Extensions.Configuration.Binder",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -586,7 +586,7 @@
   },
   {
     "id": "Microsoft.Extensions.DependencyInjection",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -595,7 +595,7 @@
   },
   {
     "id": "Microsoft.Extensions.DependencyInjection.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -604,7 +604,7 @@
   },
   {
     "id": "Microsoft.Extensions.DependencyModel",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -613,7 +613,7 @@
   },
   {
     "id": "Microsoft.Extensions.Diagnostics",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -622,7 +622,7 @@
   },
   {
     "id": "Microsoft.Extensions.Diagnostics.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -631,7 +631,7 @@
   },
   {
     "id": "Microsoft.Extensions.Http",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -640,7 +640,7 @@
   },
   {
     "id": "Microsoft.Extensions.Logging",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -649,7 +649,7 @@
   },
   {
     "id": "Microsoft.Extensions.Logging.Abstractions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -658,7 +658,7 @@
   },
   {
     "id": "Microsoft.Extensions.Options",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -667,7 +667,7 @@
   },
   {
     "id": "Microsoft.Extensions.Options.ConfigurationExtensions",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -676,7 +676,7 @@
   },
   {
     "id": "Microsoft.Extensions.Primitives",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -721,7 +721,7 @@
   },
   {
     "id": "Newtonsoft.Json",
-    "version": "13.0.3",
+    "version": "13.0.4",
     "license": "MIT",
     "copyright": "Copyright © James Newton-King 2008",
     "authors": "James Newton-King",
@@ -802,7 +802,7 @@
   },
   {
     "id": "SQLitePCLRaw.bundle_e_sqlite3",
-    "version": "2.1.12",
+    "version": "2.1.14",
     "license": "Apache-2.0",
     "copyright": "Copyright 2014-2024 SourceGear, LLC",
     "authors": "Eric Sink",
@@ -811,7 +811,7 @@
   },
   {
     "id": "SQLitePCLRaw.core",
-    "version": "2.1.12",
+    "version": "2.1.14",
     "license": "Apache-2.0",
     "copyright": "Copyright 2014-2024 SourceGear, LLC",
     "authors": "Eric Sink",
@@ -820,7 +820,7 @@
   },
   {
     "id": "SQLitePCLRaw.lib.e_sqlite3",
-    "version": "2.1.12",
+    "version": "2.1.14",
     "license": "Apache-2.0",
     "copyright": "Copyright 2014-2024 SourceGear, LLC",
     "authors": "Eric Sink",
@@ -829,7 +829,7 @@
   },
   {
     "id": "SQLitePCLRaw.provider.e_sqlite3",
-    "version": "2.1.12",
+    "version": "2.1.14",
     "license": "Apache-2.0",
     "copyright": "Copyright 2014-2024 SourceGear, LLC",
     "authors": "Eric Sink",
@@ -919,7 +919,7 @@
   },
   {
     "id": "System.Interactive.Async",
-    "version": "7.0.0",
+    "version": "7.0.1",
     "license": "MIT",
     "copyright": "Copyright (c) .NET Foundation and Contributors.",
     "authors": ".NET Foundation and Contributors",
@@ -928,7 +928,7 @@
   },
   {
     "id": "System.Linq.Async",
-    "version": "7.0.0",
+    "version": "7.0.1",
     "license": "MIT",
     "copyright": "Copyright (c) .NET Foundation and Contributors.",
     "authors": ".NET Foundation and Contributors",
@@ -946,7 +946,7 @@
   },
   {
     "id": "System.Numerics.Tensors",
-    "version": "10.0.5",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -955,7 +955,7 @@
   },
   {
     "id": "System.Security.Cryptography.ProtectedData",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -991,7 +991,7 @@
   },
   {
     "id": "Microsoft.AspNetCore.App.Runtime.win-x64",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "Copyright (c) .NET Foundation and Contributors",
     "authors": "Microsoft",
@@ -1000,7 +1000,7 @@
   },
   {
     "id": "Microsoft.NETCore.App.Runtime.win-x64",
-    "version": "10.0.12",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "Copyright (c) .NET Foundation and Contributors",
     "authors": "Microsoft",
