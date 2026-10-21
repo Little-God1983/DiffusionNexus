@@ -661,22 +661,21 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     }
 
     [Fact]
-    public void ARealOutputsFolderInAOneOffFolder_IsNeverMergedOrDeleted()
+    public void ARealOutputsFolder_IsNeverMergedOrDeleted()
     {
-        // It may hold images an earlier build saved there before the link existed.
-        using var repo = new FakeRepo();
-        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
-        repo.Build($"-InstallDir '{folder}'").ExitCode.Should().Be(0);
-        Directory.Delete(Path.Combine(folder, "outputs"));
+        // It may hold images saved there before the link existed.
+        using var temp = new TempFolder();
+        var folder = Directory.CreateDirectory(Path.Combine(temp.Path, "DiffusionNexus-0.11.0.9")).FullName;
         var image = Path.Combine(Directory.CreateDirectory(Path.Combine(folder, "outputs")).FullName, "canvas-0001.png");
         File.WriteAllText(image, "an image");
 
-        var result = repo.Build($"-InstallDir '{folder}'");
+        var result = Pwsh.RunCommon($"Set-OutputsLink '{folder}' '{Path.Combine(temp.Path, "DiffusionNexus-data")}'");
 
         result.ExitCode.Should().Be(1);
         result.Output.Should().Contain("is a real folder, not a link to your shared outputs");
         File.Exists(image).Should().BeTrue();
     }
+
 
     [Fact]
     public void AFolderThatNeverBecameCurrent_IsRebuiltByTheNextRun()
@@ -745,7 +744,48 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
             "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.11.0.1-oneoff.gabc1234 -p:AssemblyVersion=0.11.0.1 -p:FileVersion=0.11.0.1");
         repo.Calls.Should().NotContain(call => call.StartsWith("shortcut"));
         repo.CurrentLinkTarget.Should().BeNull();
-        new DirectoryInfo(Path.Combine(folder, "outputs")).LinkTarget.Should().Be(Path.Combine(repo.DataDir, "outputs"));
+    }
+
+    [Fact]
+    public void AOneOffBuild_NeverLinksTheSharedOutputs()
+    {
+        // Started once, the app registers <its folder>\outputs in the shared settings. Through a link
+        // into the stable images the Generation Gallery would list each of them twice, and unmerged
+        // code would save into and clean up the stable images.
+        using var repo = new FakeRepo();
+        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
+
+        var result = repo.Build($"-InstallDir '{folder}'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        Directory.Exists(Path.Combine(folder, "outputs")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void AOneOffBuildOfUncommittedChanges_SaysSoInItsVersion()
+    {
+        // Two one-offs of the same commit with different uncommitted edits are different code.
+        using var repo = new FakeRepo();
+        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
+
+        var result = repo.Build($"-InstallDir '{folder}'", before: "$env:FAKE_DIRTY = '1'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.1-oneoff.gabc1234.dirty\"");
+    }
+
+    [Fact]
+    public void AOneOffFolderGivenWithATrailingBackslash_ReachesThePublishWithoutIt()
+    {
+        // Windows PowerShell 5.1 quotes a path with a space as "E:\My Builds\x\", and the backslash
+        // then escapes the closing quote: dotnet reads the rest of the line as part of the path.
+        using var repo = new FakeRepo();
+        var folder = Path.Combine(repo.Outside, "My Builds", "DiffusionNexus-test");
+
+        var result = repo.Build($"-InstallDir '{folder}\\'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.Calls.Should().Contain("output " + folder);
     }
 
     [Fact]
@@ -987,6 +1027,7 @@ public abstract class BuildScriptTestBase
                 $rest = @($args | Select-Object -Skip 2)
                 Write-FakeCall "git $($rest -join ' ')"
                 switch ($rest[0]) {
+                    'status' { if ($env:FAKE_DIRTY) { ' M DiffusionNexus.UI/App.axaml.cs' } }
                     'rev-parse' {
                         if ($rest -contains '--short') { 'abc1234' }
                         elseif ($rest -contains '--is-shallow-repository') { 'false' }
@@ -1007,6 +1048,7 @@ public abstract class BuildScriptTestBase
                 Write-FakeCall ((@("dotnet", $args[0], (Split-Path -Leaf $args[1])) + $versions) -join ' ')
                 if ($args[0] -ne 'publish') { return }
                 $out = $args[[array]::IndexOf($args, '--output') + 1]
+                Write-FakeCall "output $out"
                 if ($env:FAKE_PUBLISH_FAILS) { New-Item -ItemType File -Path (Join-Path $out 'half.dll') -Force | Out-Null; $global:LASTEXITCODE = 1; return }
                 New-Item -ItemType File -Path (Join-Path $out $AppExeName) -Force | Out-Null
             }

@@ -38,8 +38,8 @@
     branch's build. The build is stamped <props version>-oneoff.g<commit> so it cannot be mistaken
     for a stable one. Must be outside the repo and outside the stable root, and must be empty or a
     folder this script published a one-off build into before - a folder holding anything else is
-    refused untouched. It saves into the shared outputs, and gets a copy of the stable version's
-    mappings.xml: a change there stays in the one-off build.
+    refused untouched. It keeps its Canvas outputs in its own folder and gets a copy of the stable
+    version's mappings.xml, so unmerged code never touches the stable versions' data.
 
 .PARAMETER Clean
     With -InstallDir: wipe that folder before publishing. Only ever a folder carrying our install
@@ -77,7 +77,12 @@ $DataDir     = Get-DataDir $InstallRoot
 # Two ways in: no -InstallDir means the next stable version, with everything that entails; an
 # -InstallDir is a one-off build that leaves the stable versions and the Start Menu alone.
 $stable = -not $InstallDir
-if (-not $stable) { $InstallDir = Resolve-FullPath $InstallDir }
+# Without its trailing backslash (a drive root keeps it): Windows PowerShell 5.1 passes a path with a
+# space to dotnet as "E:\My Builds\x\", and that backslash escapes the closing quote.
+if (-not $stable) {
+    $InstallDir = Resolve-FullPath $InstallDir
+    if ($InstallDir.Length -gt 3) { $InstallDir = $InstallDir.TrimEnd('\') }
+}
 
 Write-Host ""
 Write-Host "  DiffusionNexus - Release build" -ForegroundColor White
@@ -111,7 +116,7 @@ if ($stable) {
     if ($Clean) { Write-Warn "-Clean has nothing to do here: a versioned folder always starts empty" }
 }
 else {
-    $version = Get-OneOffVersion -Current $current -Commit (Get-HeadCommit)
+    $version = Get-OneOffVersion -Current $current -Commit (Get-HeadCommit) -Dirty:(Test-WorkingTreeDirty)
     Write-Ok "version $version"
     if ($NoShortcut) { Write-Note "-NoShortcut is implied: a one-off build never writes the Start Menu shortcut" }
 }
@@ -271,8 +276,16 @@ Write-Ok "published to $InstallDir"
 # Before the folder becomes current, so the first start of the new version already sees the
 # shared outputs and mappings.
 Write-Step "Linking the shared data"
-Set-OutputsLink -InstallDir $InstallDir -DataDir $DataDir
-Write-Ok "$OutputsName -> $(Join-Path $DataDir $OutputsName)"
+if ($stable) {
+    Set-OutputsLink -InstallDir $InstallDir -DataDir $DataDir
+    Write-Ok "$OutputsName -> $(Join-Path $DataDir $OutputsName)"
+}
+else {
+    # Started once, the app registers <its folder>\outputs in the shared settings; through a link
+    # the Generation Gallery would list every stable image twice, and unmerged code would save into
+    # and clean up the stable images. A one-off keeps its images in its own folder.
+    Write-Note "$OutputsName stays in this folder: a one-off build never touches the stable images (-Clean deletes them with the rest)"
+}
 switch (Set-MappingsLink -InstallDir $InstallDir -DataDir $DataDir -PreviousDir $previousDir -CopyOnly:(-not $stable)) {
     'linked'   { Write-Ok "$MappingsName shared with $(Join-Path $DataDir $MappingsName)" }
     'one-off copy' { Write-Ok "$MappingsName copied from the stable version - changes in this one-off build stay here" }

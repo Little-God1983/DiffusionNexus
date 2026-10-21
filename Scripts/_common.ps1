@@ -614,10 +614,21 @@ function Get-CommitCount {
 # pass it off as the stable build of the same number. The 'g' in front of the hash is load-bearing:
 # a short hash can be all digits with a leading zero (0123456, about 1 commit in 270), which is not a
 # valid SemVer prerelease identifier, and NuGet's restore then fails with nothing but MSB4181.
+# With -Dirty, '.dirty' goes on the end: two one-offs of one commit with different uncommitted edits
+# are different code.
 function Get-OneOffVersion {
-    param([string]$Current, [string]$Commit)
+    param([string]$Current, [string]$Commit, [switch]$Dirty)
     if (-not $Commit) { return "$Current-oneoff.nogit" }
+    if ($Dirty) { return "$Current-oneoff.g$Commit.dirty" }
     return "$Current-oneoff.g$Commit"
+}
+
+# True when git reports uncommitted or untracked files. A git that cannot answer says nothing, so the
+# stamp only claims what is known.
+function Test-WorkingTreeDirty {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $false }
+    $changes = @(Invoke-Git @('status', '--porcelain') -Quiet)
+    return ($LASTEXITCODE -eq 0) -and ($changes.Count -gt 0)
 }
 
 # Everything that has to be true before a build may go into the stable root. This refuses rather

@@ -88,7 +88,7 @@ to force the wait.
 
 | Parameter | What it does |
 |---|---|
-| `-InstallDir <path>` | A one-off build into a folder of your own, from any branch. Stamped `<props version>-oneoff.g<commit>`. Must be outside the repo and the stable root. No shortcut is written and the current link does not move. It saves into the shared outputs and gets a copy of the stable `mappings.xml`, so unmerged code never writes the file the stable versions read. |
+| `-InstallDir <path>` | A one-off build into a folder of your own, from any branch. Stamped `<props version>-oneoff.g<commit>`. Must be outside the repo and the stable root. No shortcut is written and the current link does not move. It keeps its Canvas outputs in its own folder (`-Clean` deletes them with the rest) and gets a copy of the stable `mappings.xml`, so unmerged code never touches the stable versions' data. |
 | `-Clean` | With `-InstallDir`: wipe that folder first (only if it carries the marker). |
 | `-SkipTests` | Skip the test run (for when you just ran it). |
 | `-NoShortcut` | Leave the Start Menu shortcut as it is. |
