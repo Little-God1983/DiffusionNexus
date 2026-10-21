@@ -113,9 +113,10 @@ public sealed class TolerantDoubleJsonConverter : JsonConverter<double>
 /// (<c>"Hires upscale"</c>, <c>"Denoising strength"</c>, <c>"Clip skip"</c>, ...). Their shape
 /// is whatever the posting tool wrote: one image sends <c>"Hires upscale":"2"</c>, another
 /// <c>"Hires upscale":1.6</c> — and the default string converter throws on the number, which
-/// failed deserialization of the entire model version (#627). Numbers and booleans read as
-/// their JSON text, unchanged (<c>1.6</c> → <c>"1.6"</c>), so nothing is reformatted;
-/// objects and arrays read as null.
+/// failed deserialization of the entire model version (#627). Numbers read as their JSON
+/// text, unchanged (<c>1.6</c> → <c>"1.6"</c>), so nothing is reformatted. Booleans, objects
+/// and arrays read as null: <c>"true"</c> in a prompt or sampler would be a wrong value
+/// presented as a real one.
 /// </summary>
 public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
 {
@@ -127,8 +128,6 @@ public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
                 return reader.GetString();
 
             case JsonTokenType.Number:
-            case JsonTokenType.True:
-            case JsonTokenType.False:
                 return reader.HasValueSequence
                     ? Encoding.UTF8.GetString(reader.ValueSequence.ToArray())
                     : Encoding.UTF8.GetString(reader.ValueSpan);
@@ -148,11 +147,12 @@ public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
 
 /// <summary>
 /// Last line of defence for <see cref="CivitaiModelImage.Meta"/>: an image whose meta this DTO
-/// cannot read (<c>"steps":"20"</c>, <c>"cfgScale":"7"</c>, a resource weight sent as a string,
+/// cannot read (<c>"steps":8.0</c>, <c>"cfgScale":"seven"</c>, resources sent as an object,
 /// meta sent as a raw parameter string, ...) reads as having no meta. The meta is the posting
 /// tool's free-form output, and one such image used to fail the entire model version — files,
-/// hashes and all (#627). <see cref="TolerantMetaStringJsonConverter"/> keeps the known text
-/// fields readable; this catches every shape nobody has seen yet.
+/// hashes and all (#627). <see cref="TolerantMetaStringJsonConverter"/> and the records' number
+/// handling keep the known fields readable, so the prompt survives the common mismatches; this
+/// catches every shape nobody has seen yet.
 /// </summary>
 public sealed class TolerantImageMetaJsonConverter : JsonConverter<CivitaiImageMeta?>
 {

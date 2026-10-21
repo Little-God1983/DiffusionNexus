@@ -16,7 +16,7 @@ namespace DiffusionNexus.Tests.Civitai;
 /// could not be converted to System.String. Path: $.images[2].meta['Hires upscale']" (#627 —
 /// version 3129180 downloaded with no metadata, and Download Metadata could not repair it,
 /// because the by-hash lookup returns the same images). No meta shape may fail the surrounding
-/// payload: numbers and booleans read as their JSON text, objects and arrays as null.
+/// payload: numbers read as their JSON text; booleans, objects and arrays as null.
 /// </summary>
 public class TolerantMetaStringJsonConverterTests
 {
@@ -56,33 +56,61 @@ public class TolerantMetaStringJsonConverterTests
         version.Images![1].Meta!.HiresUpscale.Should().Be("1.6");
     }
 
+    [Fact]
+    public async Task GetModelVersionAsync_ReadsNumbersSentAsStrings()
+    {
+        // A number the posting tool wrote as a string costs nothing: the prompt — the field
+        // every consumer copies — and the number itself both survive.
+        var version = await ReadThroughClientAsync(
+            """{"prompt":"a cat","negativePrompt":"blurry","steps":"20","cfgScale":"7","resources":[{"name":"x","weight":"0.8","hash":12345}]}""");
+
+        var meta = version.Images![1].Meta!;
+        meta.Prompt.Should().Be("a cat");
+        meta.NegativePrompt.Should().Be("blurry");
+        meta.Steps.Should().Be(20);
+        meta.CfgScale.Should().Be(7);
+        meta.Resources![0].Weight.Should().Be(0.8);
+        meta.Resources[0].Hash.Should().Be("12345");
+    }
+
     [Theory]
-    [InlineData("""{"prompt":"b","steps":"20"}""")] // number fields typed by the posting tool
     [InlineData("""{"prompt":"b","steps":8.0}""")] // int? rejects a decimal point
-    [InlineData("""{"prompt":"b","cfgScale":"7"}""")]
-    [InlineData("""{"prompt":"b","resources":[{"name":"x","weight":"0.8"}]}""")]
+    [InlineData("""{"prompt":"b","cfgScale":"seven"}""")]
     [InlineData("""{"prompt":"b","resources":{"name":"x"}}""")]
     [InlineData("\"Steps: 20, Sampler: Euler\"")] // meta as a raw parameter string
     [InlineData("""["a","b"]""")]
-    public void CivitaiModelVersion_SurvivesAnyMetaShapeOnOneImage(string badMetaJson)
+    public async Task GetModelVersionAsync_SurvivesAnyMetaShapeOnOneImage(string badMetaJson)
     {
         // Same rule one level up: a meta this DTO cannot read costs that image its meta,
         // never the version — the other images, and the files the download needs, stay.
-        var json = $$$"""
-            {"id":3129180,"modelId":2513759,"files":[{"name":"f.safetensors"}],"images":[
-             {"url":"https://example/a.jpeg","meta":{"prompt":"a","steps":8}},
-             {"url":"https://example/b.jpeg","meta":{{{badMetaJson}}}},
-             {"url":"https://example/c.jpeg","meta":{"prompt":"c"}}]}
-            """;
+        var version = await ReadThroughClientAsync(badMetaJson);
 
-        var version = JsonSerializer.Deserialize<CivitaiModelVersion>(json);
-
-        version!.Files.Should().ContainSingle();
+        version.Files.Should().ContainSingle();
         version.Images.Should().HaveCount(3);
         version.Images![0].Meta!.Steps.Should().Be(8);
         version.Images[1].Meta.Should().BeNull();
         version.Images[1].Url.Should().Be("https://example/b.jpeg");
         version.Images[2].Meta!.Prompt.Should().Be("c", "the reader must leave the stream on the next image");
+    }
+
+    /// <summary>
+    /// A three-image version whose middle image carries <paramref name="metaJson"/>, read through
+    /// <see cref="CivitaiClient"/> so its own serializer options are the ones under test.
+    /// </summary>
+    private static async Task<CivitaiModelVersion> ReadThroughClientAsync(string metaJson)
+    {
+        var json = $$$"""
+            {"id":3129180,"modelId":2513759,"files":[{"name":"f.safetensors"}],"images":[
+             {"url":"https://example/a.jpeg","meta":{"prompt":"a","steps":8}},
+             {"url":"https://example/b.jpeg","meta":{{{metaJson}}}},
+             {"url":"https://example/c.jpeg","meta":{"prompt":"c"}}]}
+            """;
+        using var client = new CivitaiClient(new HttpClient(new StaticJsonHandler(json)), disposeHttpClient: true);
+
+        var version = await client.GetModelVersionAsync(3129180);
+
+        version.Should().NotBeNull();
+        return version!;
     }
 
     [Theory]
@@ -91,8 +119,6 @@ public class TolerantMetaStringJsonConverterTests
     [InlineData("Denoising strength", "0.15", "0.15")]
     [InlineData("Denoising strength", "1e-1", "1e-1")] // the JSON text, not a reformatted double
     [InlineData("Size", "512", "512")]
-    [InlineData("sampler", "true", "true")]
-    [InlineData("Model", "false", "false")]
     [InlineData("prompt", "7", "7")]
     public void CivitaiImageMeta_ReadsScalarsAsTheirJsonText(string field, string valueJson, string expected)
     {
@@ -105,6 +131,8 @@ public class TolerantMetaStringJsonConverterTests
     [InlineData("Hires upscale", """{"nested":"object"}""")]
     [InlineData("Hires upscaler", """["a","b"]""")]
     [InlineData("negativePrompt", """{"text":"x"}""")]
+    [InlineData("sampler", "true")] // a flag is no sampler: "true" would read as a real one
+    [InlineData("Model", "false")]
     // End-to-end only: System.Text.Json answers a JSON null itself and never calls the
     // converter (HandleNull is false for reference types). The rows above reach its Skip.
     [InlineData("Model hash", "null")]

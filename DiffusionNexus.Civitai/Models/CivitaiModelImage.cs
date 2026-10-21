@@ -75,10 +75,14 @@ public sealed record CivitaiModelImage
 }
 
 /// <summary>
-/// Generation metadata for an image. Every text field reads through
-/// <see cref="TolerantMetaStringJsonConverter"/>: the shapes come from whatever tool posted the
-/// image, and one number where a string was expected used to fail the whole model version (#627).
+/// Generation metadata for an image. The shapes come from whatever tool posted the image, and
+/// one number where a string was expected used to fail the whole model version (#627). So every
+/// text field here and on <see cref="CivitaiImageResource"/> reads through
+/// <see cref="TolerantMetaStringJsonConverter"/>, numbers also read from strings
+/// (<c>"steps":"20"</c>), and anything still unreadable costs only this image its meta
+/// (<see cref="TolerantImageMetaJsonConverter"/>).
 /// </summary>
+[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public sealed record CivitaiImageMeta
 {
     [JsonPropertyName("prompt")]
@@ -142,20 +146,25 @@ public sealed record CivitaiImageMeta
 }
 
 /// <summary>
-/// A resource used in image generation.
+/// A resource used in image generation. Part of the meta, so read as tolerantly — see
+/// <see cref="CivitaiImageMeta"/>.
 /// </summary>
+[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public sealed record CivitaiImageResource
 {
     [JsonPropertyName("name")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Name { get; init; }
 
     [JsonPropertyName("type")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Type { get; init; }
 
     [JsonPropertyName("weight")]
     public double? Weight { get; init; }
 
     [JsonPropertyName("hash")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Hash { get; init; }
 }
 
