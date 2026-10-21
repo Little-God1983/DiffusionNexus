@@ -81,6 +81,77 @@ public sealed class TolerantNullableInt64JsonConverter : JsonConverter<long?>
 }
 
 /// <summary>
+/// Tolerant reader for whole-number generation parameters on gallery image meta, such as
+/// <c>steps</c>. The posting tool decides the shape: <c>20</c>, <c>"20"</c> or — from Python's
+/// <c>json.dumps(20.0)</c> — <c>20.0</c>. Any of those that is a whole number in range reads
+/// as it; anything else (<c>20.5</c>, <c>""</c>, an object) reads as null, so one bad value
+/// costs that field only instead of the image's whole meta (#627).
+/// </summary>
+public sealed class TolerantNullableInt32JsonConverter : JsonConverter<int?>
+{
+    public override int? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Number:
+                if (reader.TryGetInt32(out var value)) return value;
+                return reader.TryGetDouble(out var number) ? WholeOrNull(number) : null;
+
+            case JsonTokenType.String:
+                return double.TryParse(reader.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                    ? WholeOrNull(parsed)
+                    : null;
+
+            default:
+                reader.Skip();
+                return null;
+        }
+    }
+
+    private static int? WholeOrNull(double number)
+        => double.IsInteger(number) && number is >= int.MinValue and <= int.MaxValue ? (int)number : null;
+
+    public override void Write(Utf8JsonWriter writer, int? value, JsonSerializerOptions options)
+    {
+        if (value.HasValue) writer.WriteNumberValue(value.Value);
+        else writer.WriteNullValue();
+    }
+}
+
+/// <summary>
+/// Floating-point companion of <see cref="TolerantNullableInt32JsonConverter"/> for meta
+/// parameters such as <c>cfgScale</c> and a resource's <c>weight</c>: numbers and numeric
+/// strings read as their value, anything else — including <c>"NaN"</c> — as null.
+/// </summary>
+public sealed class TolerantNullableDoubleJsonConverter : JsonConverter<double?>
+{
+    public override double? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.Number:
+                return reader.TryGetDouble(out var value) ? value : null;
+
+            case JsonTokenType.String:
+                return double.TryParse(reader.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                       && double.IsFinite(parsed)
+                    ? parsed
+                    : null;
+
+            default:
+                reader.Skip();
+                return null;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, double? value, JsonSerializerOptions options)
+    {
+        if (value.HasValue) writer.WriteNumberValue(value.Value);
+        else writer.WriteNullValue();
+    }
+}
+
+/// <summary>
 /// Floating-point companion of <see cref="TolerantInt32JsonConverter"/> for
 /// stat fields like <c>rating</c> — same rules, reading null as 0.
 /// </summary>
@@ -147,12 +218,11 @@ public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
 
 /// <summary>
 /// Last line of defence for <see cref="CivitaiModelImage.Meta"/>: an image whose meta this DTO
-/// cannot read (<c>"steps":8.0</c>, <c>"cfgScale":"seven"</c>, resources sent as an object,
-/// meta sent as a raw parameter string, ...) reads as having no meta. The meta is the posting
+/// cannot read (resources sent as an object or as strings, meta sent as a raw parameter
+/// string, ...) reads as having no meta. The meta is the posting
 /// tool's free-form output, and one such image used to fail the entire model version — files,
-/// hashes and all (#627). <see cref="TolerantMetaStringJsonConverter"/> and the records' number
-/// handling keep the known fields readable, so the prompt survives the common mismatches; this
-/// catches every shape nobody has seen yet.
+/// hashes and all (#627). The per-field tolerant converters keep every known field readable,
+/// so the prompt survives a bad value next to it; this catches every shape nobody has seen yet.
 /// </summary>
 public sealed class TolerantImageMetaJsonConverter : JsonConverter<CivitaiImageMeta?>
 {

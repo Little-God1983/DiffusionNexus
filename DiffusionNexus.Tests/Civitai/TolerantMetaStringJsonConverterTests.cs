@@ -74,9 +74,38 @@ public class TolerantMetaStringJsonConverterTests
     }
 
     [Theory]
-    [InlineData("""{"prompt":"b","steps":8.0}""")] // int? rejects a decimal point
-    [InlineData("""{"prompt":"b","cfgScale":"seven"}""")]
+    [InlineData("""{"prompt":"a cat","steps":20.0,"cfgScale":"7 "}""", 20, 7.0)] // Python's json.dumps(20.0)
+    [InlineData("""{"prompt":"a cat","steps":"20.0","cfgScale":7.5}""", 20, 7.5)]
+    [InlineData("""{"prompt":"a cat","steps":20.5,"cfgScale":"seven"}""", null, null)] // unusable: that field only
+    [InlineData("""{"prompt":"a cat","steps":"","cfgScale":{"v":7}}""", null, null)]
+    [InlineData("""{"prompt":"a cat","steps":1e10,"cfgScale":"NaN"}""", null, null)]
+    public async Task GetModelVersionAsync_AnUnusableNumberCostsOnlyThatField(
+        string metaJson, int? expectedSteps, double? expectedCfgScale)
+    {
+        var version = await ReadThroughClientAsync(metaJson);
+
+        var meta = version.Images![1].Meta!;
+        meta.Prompt.Should().Be("a cat");
+        meta.Steps.Should().Be(expectedSteps);
+        meta.CfgScale.Should().Be(expectedCfgScale);
+    }
+
+    [Fact]
+    public async Task GetModelVersionAsync_AnUnusableResourceWeightCostsOnlyThatField()
+    {
+        var version = await ReadThroughClientAsync(
+            """{"prompt":"a cat","resources":[{"name":"x","weight":"0.8:1"},{"name":"y","weight":0.6}]}""");
+
+        var meta = version.Images![1].Meta!;
+        meta.Prompt.Should().Be("a cat");
+        meta.Resources![0].Weight.Should().BeNull();
+        meta.Resources[0].Name.Should().Be("x");
+        meta.Resources[1].Weight.Should().Be(0.6);
+    }
+
+    [Theory]
     [InlineData("""{"prompt":"b","resources":{"name":"x"}}""")]
+    [InlineData("""{"prompt":"b","resources":["lora:foo"]}""")]
     [InlineData("\"Steps: 20, Sampler: Euler\"")] // meta as a raw parameter string
     [InlineData("""["a","b"]""")]
     public async Task GetModelVersionAsync_SurvivesAnyMetaShapeOnOneImage(string badMetaJson)

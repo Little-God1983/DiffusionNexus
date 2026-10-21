@@ -77,12 +77,11 @@ public sealed record CivitaiModelImage
 /// <summary>
 /// Generation metadata for an image. The shapes come from whatever tool posted the image, and
 /// one number where a string was expected used to fail the whole model version (#627). So every
-/// text field here and on <see cref="CivitaiImageResource"/> reads through
-/// <see cref="TolerantMetaStringJsonConverter"/>, numbers also read from strings
-/// (<c>"steps":"20"</c>), and anything still unreadable costs only this image its meta
-/// (<see cref="TolerantImageMetaJsonConverter"/>).
+/// scalar field here and on <see cref="CivitaiImageResource"/> reads through a tolerant converter
+/// (<see cref="TolerantMetaStringJsonConverter"/>, <see cref="TolerantNullableInt32JsonConverter"/>,
+/// <see cref="TolerantNullableDoubleJsonConverter"/>), so a bad value costs that field only, and
+/// anything still unreadable costs only this image its meta (<see cref="TolerantImageMetaJsonConverter"/>).
 /// </summary>
-[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public sealed record CivitaiImageMeta
 {
     [JsonPropertyName("prompt")]
@@ -103,6 +102,7 @@ public sealed record CivitaiImageMeta
     public long? Seed { get; init; }
 
     [JsonPropertyName("steps")]
+    [JsonConverter(typeof(TolerantNullableInt32JsonConverter))]
     public int? Steps { get; init; }
 
     [JsonPropertyName("sampler")]
@@ -110,6 +110,7 @@ public sealed record CivitaiImageMeta
     public string? Sampler { get; init; }
 
     [JsonPropertyName("cfgScale")]
+    [JsonConverter(typeof(TolerantNullableDoubleJsonConverter))]
     public double? CfgScale { get; init; }
 
     [JsonPropertyName("Model")]
@@ -149,7 +150,6 @@ public sealed record CivitaiImageMeta
 /// A resource used in image generation. Part of the meta, so read as tolerantly — see
 /// <see cref="CivitaiImageMeta"/>.
 /// </summary>
-[JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
 public sealed record CivitaiImageResource
 {
     [JsonPropertyName("name")]
@@ -161,6 +161,7 @@ public sealed record CivitaiImageResource
     public string? Type { get; init; }
 
     [JsonPropertyName("weight")]
+    [JsonConverter(typeof(TolerantNullableDoubleJsonConverter))]
     public double? Weight { get; init; }
 
     [JsonPropertyName("hash")]
