@@ -68,6 +68,34 @@ public class SkiaPixelsTests
         }
     }
 
+    [Fact]
+    public void ToGray8_PaddedRows_ReadsEachRowFromItsStride()
+    {
+        // 2x2 RGBA with 4 bytes of zero padding per row (stride 12): row 0 black, row 1 white.
+        // A reader that ignores the stride takes the padding as the first pixel of row 1.
+        const int width = 2, height = 2, stride = 12;
+        var buffer = new byte[stride * height];
+        for (int x = 0; x < width; x++)
+        {
+            buffer[x * 4 + 3] = 255;
+            buffer[stride + x * 4] = buffer[stride + x * 4 + 1] = buffer[stride + x * 4 + 2] = 255;
+            buffer[stride + x * 4 + 3] = 255;
+        }
+        var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
+        var handle = System.Runtime.InteropServices.GCHandle.Alloc(buffer, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            using var padded = new SKBitmap();
+            padded.InstallPixels(info, handle.AddrOfPinnedObject(), stride).Should().BeTrue();
+
+            SkiaPixels.ToGray8(padded).Should().Equal(new byte[] { 0, 0, 255, 255 });
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
     private static SKBitmap CreateCheckerboard(int width, int height)
     {
         var rgba = new byte[width * height * 4];

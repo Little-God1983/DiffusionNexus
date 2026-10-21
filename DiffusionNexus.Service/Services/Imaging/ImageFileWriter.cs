@@ -62,6 +62,19 @@ public static class ImageFileWriter
             ? File.ReadAllBytes(metadataSource)
             : null;
 
+        // Skia decodes one frame of an animation, so the bitmap holds only the first frame;
+        // writing it as the replacement of an animated original would drop every other frame.
+        if (source is not null)
+        {
+            using var sourceStream = new SKMemoryStream(source);
+            using var sourceCodec = SKCodec.Create(sourceStream);
+            if (sourceCodec is { FrameCount: > 1 })
+            {
+                throw new NotSupportedException(
+                    $"{Path.GetFileName(metadataSource)} is animated ({sourceCodec.FrameCount} frames); saving it would keep only the first frame.");
+            }
+        }
+
         byte[] encoded = extension switch
         {
             ".png" => ImageMetadataCarrier.CarryPng(SkiaPixels.Encode(bitmap, SKEncodedImageFormat.Png, 100), source),
@@ -80,18 +93,27 @@ public static class ImageFileWriter
     }
 
     /// <summary>
-    /// Writes <paramref name="bytes"/> to a temporary file beside <paramref name="path"/> and moves
-    /// it over the target, so the target is either the old file or the complete new one.
+    /// Writes <paramref name="bytes"/> to a temporary file beside <paramref name="path"/> and swaps
+    /// it in, so the target is either the old file or the complete new one. A symlinked target is
+    /// resolved first so the real file is updated rather than the link replaced, and an existing
+    /// file is swapped with <see cref="File.Replace(string, string, string?, bool)"/>, which keeps
+    /// its ACLs, attributes and creation date.
     /// </summary>
     private static void ReplaceAtomically(string path, byte[] bytes)
     {
         var fullPath = Path.GetFullPath(path);
+        if (File.Exists(fullPath) && new FileInfo(fullPath).ResolveLinkTarget(returnFinalTarget: true) is { } linkTarget)
+            fullPath = linkTarget.FullName;
+
         var directory = Path.GetDirectoryName(fullPath)!;
         var temp = Path.Combine(directory, $".{Path.GetFileName(fullPath)}.{Guid.NewGuid():N}.tmp");
         try
         {
             File.WriteAllBytes(temp, bytes);
-            File.Move(temp, fullPath, overwrite: true);
+            if (File.Exists(fullPath))
+                File.Replace(temp, fullPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            else
+                File.Move(temp, fullPath);
         }
         catch
         {

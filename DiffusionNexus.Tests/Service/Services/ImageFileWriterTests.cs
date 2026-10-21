@@ -270,6 +270,40 @@ public class ImageFileWriterTests : IDisposable
         File.ReadAllBytes(path).Should().Equal(new byte[] { 7, 7, 7 });
     }
 
+    [Fact]
+    public void Write_WithAnimatedMetadataSource_IsRefusedInsteadOfKeepingOnlyTheFirstFrame()
+    {
+        // Two 1x1 frames. Skia decodes one frame, so writing the result back over an animation
+        // would silently throw every other frame away.
+        var source = Path.Combine(_dir, "anim.gif");
+        File.WriteAllBytes(source, TwoFrameGif());
+        using (var codec = SKCodec.Create(source)) codec.FrameCount.Should().Be(2, "the fixture must be animated");
+        var target = Path.Combine(_dir, "anim-out.png");
+        using var bmp = CreatePattern(1, 1);
+
+        var act = () => ImageFileWriter.Write(bmp, target, metadataSource: source);
+
+        act.Should().Throw<NotSupportedException>().WithMessage("*animated*");
+        File.Exists(target).Should().BeFalse();
+    }
+
+    private static byte[] TwoFrameGif()
+    {
+        byte[] frame =
+        [
+            0x21, 0xF9, 0x04, 0x00, 0x0A, 0x00, 0x00, 0x00,       // graphic control: 100 ms delay
+            0x2C, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, // image descriptor 1x1
+            0x02, 0x02, 0x44, 0x01, 0x00,                         // LZW min size 2, one data block
+        ];
+        return
+        [
+            .. "GIF89a"u8, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, // 1x1, global colour table of 2
+            0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF,                      // red, blue
+            .. frame, .. frame,
+            0x3B,
+        ];
+    }
+
     private static SKEncodedOrigin OriginOf(string path)
     {
         using var codec = SKCodec.Create(path);

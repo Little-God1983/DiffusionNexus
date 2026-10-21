@@ -50,6 +50,31 @@ public partial class ColorFixerImageItem : ObservableObject
     /// <summary>Whether this image has fixable color issues (not just an outlier).</summary>
     public bool IsFixable => HasColorCast || HasBrightnessIssue;
 
+    /// <summary>
+    /// Whether a fixed image can be written back in its own format. GIF cannot (no encoder in the
+    /// image library), so such files are listed but never touched.
+    /// </summary>
+    public bool CanSave => ImageFileWriter.CanWrite(FilePath);
+
+    private string? _fixError;
+
+    /// <summary>
+    /// Why this image cannot be fixed, or why its last fix or preview failed; null when nothing
+    /// went wrong. Shown under the item so a failure is not only in the log.
+    /// </summary>
+    public string? FixError
+    {
+        get => _fixError;
+        set
+        {
+            if (SetProperty(ref _fixError, value))
+                OnPropertyChanged(nameof(HasFixError));
+        }
+    }
+
+    /// <summary>Whether <see cref="FixError"/> has a message to show.</summary>
+    public bool HasFixError => !string.IsNullOrEmpty(_fixError);
+
     /// <summary>Color hex for the score.</summary>
     public string ScoreColor => Score switch
     {
@@ -366,6 +391,11 @@ public partial class ColorFixerViewModel : ObservableObject
                 Detail = src.Detail
             };
 
+            if (!item.CanSave)
+            {
+                item.FixError = $"Can't save {Path.GetExtension(src.FilePath).ToLowerInvariant()} files, so this image is left as it is. Convert it to PNG to fix it.";
+            }
+
             // An image already marked as trash needs no attention
             if (ImageRatingStore.Shared.Get(src.FilePath) == ImageRatingStatus.Rejected)
             {
@@ -387,9 +417,15 @@ public partial class ColorFixerViewModel : ObservableObject
             return;
 
         IsOptimizing = true;
+        var item = _selectedImage;
         try
         {
-            await OptimizeSliderValuesAsync(_selectedImage);
+            await OptimizeSliderValuesAsync(item);
+        }
+        catch (Exception ex)
+        {
+            item.FixError = DescribeFailure("fix", ex);
+            Logger.Error(ex, "Failed to find slider values for {FilePath}", item.FilePath);
         }
         finally
         {
@@ -427,6 +463,10 @@ public partial class ColorFixerViewModel : ObservableObject
             var remaining = Images.Where(i => !i.IsResolved).ToList();
             foreach (var image in remaining)
             {
+                // A format that cannot be written back stays untouched; its FixError says why.
+                if (!image.CanSave)
+                    continue;
+
                 // Skip pure outliers — they need manual review, not color correction
                 if (image.IsOutlier && !image.IsFixable)
                 {
@@ -436,7 +476,18 @@ public partial class ColorFixerViewModel : ObservableObject
                     continue;
                 }
 
-                await OptimizeSliderValuesAsync(image);
+                // One unreadable image must not abort the rest of the batch.
+                try
+                {
+                    await OptimizeSliderValuesAsync(image);
+                }
+                catch (Exception ex)
+                {
+                    image.FixError = DescribeFailure("fix", ex);
+                    Logger.Error(ex, "Failed to prepare the color fix for {FilePath}", image.FilePath);
+                    continue;
+                }
+
                 await ApplyColorFixAsync(image);
             }
         }
@@ -565,6 +616,9 @@ public partial class ColorFixerViewModel : ObservableObject
     /// </summary>
     private async Task ApplyColorFixAsync(ColorFixerImageItem item)
     {
+        if (!item.CanSave)
+            return;
+
         item.IsProcessing = true;
         try
         {
@@ -575,6 +629,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 ImageFileWriter.Write(image, item.FilePath, metadataSource: item.FilePath);
             });
 
+            item.FixError = null;
             item.IsFixed = true;
             FixedCount++;
             OnPropertyChanged(nameof(ProgressText));
@@ -584,6 +639,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            item.FixError = DescribeFailure("fix", ex);
             Logger.Error(ex, "Failed to auto-fix color for {FilePath}", item.FilePath);
         }
         finally
@@ -627,6 +683,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            item.FixError = DescribeFailure("preview", ex);
             Logger.Error(ex, "Failed to generate preview for {FilePath}", item.FilePath);
         }
         finally
@@ -634,6 +691,14 @@ public partial class ColorFixerViewModel : ObservableObject
             item.IsGeneratingPreview = false;
         }
     }
+
+    /// <summary>
+    /// The text shown under an item when its fix or preview failed. A refusal from the writer
+    /// (unsupported or animated format) is already a sentence for the user; anything else gets
+    /// the exception message after a short lead-in.
+    /// </summary>
+    private static string DescribeFailure(string what, Exception ex)
+        => ex is NotSupportedException ? ex.Message : $"Could not {what} this image: {ex.Message}";
 
     /// <summary>
     /// Routes to issue-specific correction algorithms based on the analyzer detail string.

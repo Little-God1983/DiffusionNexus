@@ -153,14 +153,14 @@ internal static class ImageMetadataCarrier
             || Encoding.ASCII.GetString(webp, 0, 4) != "RIFF" || Encoding.ASCII.GetString(webp, 8, 4) != "WEBP")
             return false;
 
-        int p = 12;
+        long p = 12;
         while (p + 8 <= webp.Length)
         {
-            string fourCc = Encoding.ASCII.GetString(webp, p, 4);
+            string fourCc = Encoding.ASCII.GetString(webp, (int)p, 4);
             if (fourCc == "VP8L") return true;
             if (fourCc == "VP8 ") return false;
-            long size = BitConverter.ToUInt32(webp, p + 4);
-            p += 8 + (int)Math.Min(size + (size & 1), int.MaxValue - p - 8);
+            long size = BitConverter.ToUInt32(webp, (int)p + 4);
+            p += 8 + size + (size & 1); // long: a junk size of 0xFFFFFFFF just ends the scan
         }
         return false;
     }

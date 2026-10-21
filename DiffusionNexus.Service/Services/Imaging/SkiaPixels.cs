@@ -108,10 +108,14 @@ public static class SkiaPixels
     {
         EnsureRgba(rgba);
         var pixels = rgba.GetPixelSpan();
-        var gray = new byte[rgba.Width * rgba.Height];
-        for (int i = 0, p = 0; i < gray.Length; i++, p += 4)
+        int width = rgba.Width, height = rgba.Height, stride = rgba.RowBytes;
+        var gray = new byte[width * height];
+        for (int y = 0, i = 0; y < height; y++)
         {
-            gray[i] = Luminance(pixels[p], pixels[p + 1], pixels[p + 2]);
+            for (int x = 0, p = y * stride; x < width; x++, i++, p += 4)
+            {
+                gray[i] = Luminance(pixels[p], pixels[p + 1], pixels[p + 2]);
+            }
         }
         return gray;
     }
@@ -167,9 +171,11 @@ public static class SkiaPixels
     /// </summary>
     public static byte[] Encode(SKBitmap bitmap, SKEncodedImageFormat format, int quality)
     {
-        using var image = SKImage.FromBitmap(bitmap)
-            ?? throw new InvalidOperationException($"Could not wrap a {bitmap.Width}x{bitmap.Height} {bitmap.ColorType} bitmap for encoding.");
-        using var data = image.Encode(format, quality)
+        // Encode straight from the bitmap's pixels. SKImage.FromBitmap copies a mutable bitmap
+        // first, which for an 8192x8192 upscale is another 256 MB just to encode.
+        using var pixmap = bitmap.PeekPixels()
+            ?? throw new InvalidOperationException($"The {bitmap.Width}x{bitmap.Height} bitmap has no pixels to encode.");
+        using var data = pixmap.Encode(format, quality)
             ?? throw new InvalidOperationException($"Encoding a {bitmap.Width}x{bitmap.Height} {bitmap.ColorType} bitmap as {format} produced no data.");
         return data.ToArray();
     }
