@@ -847,7 +847,7 @@
   },
   {
     "id": "System.CodeDom",
-    "version": "10.0.10",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",
@@ -928,7 +928,7 @@
   },
   {
     "id": "System.Management",
-    "version": "10.0.10",
+    "version": "10.0.13",
     "license": "MIT",
     "copyright": "© Microsoft Corporation. All rights reserved.",
     "authors": "Microsoft",

@@ -122,7 +122,7 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   Apache-2.0     SQLitePCLRaw.provider.e_sqlite3 2.1.14
   MIT            StableDiffusion.NET 6.0.0
   MIT            StableDiffusion.NET.Backend.Cuda12.Windows 6.0.0
-  MIT            System.CodeDom 10.0.10
+  MIT            System.CodeDom 10.0.13
   MIT            System.Composition 9.0.0
   MIT            System.Composition.AttributedModel 9.0.0
   MIT            System.Composition.Convention 9.0.0
@@ -131,7 +131,7 @@ Inputs:           DiffusionNexus.UI/obj/project.assets.json  (restore graph, RID
   MIT            System.Composition.TypedParts 9.0.0
   MIT            System.Interactive.Async 7.0.1
   MIT            System.Linq.Async 7.0.1
-  MIT            System.Management 10.0.10
+  MIT            System.Management 10.0.13
   MIT            System.Numerics.Tensors 10.0.13
   MIT            System.Security.Cryptography.ProtectedData 10.0.13
   MIT            Tmds.DBus.Protocol 0.21.3
@@ -1568,7 +1568,7 @@ Applies to the following components:
       Copyright © Darth Affe 2024
   - StableDiffusion.NET.Backend.Cuda12.Windows 6.0.0
       Copyright © Darth Affe 2024
-  - System.CodeDom 10.0.10
+  - System.CodeDom 10.0.13
       © Microsoft Corporation. All rights reserved.
   - System.Composition 9.0.0
       © Microsoft Corporation. All rights reserved.
@@ -1586,7 +1586,7 @@ Applies to the following components:
       Copyright (c) .NET Foundation and Contributors.
   - System.Linq.Async 7.0.1
       Copyright (c) .NET Foundation and Contributors.
-  - System.Management 10.0.10
+  - System.Management 10.0.13
       © Microsoft Corporation. All rights reserved.
   - System.Numerics.Tensors 10.0.13
       © Microsoft Corporation. All rights reserved.
