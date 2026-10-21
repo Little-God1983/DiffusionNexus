@@ -1,10 +1,9 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -182,7 +181,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         progress?.Report(new UpscalingProgress(UpscalingPhase.Preparing, "Loading image...", 0));
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+        using var originalImage = SkiaPixels.FromRgbaBytes(imageData.AsSpan(0, width * height * 4), width, height);
 
         // Step 2: Process through 4x upscaling model using tiles
         progress?.Report(new UpscalingProgress(UpscalingPhase.ProcessingTiles, "Generating AI details...", 5));
@@ -193,42 +192,39 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         var targetWidth = (int)Math.Round(width * targetScale);
         var targetHeight = (int)Math.Round(height * targetScale);
 
-        Image<Rgba32> finalImage;
+        SKBitmap finalImage;
         if (Math.Abs(targetScale - 4.0f) < 0.001f)
         {
             // Target is 4x, no additional resize needed
             progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Finalizing...", 95));
-            finalImage = upscaled4x.Clone();
+            finalImage = upscaled4x.Copy();
         }
         else
         {
-            // Downscale from 4x to target using high-quality Lanczos3
+            // Downscale from 4x to target. Skia has no Lanczos3; SkiaPixels.Sampling is
+            // Catmull-Rom (the same cubic ImageSharp's default resampler used).
             progress?.Report(new UpscalingProgress(
                 UpscalingPhase.ResizingToTarget,
                 $"Resizing to {targetScale:F1}x ({targetWidth}x{targetHeight})...",
                 90));
 
-            finalImage = upscaled4x.Clone(ctx =>
-                ctx.Resize(new ResizeOptions
-                {
-                    Size = new Size(targetWidth, targetHeight),
-                    Sampler = KnownResamplers.Lanczos3,
-                    Mode = ResizeMode.Stretch
-                }));
+            finalImage = SkiaPixels.ResizeTo(upscaled4x, targetWidth, targetHeight);
         }
 
         // Step 4: Encode to PNG
         progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Encoding result...", 98));
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var outputStream = new MemoryStream();
-        finalImage.SaveAsPng(outputStream);
-        finalImage.Dispose();
+        byte[] png;
+        using (finalImage)
+        {
+            png = SkiaPixels.EncodePng(finalImage);
+        }
 
         progress?.Report(new UpscalingProgress(UpscalingPhase.Finalizing, "Complete!", 100));
 
         return ImageUpscalingResult.Succeeded(
-            outputStream.ToArray(),
+            png,
             targetWidth,
             targetHeight);
     }
@@ -236,8 +232,8 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     /// <summary>
     /// Processes the image through the model using overlapping tiles.
     /// </summary>
-    private Image<Rgba32> ProcessTiles(
-        Image<Rgba32> input,
+    private SKBitmap ProcessTiles(
+        SKBitmap input,
         IProgress<UpscalingProgress>? progress,
         CancellationToken cancellationToken)
     {
@@ -255,7 +251,7 @@ public sealed class ImageUpscalingService : IImageUpscalingService
             inputWidth, inputHeight, outputWidth, outputHeight, totalTiles, TilePadding);
 
         // Create output image
-        var output = new Image<Rgba32>(outputWidth, outputHeight);
+        var output = NewRgba(outputWidth, outputHeight);
 
         var tilesProcessed = 0;
 
@@ -308,55 +304,57 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     /// <summary>
     /// Extracts a tile from the input image, padding with edge replication if out of bounds.
     /// </summary>
-    private static Image<Rgba32> ExtractTile(Image<Rgba32> source, int x, int y)
+    private static SKBitmap ExtractTile(SKBitmap source, int x, int y)
     {
-        var tile = new Image<Rgba32>(TileSize, TileSize);
+        var tile = NewRgba(TileSize, TileSize);
 
-        source.ProcessPixelRows(tile, (sourceAccessor, tileAccessor) =>
+        for (var row = 0; row < TileSize; row++)
         {
-            for (var row = 0; row < TileSize; row++)
-            {
-                // Clamp Y to valid source image range (Edge Replication)
-                var srcY = Math.Clamp(y + row, 0, source.Height - 1);
-                var srcRow = sourceAccessor.GetRowSpan(srcY);
-                var dstRow = tileAccessor.GetRowSpan(row);
+            // Clamp Y to valid source image range (Edge Replication)
+            var srcY = Math.Clamp(y + row, 0, source.Height - 1);
+            var srcRow = Row(source, srcY);
+            var dstRow = Row(tile, row);
 
-                for (var col = 0; col < TileSize; col++)
-                {
-                    // Clamp X to valid source image range
-                    var srcX = Math.Clamp(x + col, 0, source.Width - 1);
-                    dstRow[col] = srcRow[srcX];
-                }
+            for (var col = 0; col < TileSize; col++)
+            {
+                // Clamp X to valid source image range
+                var srcX = Math.Clamp(x + col, 0, source.Width - 1);
+                srcRow.Slice(srcX * 4, 4).CopyTo(dstRow.Slice(col * 4, 4));
             }
-        });
+        }
 
         return tile;
     }
+
+    /// <summary>A new unpremultiplied RGBA8888 bitmap, zero-filled like ImageSharp's <c>new Image&lt;Rgba32&gt;</c>.</summary>
+    private static SKBitmap NewRgba(int width, int height)
+        => new(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+
+    /// <summary>The RGBA bytes of row <paramref name="y"/> (4 bytes per pixel, no stride padding).</summary>
+    private static Span<byte> Row(SKBitmap bitmap, int y)
+        => bitmap.GetPixelSpan().Slice(y * bitmap.RowBytes, bitmap.Width * 4);
 
     /// <summary>
     /// Processes a single tile through the ONNX model. Each tile is one
     /// inference inside the host's Run scope, so disposal can interleave
     /// between tiles (yielding a managed failure) but never under one.
     /// </summary>
-    private Image<Rgba32> ProcessSingleTile(Image<Rgba32> tile)
+    private SKBitmap ProcessSingleTile(SKBitmap tile)
     {
         // Create input tensor [1, 3, H, W] normalized to 0-1
         var tensor = new DenseTensor<float>([1, 3, TileSize, TileSize]);
 
-        tile.ProcessPixelRows(accessor =>
+        for (var y = 0; y < TileSize; y++)
         {
-            for (var y = 0; y < TileSize; y++)
+            var row = Row(tile, y);
+            for (var x = 0; x < TileSize; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < TileSize; x++)
-                {
-                    var pixel = row[x];
-                    tensor[0, 0, y, x] = pixel.R / 255.0f;
-                    tensor[0, 1, y, x] = pixel.G / 255.0f;
-                    tensor[0, 2, y, x] = pixel.B / 255.0f;
-                }
+                var p = x * 4;
+                tensor[0, 0, y, x] = row[p] / 255.0f;     // R
+                tensor[0, 1, y, x] = row[p + 1] / 255.0f; // G
+                tensor[0, 2, y, x] = row[p + 2] / 255.0f; // B
             }
-        });
+        }
 
         // Run inference using discovered input name
         var inputs = new List<NamedOnnxValue>
@@ -370,23 +368,21 @@ public sealed class ImageUpscalingService : IImageUpscalingService
 
             // Convert output tensor to image
             var outputSize = TileSize * ScaleFactor;
-            var output = new Image<Rgba32>(outputSize, outputSize);
+            var output = NewRgba(outputSize, outputSize);
             try
             {
-                output.ProcessPixelRows(accessor =>
+                for (var y = 0; y < outputSize; y++)
                 {
-                    for (var y = 0; y < outputSize; y++)
+                    var row = Row(output, y);
+                    for (var x = 0; x < outputSize; x++)
                     {
-                        var row = accessor.GetRowSpan(y);
-                        for (var x = 0; x < outputSize; x++)
-                        {
-                            var r = (byte)Math.Clamp(outputTensor[0, 0, y, x] * 255.0f, 0, 255);
-                            var g = (byte)Math.Clamp(outputTensor[0, 1, y, x] * 255.0f, 0, 255);
-                            var b = (byte)Math.Clamp(outputTensor[0, 2, y, x] * 255.0f, 0, 255);
-                            row[x] = new Rgba32(r, g, b, 255);
-                        }
+                        var p = x * 4;
+                        row[p] = (byte)Math.Clamp(outputTensor[0, 0, y, x] * 255.0f, 0, 255);
+                        row[p + 1] = (byte)Math.Clamp(outputTensor[0, 1, y, x] * 255.0f, 0, 255);
+                        row[p + 2] = (byte)Math.Clamp(outputTensor[0, 2, y, x] * 255.0f, 0, 255);
+                        row[p + 3] = 255;
                     }
-                });
+                }
                 return output;
             }
             catch
@@ -401,8 +397,8 @@ public sealed class ImageUpscalingService : IImageUpscalingService
     /// Copies the valid central region of an upscaled tile to the output image.
     /// </summary>
     private static void CopyTileToOutput(
-        Image<Rgba32> output,
-        Image<Rgba32> tile,
+        SKBitmap output,
+        SKBitmap tile,
         int destX,
         int destY,
         int srcX,
@@ -410,23 +406,20 @@ public sealed class ImageUpscalingService : IImageUpscalingService
         int width,
         int height)
     {
-        output.ProcessPixelRows(tile, (outputAccessor, tileAccessor) =>
+        for (var row = 0; row < height; row++)
         {
-            for (var row = 0; row < height; row++)
-            {
-                var dy = destY + row;
-                if (dy >= output.Height) break; // Clip bottom edge
+            var dy = destY + row;
+            if (dy >= output.Height) break; // Clip bottom edge
 
-                var sy = srcY + row;
-                var outputRow = outputAccessor.GetRowSpan(dy);
-                var tileRow = tileAccessor.GetRowSpan(sy);
+            var sy = srcY + row;
+            var outputRow = Row(output, dy);
+            var tileRow = Row(tile, sy);
 
-                var copyWidth = Math.Min(width, output.Width - destX); // Clip right edge
-                if (copyWidth <= 0) continue;
+            var copyWidth = Math.Min(width, output.Width - destX); // Clip right edge
+            if (copyWidth <= 0) continue;
 
-                tileRow.Slice(srcX, copyWidth).CopyTo(outputRow.Slice(destX, copyWidth));
-            }
-        });
+            tileRow.Slice(srcX * 4, copyWidth * 4).CopyTo(outputRow.Slice(destX * 4, copyWidth * 4));
+        }
     }
 
     /// <inheritdoc />
