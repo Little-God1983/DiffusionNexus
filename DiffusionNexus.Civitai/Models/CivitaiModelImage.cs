@@ -45,8 +45,12 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("hash")]
     public string? Hash { get; init; }
 
-    /// <summary>Generation parameters for the image.</summary>
+    /// <summary>
+    /// Generation parameters for the image. Null when absent — or unreadable: see
+    /// <see cref="TolerantImageMetaJsonConverter"/>.
+    /// </summary>
     [JsonPropertyName("meta")]
+    [JsonConverter(typeof(TolerantImageMetaJsonConverter))]
     public CivitaiImageMeta? Meta { get; init; }
 
     /// <summary>When the image was created.</summary>
@@ -71,14 +75,21 @@ public sealed record CivitaiModelImage
 }
 
 /// <summary>
-/// Generation metadata for an image.
+/// Generation metadata for an image. The shapes come from whatever tool posted the image, and
+/// one number where a string was expected used to fail the whole model version (#627). So every
+/// scalar field here and on <see cref="CivitaiImageResource"/> reads through a tolerant converter
+/// (<see cref="TolerantMetaStringJsonConverter"/>, <see cref="TolerantNullableInt32JsonConverter"/>,
+/// <see cref="TolerantNullableDoubleJsonConverter"/>), so a bad value costs that field only, and
+/// anything still unreadable costs only this image its meta (<see cref="TolerantImageMetaJsonConverter"/>).
 /// </summary>
 public sealed record CivitaiImageMeta
 {
     [JsonPropertyName("prompt")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Prompt { get; init; }
 
     [JsonPropertyName("negativePrompt")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? NegativePrompt { get; init; }
 
     /// <summary>
@@ -91,33 +102,43 @@ public sealed record CivitaiImageMeta
     public long? Seed { get; init; }
 
     [JsonPropertyName("steps")]
+    [JsonConverter(typeof(TolerantNullableInt32JsonConverter))]
     public int? Steps { get; init; }
 
     [JsonPropertyName("sampler")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Sampler { get; init; }
 
     [JsonPropertyName("cfgScale")]
+    [JsonConverter(typeof(TolerantNullableDoubleJsonConverter))]
     public double? CfgScale { get; init; }
 
     [JsonPropertyName("Model")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Model { get; init; }
 
     [JsonPropertyName("Model hash")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? ModelHash { get; init; }
 
     [JsonPropertyName("Size")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Size { get; init; }
 
     [JsonPropertyName("Clip skip")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? ClipSkip { get; init; }
 
     [JsonPropertyName("Hires upscale")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? HiresUpscale { get; init; }
 
     [JsonPropertyName("Hires upscaler")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? HiresUpscaler { get; init; }
 
     [JsonPropertyName("Denoising strength")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? DenoisingStrength { get; init; }
 
     /// <summary>Resources used in generation.</summary>
@@ -126,20 +147,25 @@ public sealed record CivitaiImageMeta
 }
 
 /// <summary>
-/// A resource used in image generation.
+/// A resource used in image generation. Part of the meta, so read as tolerantly — see
+/// <see cref="CivitaiImageMeta"/>.
 /// </summary>
 public sealed record CivitaiImageResource
 {
     [JsonPropertyName("name")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Name { get; init; }
 
     [JsonPropertyName("type")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Type { get; init; }
 
     [JsonPropertyName("weight")]
+    [JsonConverter(typeof(TolerantNullableDoubleJsonConverter))]
     public double? Weight { get; init; }
 
     [JsonPropertyName("hash")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Hash { get; init; }
 }
 
