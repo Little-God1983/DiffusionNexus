@@ -1065,13 +1065,36 @@ public partial class ImageEditorViewModel : ObservableObject
     /// do instead; anything else gets <paramref name="otherwise"/>.
     /// </summary>
     internal static string DescribeSaveFailure(string path, string otherwise = "Failed to save image.")
-        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase)
+        => IsGif(path)
             ? "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead."
             : otherwise;
+
+    /// <summary>
+    /// Why Save cannot write over <paramref name="path"/>, or null. Asked before the confirmation, so
+    /// nobody confirms a save that cannot happen: a GIF has no encoder, and an animation would be
+    /// replaced by the one frame the editor shows.
+    /// </summary>
+    internal static string? DescribeOverwriteRefusal(string path)
+    {
+        if (IsGif(path))
+            return DescribeSaveFailure(path);
+        return SkiaPixels.IsAnimated(path)
+            ? $"Can't save over {Path.GetFileName(path)}: it is animated, and saving would keep only the first frame. Use Save / Export > Export as PNG instead."
+            : null;
+    }
+
+    private static bool IsGif(string path)
+        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase);
 
     private async Task ExecuteSaveOverwriteAsync()
     {
         if (SaveImageFunc is null) return;
+
+        if (CurrentImagePath is not null && DescribeOverwriteRefusal(CurrentImagePath) is { } refusal)
+        {
+            StatusMessage = refusal;
+            return;
+        }
 
         if (SaveOverwriteConfirmRequested is not null)
         {
@@ -1099,6 +1122,13 @@ public partial class ImageEditorViewModel : ObservableObject
     private async Task ExecuteExportAsync()
     {
         if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
+
+        // The export keeps the original's format, and a GIF cannot be written: say so before the picker.
+        if (IsGif(CurrentImagePath))
+        {
+            StatusMessage = DescribeSaveFailure(CurrentImagePath);
+            return;
+        }
 
         var extension = Path.GetExtension(CurrentImagePath);
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);

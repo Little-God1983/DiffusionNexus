@@ -634,6 +634,51 @@ public class ImageCropperServiceTests : IDisposable
         Directory.GetFiles(folder).Should().ContainSingle();
     }
 
+    [Fact]
+    public async Task WhenCroppingAnAnimatedWebpIntoATargetFolderThenTheOutputIsACroppedStill()
+    {
+        // The original stays as it is, so a still of the first frame is a fine result here
+        // (single-image mode crops through a temporary target folder too).
+        var sourceFolder = Path.Combine(_testDirectory, "AnimatedWebpSource");
+        var targetFolder = Path.Combine(_testDirectory, "AnimatedWebpTarget");
+        Directory.CreateDirectory(sourceFolder);
+        var path = Path.Combine(sourceFolder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(Path.Combine(targetFolder, "wide.webp"));
+        codec!.FrameCount.Should().BeLessThan(2, "the output is a still (Skia counts 0 frames for one)");
+        codec.Info.Width.Should().Be(codec.Info.Height);
+        File.ReadAllBytes(path).Should().Equal(webp);
+    }
+
+    [Fact]
+    public async Task WhenCroppingAJpegWithExifOrientationThenTheOutputIsShownInTheBucketItWasCroppedTo()
+    {
+        // The crop is chosen on the stored, unrotated pixels. Carrying Orientation=6 over would
+        // show the 4:3 result as 3:4.
+        var sourceFolder = Path.Combine(_testDirectory, "OrientedSource");
+        var targetFolder = Path.Combine(_testDirectory, "OrientedTarget");
+        Directory.CreateDirectory(sourceFolder);
+        var path = Path.Combine(sourceFolder, "phone.jpg");
+        using (var bitmap = new SkiaSharp.SKBitmap(200, 100))
+        {
+            bitmap.Erase(SkiaSharp.SKColors.SteelBlue);
+            using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+            File.WriteAllBytes(path, TestImageFiles.InsertExifOrientation(data.ToArray(), orientation: 6));
+        }
+        using (var check = SkiaSharp.SKCodec.Create(path)) check!.EncodedOrigin.Should().Be(SkiaSharp.SKEncodedOrigin.RightTop);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(Path.Combine(targetFolder, "phone.jpg"));
+        codec!.EncodedOrigin.Should().Be(SkiaSharp.SKEncodedOrigin.TopLeft);
+    }
+
     private static void WriteBmp(string path, int width, int height)
     {
         using var bitmap = new SkiaSharp.SKBitmap(width, height);

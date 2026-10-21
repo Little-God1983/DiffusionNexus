@@ -4,7 +4,7 @@ namespace DiffusionNexus.Tests.Helpers;
 
 /// <summary>
 /// Image files SkiaSharp can read but not write, built byte by byte for tests that need them
-/// on disk: a GIF and an animated WebP.
+/// on disk: a GIF, an animated WebP and a JPEG EXIF orientation tag.
 /// </summary>
 public static class TestImageFiles
 {
@@ -66,6 +66,23 @@ public static class TestImageFiles
         file.AddRange(BitConverter.GetBytes(body.Count));
         file.AddRange(body);
         return file.ToArray();
+    }
+
+    /// <summary>Inserts an APP1 Exif segment holding only IFD0/Orientation right after the SOI marker.</summary>
+    public static byte[] InsertExifOrientation(byte[] jpeg, short orientation)
+    {
+        byte[] tiff =
+        [
+            (byte)'I', (byte)'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // little-endian TIFF header, IFD0 at 8
+            0x01, 0x00,                                               // one entry
+            0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00,           // tag 0x0112 Orientation, SHORT, count 1
+            (byte)orientation, 0x00, 0x00, 0x00,                      // value
+            0x00, 0x00, 0x00, 0x00,                                   // no next IFD
+        ];
+        var payload = "Exif\0\0"u8.ToArray().Concat(tiff).ToArray();
+        int length = payload.Length + 2;
+        var segment = new byte[] { 0xFF, 0xE1, (byte)(length >> 8), (byte)length }.Concat(payload);
+        return jpeg.Take(2).Concat(segment).Concat(jpeg.Skip(2)).ToArray();
     }
 
     /// <summary>The complete VP8L chunk (header, payload, padding) of a lossless WebP still.</summary>
