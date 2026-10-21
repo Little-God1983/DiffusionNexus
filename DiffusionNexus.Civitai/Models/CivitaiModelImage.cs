@@ -71,14 +71,18 @@ public sealed record CivitaiModelImage
 }
 
 /// <summary>
-/// Generation metadata for an image.
+/// Generation metadata for an image. Every text field reads through
+/// <see cref="TolerantMetaStringJsonConverter"/>: the shapes come from whatever tool posted the
+/// image, and one number where a string was expected used to fail the whole model version (#627).
 /// </summary>
 public sealed record CivitaiImageMeta
 {
     [JsonPropertyName("prompt")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Prompt { get; init; }
 
     [JsonPropertyName("negativePrompt")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? NegativePrompt { get; init; }
 
     /// <summary>
@@ -94,30 +98,38 @@ public sealed record CivitaiImageMeta
     public int? Steps { get; init; }
 
     [JsonPropertyName("sampler")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Sampler { get; init; }
 
     [JsonPropertyName("cfgScale")]
     public double? CfgScale { get; init; }
 
     [JsonPropertyName("Model")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Model { get; init; }
 
     [JsonPropertyName("Model hash")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? ModelHash { get; init; }
 
     [JsonPropertyName("Size")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? Size { get; init; }
 
     [JsonPropertyName("Clip skip")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? ClipSkip { get; init; }
 
     [JsonPropertyName("Hires upscale")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? HiresUpscale { get; init; }
 
     [JsonPropertyName("Hires upscaler")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? HiresUpscaler { get; init; }
 
     [JsonPropertyName("Denoising strength")]
+    [JsonConverter(typeof(TolerantMetaStringJsonConverter))]
     public string? DenoisingStrength { get; init; }
 
     /// <summary>Resources used in generation.</summary>

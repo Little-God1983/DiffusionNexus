@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -104,4 +106,42 @@ public sealed class TolerantDoubleJsonConverter : JsonConverter<double>
 
     public override void Write(Utf8JsonWriter writer, double value, JsonSerializerOptions options)
         => writer.WriteNumberValue(value);
+}
+
+/// <summary>
+/// Tolerant reader for the free-text generation parameters on <c>meta</c> of gallery images
+/// (<c>"Hires upscale"</c>, <c>"Denoising strength"</c>, <c>"Clip skip"</c>, ...). Their shape
+/// is whatever the posting tool wrote: one image sends <c>"Hires upscale":"2"</c>, another
+/// <c>"Hires upscale":1.6</c> — and the default string converter throws on the number, which
+/// failed deserialization of the entire model version (#627). Numbers and booleans read as
+/// their JSON text, unchanged (<c>1.6</c> → <c>"1.6"</c>), so nothing is reformatted;
+/// objects and arrays read as null.
+/// </summary>
+public sealed class TolerantMetaStringJsonConverter : JsonConverter<string?>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        switch (reader.TokenType)
+        {
+            case JsonTokenType.String:
+                return reader.GetString();
+
+            case JsonTokenType.Number:
+            case JsonTokenType.True:
+            case JsonTokenType.False:
+                return reader.HasValueSequence
+                    ? Encoding.UTF8.GetString(reader.ValueSequence.ToArray())
+                    : Encoding.UTF8.GetString(reader.ValueSpan);
+
+            default:
+                reader.Skip();
+                return null;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+    {
+        if (value is null) writer.WriteNullValue();
+        else writer.WriteStringValue(value);
+    }
 }
