@@ -172,6 +172,36 @@ public sealed class CivitaiLinkLookupTests
         await act.Should().ThrowAsync<HttpRequestException>();
     }
 
+    /// <summary>
+    /// Review round 2: with no card, a lone "could not check whether 5 is also a version" note read as
+    /// if a model had been found. The status must say the model half came back empty.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_NoModel_AndTheVersionCheckFailing_SaysBoth()
+    {
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var result = await Resolve("5");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("no model with ID 5").And.Contain("version");
+        result.Message.Should().NotContain("also");
+    }
+
+    /// <summary>Review round 2: an archived match must not swallow the note that the other check failed.</summary>
+    [Fact]
+    public async Task BareNumber_ArchivedModel_KeepsTheFailedVersionCheckNote()
+    {
+        HasModel(Model(5, 6) with { Mode = CivitaiModelMode.Archived });
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var result = await Resolve("5");
+
+        result.Message.Should().Contain("no longer available").And.Contain("version ID");
+    }
+
     /// <summary>Review finding: the version was found; the empty result is its model's fault, not the version's.</summary>
     [Fact]
     public async Task VersionWhoseModelIsGone_BlamesTheModel()

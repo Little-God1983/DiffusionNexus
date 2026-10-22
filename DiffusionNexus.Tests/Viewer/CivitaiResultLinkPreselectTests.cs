@@ -47,6 +47,39 @@ public sealed class CivitaiResultLinkPreselectTests
         card.IsSelected.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Review round 2: link cards appear before the first installed-library scan finishes (that scan
+    /// gating the grid was a past regression). When it lands, an untouched card's pre-tick is redone
+    /// so a version that turns out installed is unticked after all.
+    /// </summary>
+    [Fact]
+    public void LateInstalledIndex_RedoesAnUntouchedPretick()
+    {
+        var card = Card(30, 20, 10);
+        card.ApplyInstalledIndex(CivitaiInstalledIndex.Empty);
+        card.PreselectForLink(20, "Version ID 20");
+
+        card.ApplyInstalledIndex(new CivitaiInstalledIndex([20], []));
+        card.ReapplyLinkPreselectIfUntouched();
+
+        card.Versions.Should().OnlyContain(v => !v.IsSelected);
+        card.IsSelected.Should().BeFalse();
+    }
+
+    [Fact]
+    public void LateInstalledIndex_LeavesTheUsersOwnTicksAlone()
+    {
+        var card = Card(30, 20, 10);
+        card.ApplyInstalledIndex(CivitaiInstalledIndex.Empty);
+        card.PreselectForLink(20, "Version ID 20");
+        card.Versions.Single(v => v.Version.Id == 10).IsSelected = true; // the user ticks another
+
+        card.ApplyInstalledIndex(new CivitaiInstalledIndex([20], []));
+        card.ReapplyLinkPreselectIfUntouched();
+
+        card.Versions.Where(v => v.IsSelected).Select(v => v.Version.Id).Should().BeEquivalentTo([20, 10]);
+    }
+
     [Fact]
     public void ModelLink_TicksTheLatest()
     {

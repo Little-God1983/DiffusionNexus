@@ -71,7 +71,7 @@ public sealed class CivitaiLinkLookup
         }
 
         var message = unavailable.Count > 0
-            ? $"\"{unavailable[0].Model.Name}\" is no longer available on Civitai (archived or taken down)."
+            ? string.Join(" ", notes.Prepend($"\"{unavailable[0].Model.Name}\" is no longer available on Civitai (archived or taken down)."))
             : notes.Count > 0
                 ? string.Join(" ", notes)
                 : query.IsBareId
@@ -121,13 +121,17 @@ public sealed class CivitaiLinkLookup
         {
             ExceptionDispatchInfo.Capture(modelError).Throw();
         }
+        // One half failed: say what the other half found too, so a lone failure note can't read as
+        // if something had been found.
         if (modelError is not null)
         {
-            notes.Add($"Could not check whether {id} is also a model ID ({modelError.Message}).");
+            if (asVersion is null) notes.Add($"Civitai has no version with ID {id}.");
+            notes.Add($"Could not check whether {id} is a model ID ({modelError.Message}).");
         }
         if (versionError is not null)
         {
-            notes.Add($"Could not check whether {id} is also a version ID ({versionError.Message}).");
+            if (asModel is null) notes.Add($"Civitai has no model with ID {id}.");
+            notes.Add($"Could not check whether {id} is a version ID ({versionError.Message}).");
         }
 
         var matches = new List<CivitaiLinkMatch>();

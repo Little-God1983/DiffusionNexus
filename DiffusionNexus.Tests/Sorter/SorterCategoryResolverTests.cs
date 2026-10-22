@@ -76,7 +76,7 @@ public class SorterCategoryResolverTests
     [Fact]
     public void InferFolderNameIsTheDownloaderContractNullWhenUnresolved()
     {
-        // This is what CivitaiResultViewModel/DownloadLoraDialogViewModel now call, and
+        // This is what CivitaiResultViewModel now calls, and
         // DownloadDestinationViewModel.BuildTargetDirectory omits the segment for null.
         SorterCategoryResolver.InferFolderName(new[] { "anime", "photorealistic" }).Should().BeNull();
         SorterCategoryResolver.InferFolderName(new[] { "style" }).Should().Be("Style");

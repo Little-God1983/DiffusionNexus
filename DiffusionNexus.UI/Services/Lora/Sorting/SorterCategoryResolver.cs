@@ -7,7 +7,7 @@ namespace DiffusionNexus.UI.Services.Lora.Sorting;
 /// The single category-inference helper for the whole app (spec §3): an explicit user
 /// override wins, otherwise the first tag that names a <see cref="CivitaiCategory"/>
 /// (spaces→underscores, case-insensitive) is used. The Civitai download pipeline
-/// (<c>CivitaiResultViewModel</c>, <c>DownloadLoraDialogViewModel</c>) delegates here
+/// (<c>CivitaiResultViewModel</c>) delegates here
 /// via <see cref="InferFolderName"/>, so a sorted library and freshly downloaded files
 /// cannot drift into different folders.
 /// </summary>

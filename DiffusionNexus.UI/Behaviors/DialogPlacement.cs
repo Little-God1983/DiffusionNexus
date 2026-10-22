@@ -39,6 +39,7 @@ public static class DialogPlacement
 
         var recentre = window.WindowStartupLocation == WindowStartupLocation.CenterOwner;
         var memory = new PlacementMemory();
+        var ownMaxHeight = window.MaxHeight; // what the dialog's XAML asked for, before any cap
 
         void Place()
         {
@@ -53,8 +54,11 @@ public static class DialogPlacement
             var chrome = Math.Max(0, frame.Height - window.ClientSize.Height);
 
             var maxClient = MaxClientHeight(screen.WorkingArea, scale, chrome);
-            // When the cap shrinks the window, the resize that follows places it again.
-            if (window.MaxHeight > maxClient) window.MaxHeight = maxClient;
+            // Recomputed from the dialog's own MaxHeight on every placement, so the cap also relaxes
+            // when the dialog sits on a taller screen than before. When it shrinks the window, the
+            // resize that follows places it again.
+            var cap = Math.Min(ownMaxHeight, maxClient);
+            if (window.MaxHeight != cap) window.MaxHeight = cap;
 
             var ownerScale = owner.DesktopScaling;
             var ownerFrame = owner.FrameSize ?? owner.ClientSize;

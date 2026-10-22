@@ -325,7 +325,7 @@
       <ScrollViewer Grid.Row="0">
         <StackPanel Margin="12">
           <!-- Link / ID lookup notice (issue #630): the filters do not apply to these results. -->
-          <Border IsVisible="{Binding IsLinkLookup}"
+          <Border IsVisible="{Binding LinkLookupNotice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                   Background="#1A0EA5E9"
                   BorderBrush="#550EA5E9"
                   BorderThickness="1"

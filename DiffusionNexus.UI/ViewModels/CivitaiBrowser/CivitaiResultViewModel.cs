@@ -249,6 +249,8 @@ public partial class CivitaiResultViewModel : ObservableObject
     public void PreselectForLink(int? versionId, string matchLabel, bool selectCard = true)
     {
         LinkMatchLabel = matchLabel;
+        _linkVersionId = versionId;
+        _linkSelectCard = selectCard;
         var target = (versionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
                      ?? Versions.FirstOrDefault();
         foreach (var v in Versions)
@@ -257,7 +259,29 @@ public partial class CivitaiResultViewModel : ObservableObject
         }
         IsSelected = selectCard && HasSelectedVersions;
         NotifyVersionSummaryChanged();
+        _linkPreselection = CaptureSelection();
     }
+
+    /// <summary>
+    /// Redoes <see cref="PreselectForLink"/> after a newer installed snapshot was applied — the
+    /// browser shows link cards without waiting for the first library scan — but only while the
+    /// card's ticks are still exactly what the pre-tick set: anything the user ticked or unticked
+    /// since is theirs and stays.
+    /// </summary>
+    public void ReapplyLinkPreselectIfUntouched()
+    {
+        if (_linkPreselection is null || LinkMatchLabel is null) return;
+        if (CaptureSelection() != _linkPreselection) return;
+        PreselectForLink(_linkVersionId, LinkMatchLabel, _linkSelectCard);
+    }
+
+    private int? _linkVersionId;
+    private bool _linkSelectCard;
+    private string? _linkPreselection;
+
+    /// <summary>The card tick plus the ticked version ids, as one comparable value.</summary>
+    private string CaptureSelection() =>
+        $"{IsSelected}|{string.Join(",", Versions.Where(v => v.IsSelected).Select(v => v.Version.Id))}";
 
     [RelayCommand]
     private void SelectAllVersions()

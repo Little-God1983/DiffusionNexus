@@ -3,7 +3,7 @@ using DiffusionNexus.Civitai.Models;
 namespace DiffusionNexus.UI.Services.Download;
 
 /// <summary>Which UI surface asked for a download — log/telemetry context only.</summary>
-public enum DownloadTrigger { Dialog, BrowseQueue, DetailPanel, Waitlist, Pipeline }
+public enum DownloadTrigger { BrowseQueue, DetailPanel, Waitlist, Pipeline }
 
 /// <summary>One request to put a Civitai model version on disk.</summary>
 public sealed record DownloadRequest(

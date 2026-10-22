@@ -259,11 +259,29 @@ public sealed class CivitaiBrowserResultVisibilityFilterTests
         vm.ShowPaywalled = false;
         vm.Results.Should().OnlyContain(r => r.IsHidden, "the toggles hide all three during a name search");
 
-        vm.LinkLookupNotice = "link";
+        vm.IsLinkLookup = true;
         ApplyFilters(vm);
 
-        vm.IsLinkLookup.Should().BeTrue();
         vm.Results.Should().OnlyContain(r => !r.IsHidden);
         vm.HasHiddenResults.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review round 2: the filters are ignored for link results, so changing one must not re-run the
+    /// lookup — that rebuilt the cards and threw away the versions the user had ticked.
+    /// </summary>
+    [Fact]
+    public async Task LinkLookup_ChangingAFilter_KeepsTheCardsAndTheirTicks()
+    {
+        var vm = CreateVm();
+        vm.IsLinkLookup = true;
+        var card = Card(1);
+        vm.Results.Add(card);
+
+        vm.SelectedSort = CivitaiModelSort.HighestRated;
+        vm.SelectedPeriod = CivitaiPeriod.Month;
+        await Task.Delay(700); // past the 400 ms search debounce
+
+        vm.Results.Should().ContainSingle().Which.Should().BeSameAs(card);
     }
 }

@@ -308,42 +308,46 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             return;
         }
 
-        SetLinkMode(false);
+        IsLinkLookup = false;
+        LinkLookupNotice = null;
         await LoadNextAsync(ct);
     }
 
     /// <summary>
     /// True while the results come from a pasted link or id instead of a name search (issue #630).
-    /// Every filter is ignored then — the API filters are never sent, and the Show toggles hide
-    /// nothing, or "hide installed" would hide the very model the user pasted to check.
+    /// Every filter is ignored then — the API filters are never sent, the Show toggles hide
+    /// nothing (or "hide installed" would hide the very model the user pasted to check), and a
+    /// filter change does not re-run the lookup, which would rebuild the cards and drop the
+    /// user's version ticks.
     /// </summary>
-    public bool IsLinkLookup => LinkLookupNotice is not null;
-
-    /// <summary>Banner above link/id results; null during a name search.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsLinkLookup))]
+    private bool _isLinkLookup;
+
+    /// <summary>Banner above link/id results; null during a name search and when a lookup shows nothing.</summary>
+    [ObservableProperty]
     private string? _linkLookupNotice;
 
     private const string LinkLookupNoticeText =
         "Showing the model from your link or ID. Filters are ignored. Clear the search box to go back to your filtered search.";
 
-    private void SetLinkMode(bool on) => LinkLookupNotice = on ? LinkLookupNoticeText : null;
-
     /// <summary>
     /// Resolves a pasted link or bare id into ordinary result cards — version rows, installed
-    /// badges and the queue buttons all work as they do for a name search. Waits for a pending
-    /// installed-library refresh first: the pre-tick leaves installed versions unticked, and on
-    /// the first visit the snapshot is still loading in parallel with this search.
+    /// badges and the queue buttons all work as they do for a name search. The cards appear as
+    /// soon as Civitai answers; on the first visit the installed-library scan may still be running
+    /// (gating the grid on it was the "browser opens empty" regression), so when it lands the
+    /// pre-tick is redone on every card the user has not touched yet.
     /// </summary>
     private async Task LoadLinkAsync(CivitaiLinkQuery link, CancellationToken ct)
     {
-        SetLinkMode(true);
+        IsLinkLookup = true;
+        LinkLookupNotice = null;
         // SearchAsync dropped the cursor; a name search announces that at the end of its fetch,
         // this path has no pages at all, so say it now or the previous search's "Load more" stays.
         OnPropertyChanged(nameof(HasMore));
         ApplyClientSideFilters(); // nothing on screen yet, but reset the hidden counters
         if (_civitaiClient is null)
         {
+            IsBusy = false;
             StatusMessage = "Civitai client is not available.";
             _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Link lookup skipped — ICivitaiClient is null in this DI scope.");
             return;
@@ -357,7 +361,6 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
             var apiKey = await GetApiKeyAsync();
             var result = await new CivitaiLinkLookup(_civitaiClient, _logger).ResolveAsync(link, apiKey, ct);
-            await _installedRefresh;
             if (ct.IsCancellationRequested) return;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
@@ -376,12 +379,30 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             });
             if (ct.IsCancellationRequested) return;
 
+            LinkLookupNotice = Results.Count > 0 ? LinkLookupNoticeText : null;
             ApplyClientSideFilters();
             OnSelectionChanged();
             StatusMessage = result.Message;
             _logger?.Info(LogCategory.Network, "CivitaiBrowser",
                 $"Link lookup complete: {Results.Count} card(s), {Results.Sum(r => r.Versions.Count(v => v.IsSelected))} version(s) pre-ticked, " +
                 $"{Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} already installed ({sw.ElapsedMilliseconds} ms)");
+
+            if (Results.Count > 0 && !_installedRefresh.IsCompleted)
+            {
+                IsBusy = false; // the cards are usable; the scan only refines their ticks
+                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                    "Link lookup: installed-library scan still running — the pre-ticks are re-checked when it lands.");
+                await _installedRefresh;
+                if (ct.IsCancellationRequested) return;
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (ct.IsCancellationRequested) return;
+                    foreach (var r in Results) r.ReapplyLinkPreselectIfUntouched();
+                });
+                OnSelectionChanged();
+                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                    $"Link lookup: pre-ticks re-checked against the installed library ({Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} installed, {sw.ElapsedMilliseconds} ms).");
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -399,7 +420,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            // A superseded lookup leaves IsBusy to the search that cancelled it (see LoadNextAsync).
+            if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }
 
@@ -941,6 +963,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMore));
         OnPropertyChanged(nameof(CanReset));
         if (_suppressFilterChangeSearch) return;
+        if (IsLinkLookup) return; // link results ignore the filters; re-running would drop the user's ticks
         _ = DebouncedSearchAsync();
     }
     // All four Show-flyout toggles are client-side filters (the API call always
@@ -1003,6 +1026,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         if (_civitaiClient is null)
         {
+            IsBusy = false;
             StatusMessage = "Civitai client is not available.";
             _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Search skipped — ICivitaiClient is null in this DI scope.");
             return;
@@ -1096,6 +1120,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 && lastQuery is not null)
             {
                 await RunTagFallbackAsync(lastQuery, apiKey, existingIds, ct);
+                // The fallback swallows its own cancellation; a superseded search must not go on to
+                // re-sort and re-status the results of the search (or link lookup) that replaced it.
+                if (ct.IsCancellationRequested) return;
             }
 
             // The REST API silently ignores sort= whenever query= is present — pages come
@@ -1133,7 +1160,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            // Only a newer SearchAsync cancels this token, and it sets IsBusy for its own fetch;
+            // clearing it here would mark that one idle while it is still running.
+            if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }
 
@@ -1325,7 +1354,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(CanReset));
         if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
             RebuildFlyoutBaseModels();
-        _ = SearchAsync();
+        if (!IsLinkLookup) _ = SearchAsync();
     }
 
     /// <summary>
@@ -1494,7 +1523,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
             RebuildFlyoutBaseModels();
 
-        if (_initialized) _ = SearchAsync();
+        if (_initialized && !IsLinkLookup) _ = SearchAsync();
     }
 
     private void ApplyClientSideFilters()
