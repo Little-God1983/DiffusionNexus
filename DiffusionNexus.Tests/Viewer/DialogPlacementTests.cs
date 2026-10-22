@@ -44,6 +44,24 @@ public sealed class DialogPlacementTests
         pulledUp.Should().Be(new PixelPoint(-2300, 1290 - 900));
     }
 
+    /// <summary>
+    /// Review finding: the "user moved it" signal lasted one placement — after the clamp recorded the
+    /// new spot, the next content change re-centred the dialog the user had dragged aside.
+    /// </summary>
+    [Fact]
+    public void DialogTheUserMoved_IsNeverRecentredAgain()
+    {
+        var memory = new DialogPlacement.PlacementMemory();
+        memory.ShouldCentre(new PixelPoint(100, 100)).Should().BeTrue("nothing placed yet");
+        memory.Placed(new PixelPoint(100, 100));
+        memory.ShouldCentre(new PixelPoint(100, 100)).Should().BeTrue("still where we put it");
+
+        memory.ShouldCentre(new PixelPoint(300, 50)).Should().BeFalse("the user dragged it");
+        memory.Placed(new PixelPoint(300, 50));
+
+        memory.ShouldCentre(new PixelPoint(300, 50)).Should().BeFalse("a second expansion must not snap it back");
+    }
+
     [Fact]
     public void MaxClientHeight_LeavesRoomForTheTitleBar()
     {

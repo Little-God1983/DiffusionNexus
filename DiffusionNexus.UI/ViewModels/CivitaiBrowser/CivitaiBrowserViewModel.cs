@@ -364,10 +364,13 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             {
                 // Same late-cancellation re-check as LoadNextAsync's dispatch.
                 if (ct.IsCancellationRequested) return;
+                // Two cards from one bare number are two different models: tick each one's version
+                // but select neither, so one "Add selection to queue" click can't take both.
+                var selectCards = result.Matches.Count == 1;
                 foreach (var match in result.Matches)
                 {
                     var card = CreateResultCard(match.Model);
-                    card.PreselectForLink(match.VersionId, match.MatchLabel);
+                    card.PreselectForLink(match.VersionId, match.MatchLabel, selectCards);
                     Results.Add(card);
                 }
             });

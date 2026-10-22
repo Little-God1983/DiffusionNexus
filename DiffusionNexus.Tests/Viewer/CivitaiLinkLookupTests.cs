@@ -113,6 +113,77 @@ public sealed class CivitaiLinkLookupTests
         result.Matches[0].VersionId.Should().BeNull();
     }
 
+    /// <summary>
+    /// Review finding: the version endpoint knows a version the model listing does not (unpublished,
+    /// hidden). The card must not claim "Version ID N" while the latest is what gets ticked.
+    /// </summary>
+    [Fact]
+    public async Task VersionTheModelDoesNotList_IsNotClaimed_AndTheUserIsTold()
+    {
+        HasVersion(456, modelId: 77);
+        HasModel(Model(77, 600, 500));
+
+        var result = await Resolve("https://civitai.com/models?modelVersionId=456");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().BeNull();
+        result.Matches[0].MatchLabel.Should().NotContain("Version ID 456");
+        result.Message.Should().Contain("456").And.Contain("latest");
+    }
+
+    [Fact]
+    public async Task ModelLinkWithAVersionTheModelDoesNotList_TellsTheUser()
+    {
+        HasModel(Model(10, 11, 12));
+
+        var result = await Resolve("https://civitai.com/models/10?modelVersionId=999");
+
+        result.Message.Should().Contain("999").And.Contain("latest");
+    }
+
+    /// <summary>
+    /// Review finding: a bare id runs two requests; one failing (429 / 5xx) must not throw away the
+    /// card the other one found.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_OneRequestFailing_StillShowsWhatTheOtherFound()
+    {
+        HasModel(Model(2815542, 3175491));
+        _client.Setup(c => c.GetModelVersionAsync(2815542, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests));
+
+        var result = await Resolve("2815542");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].Model.Id.Should().Be(2815542);
+        result.Message.Should().Contain("version");
+    }
+
+    [Fact]
+    public async Task BareNumber_BothRequestsFailing_Throws()
+    {
+        _client.Setup(c => c.GetModelAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("down"));
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("down"));
+
+        var act = () => Resolve("5");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    /// <summary>Review finding: the version was found; the empty result is its model's fault, not the version's.</summary>
+    [Fact]
+    public async Task VersionWhoseModelIsGone_BlamesTheModel()
+    {
+        HasVersion(456, modelId: 77);
+
+        var result = await Resolve("https://civitai.com/models?modelVersionId=456");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("model 77");
+    }
+
     [Fact]
     public async Task ArchivedModel_IsNotShown_AndSaysWhy()
     {

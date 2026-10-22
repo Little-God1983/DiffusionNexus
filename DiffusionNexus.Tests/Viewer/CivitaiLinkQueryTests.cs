@@ -42,6 +42,21 @@ public sealed class CivitaiLinkQueryTests
         q.VersionId.Should().Be(3175491);
     }
 
+    /// <summary>
+    /// Review finding: a "copy download link" URL carries the VERSION id under <c>/api/download/models/</c>;
+    /// the page-link regex read it as a model id and showed an unrelated model.
+    /// </summary>
+    [Theory]
+    [InlineData("https://civitai.com/api/download/models/3175491?type=Model&format=SafeTensor")]
+    [InlineData("https://civitai.com/api/v1/model-versions/3175491")]
+    public void DownloadAndApiVersionLinks_YieldTheVersionId(string text)
+    {
+        CivitaiLinkQuery.TryParse(text, out var q).Should().BeTrue();
+
+        q!.ModelId.Should().BeNull();
+        q.VersionId.Should().Be(3175491);
+    }
+
     [Fact]
     public void CivitaiLinkWithoutIds_IsALinkThatNamesNoModel()
     {

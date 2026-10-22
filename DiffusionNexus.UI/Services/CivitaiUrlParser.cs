@@ -20,9 +20,20 @@ public static class CivitaiUrlParser
             return false;
         }
 
-        var modelMatch = Regex.Match(url, @"/models/(\d+)", RegexOptions.IgnoreCase);
-        if (modelMatch.Success && int.TryParse(modelMatch.Groups[1].Value, out var mId))
-            modelId = mId;
+        // A "copy download link" (/api/download/models/N) and the API's /model-versions/N carry a
+        // VERSION id; /models/N below would otherwise read the download link's id as a model id.
+        var versionPathMatch = Regex.Match(url, @"/(?:api/download/models|model-versions)/(\d+)", RegexOptions.IgnoreCase);
+        if (versionPathMatch.Success)
+        {
+            if (int.TryParse(versionPathMatch.Groups[1].Value, out var pathVersionId))
+                versionId = pathVersionId;
+        }
+        else
+        {
+            var modelMatch = Regex.Match(url, @"/models/(\d+)", RegexOptions.IgnoreCase);
+            if (modelMatch.Success && int.TryParse(modelMatch.Groups[1].Value, out var mId))
+                modelId = mId;
+        }
 
         var versionMatch = Regex.Match(url, @"[?&]modelVersionId=(\d+)", RegexOptions.IgnoreCase);
         if (versionMatch.Success && int.TryParse(versionMatch.Groups[1].Value, out var vId))

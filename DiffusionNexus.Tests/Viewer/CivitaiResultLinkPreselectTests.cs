@@ -31,6 +31,22 @@ public sealed class CivitaiResultLinkPreselectTests
         card.LinkMatchLabel.Should().Be("Version ID 20");
     }
 
+    /// <summary>
+    /// Review finding: a bare number matching a model AND a version of another model yields two
+    /// cards; selecting both made one "Add selection to queue" click download an unrelated model.
+    /// </summary>
+    [Fact]
+    public void OneOfSeveralCards_TicksItsVersion_ButLeavesTheCardUnselected()
+    {
+        var card = Card(30, 20, 10);
+        card.ApplyInstalledIndex(CivitaiInstalledIndex.Empty);
+
+        card.PreselectForLink(20, "Version ID 20", selectCard: false);
+
+        card.Versions.Where(v => v.IsSelected).Select(v => v.Version.Id).Should().Equal(20);
+        card.IsSelected.Should().BeFalse();
+    }
+
     [Fact]
     public void ModelLink_TicksTheLatest()
     {

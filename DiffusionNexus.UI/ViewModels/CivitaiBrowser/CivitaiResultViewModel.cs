@@ -241,10 +241,12 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// <summary>
     /// Selection for a card a link or id produced (issue #630): tick the version the link named,
     /// or the latest, unless it is already installed — the user can still tick it to download it
-    /// again. The card itself is selected whenever a version is ticked, so "Add selection to
-    /// queue" takes it in one click. Call after <see cref="ApplyInstalledIndex"/>.
+    /// again. With <paramref name="selectCard"/> the card itself is selected whenever a version is
+    /// ticked, so "Add selection to queue" takes it in one click; the browser passes false when a
+    /// bare number yielded several cards, or that one click would download unrelated models.
+    /// Call after <see cref="ApplyInstalledIndex"/>.
     /// </summary>
-    public void PreselectForLink(int? versionId, string matchLabel)
+    public void PreselectForLink(int? versionId, string matchLabel, bool selectCard = true)
     {
         LinkMatchLabel = matchLabel;
         var target = (versionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
@@ -253,7 +255,7 @@ public partial class CivitaiResultViewModel : ObservableObject
         {
             v.IsSelected = ReferenceEquals(v, target) && !v.IsInstalled;
         }
-        IsSelected = HasSelectedVersions;
+        IsSelected = selectCard && HasSelectedVersions;
         NotifyVersionSummaryChanged();
     }
 

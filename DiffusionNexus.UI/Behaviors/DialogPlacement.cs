@@ -38,12 +38,14 @@ public static class DialogPlacement
         if (!window.SizeToContent.HasFlag(SizeToContent.Height)) return;
 
         var recentre = window.WindowStartupLocation == WindowStartupLocation.CenterOwner;
-        PixelPoint? lastPlaced = null;
+        var memory = new PlacementMemory();
 
         void Place()
         {
             if (!window.IsVisible || !owner.IsVisible) return;
-            var screen = window.Screens.ScreenFromWindow(owner) ?? window.Screens.ScreenFromWindow(window);
+            // The screen the dialog is on, not the owner's: a dialog dragged to another monitor is
+            // kept there, and its working area and DesktopScaling then belong to the same screen.
+            var screen = window.Screens.ScreenFromWindow(window) ?? window.Screens.ScreenFromWindow(owner);
             if (screen is null) return;
 
             var scale = window.DesktopScaling;
@@ -54,9 +56,6 @@ public static class DialogPlacement
             // When the cap shrinks the window, the resize that follows places it again.
             if (window.MaxHeight > maxClient) window.MaxHeight = maxClient;
 
-            // Re-centre only while the window is where we last put it: a dialog the user dragged
-            // aside keeps its spot and is merely kept on screen.
-            var userMoved = lastPlaced is { } placed && placed != window.Position;
             var ownerScale = owner.DesktopScaling;
             var ownerFrame = owner.FrameSize ?? owner.ClientSize;
             var ownerBounds = new PixelRect(owner.Position, PixelSize.FromSize(ownerFrame, ownerScale));
@@ -65,11 +64,11 @@ public static class DialogPlacement
                 ownerBounds,
                 PixelSize.FromSize(frame, scale),
                 screen.WorkingArea,
-                centreOnOwner: recentre && !userMoved,
+                centreOnOwner: recentre && memory.ShouldCentre(window.Position),
                 current: window.Position);
 
             if (target != window.Position) window.Position = target;
-            lastPlaced = target;
+            memory.Placed(target);
         }
 
         void OnResized(object? sender, WindowResizedEventArgs e)
@@ -89,6 +88,25 @@ public static class DialogPlacement
         window.Resized += OnResized;
         window.Closed += OnClosed;
         Dispatcher.UIThread.Post(Place, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Whether a dialog may still be re-centred: only while it sits where this behaviour last put
+    /// it. Once the user has dragged it away it is never re-centred again for the rest of its life —
+    /// remembering only the last spot would forget the drag after the next placement.
+    /// </summary>
+    internal sealed class PlacementMemory
+    {
+        private PixelPoint? _lastPlaced;
+        private bool _userMoved;
+
+        public bool ShouldCentre(PixelPoint current)
+        {
+            if (_lastPlaced is { } placed && placed != current) _userMoved = true;
+            return !_userMoved;
+        }
+
+        public void Placed(PixelPoint position) => _lastPlaced = position;
     }
 
     /// <summary>
