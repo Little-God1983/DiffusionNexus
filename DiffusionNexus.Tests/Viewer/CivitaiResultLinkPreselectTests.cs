@@ -60,7 +60,7 @@ public sealed class CivitaiResultLinkPreselectTests
         card.PreselectForLink(20, "Version ID 20");
 
         card.ApplyInstalledIndex(new CivitaiInstalledIndex([20], []));
-        card.ReapplyLinkPreselectIfUntouched();
+        card.ReapplyLinkPreselectIfUntouched().Should().BeTrue("the redo unticked the installed version");
 
         card.Versions.Should().OnlyContain(v => !v.IsSelected);
         card.IsSelected.Should().BeFalse();
@@ -75,7 +75,7 @@ public sealed class CivitaiResultLinkPreselectTests
         card.Versions.Single(v => v.Version.Id == 10).IsSelected = true; // the user ticks another
 
         card.ApplyInstalledIndex(new CivitaiInstalledIndex([20], []));
-        card.ReapplyLinkPreselectIfUntouched();
+        card.ReapplyLinkPreselectIfUntouched().Should().BeFalse();
 
         card.Versions.Where(v => v.IsSelected).Select(v => v.Version.Id).Should().BeEquivalentTo([20, 10]);
     }

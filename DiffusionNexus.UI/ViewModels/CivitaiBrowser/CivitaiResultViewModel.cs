@@ -266,13 +266,15 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// Redoes <see cref="PreselectForLink"/> after a newer installed snapshot was applied — the
     /// browser shows link cards without waiting for the first library scan — but only while the
     /// card's ticks are still exactly what the pre-tick set: anything the user ticked or unticked
-    /// since is theirs and stays.
+    /// since is theirs and stays. Returns true when the redo changed the ticks (for the log).
     /// </summary>
-    public void ReapplyLinkPreselectIfUntouched()
+    public bool ReapplyLinkPreselectIfUntouched()
     {
-        if (_linkPreselection is null || LinkMatchLabel is null) return;
-        if (CaptureSelection() != _linkPreselection) return;
+        if (_linkPreselection is null || LinkMatchLabel is null) return false;
+        var before = CaptureSelection();
+        if (before != _linkPreselection) return false;
         PreselectForLink(_linkVersionId, LinkMatchLabel, _linkSelectCard);
+        return CaptureSelection() != before;
     }
 
     /// <summary>

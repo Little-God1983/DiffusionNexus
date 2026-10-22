@@ -77,7 +77,7 @@ public sealed class CivitaiLinkLookup
         }
 
         var message = unavailable.Count > 0
-            ? string.Join(" ", notes.Prepend(UnavailableNote(unavailable[0])))
+            ? string.Join(" ", unavailable.Select(UnavailableNote).Concat(notes))
             : notes.Count > 0
                 ? string.Join(" ", notes)
                 : query.IsBareId
@@ -89,8 +89,9 @@ public sealed class CivitaiLinkLookup
         return new([], message);
     }
 
-    private static string UnavailableNote(CivitaiLinkMatch match) =>
-        $"Model {match.Model.Id} \"{match.Model.Name}\" is no longer available on Civitai (archived or taken down).";
+    private static string UnavailableNote(CivitaiLinkMatch match) => match.Model.Mode is not null
+        ? $"Model {match.Model.Id} \"{match.Model.Name}\" is no longer available on Civitai (archived or taken down)."
+        : $"Model {match.Model.Id} \"{match.Model.Name}\" has no published versions on Civitai, so there is nothing to download.";
 
     /// <summary>Same rule the name search applies to its pages (archived/taken-down and empty models are dropped).</summary>
     private static bool IsShowable(CivitaiModel model) => model.Mode is null && model.ModelVersions.Count > 0;
@@ -145,9 +146,11 @@ public sealed class CivitaiLinkLookup
 
         var matches = new List<CivitaiLinkMatch>();
         // The number is a version of the very model it also names: one card, the version pre-ticked.
-        if (asModel is not null && asVersion?.Model is { } sameModel && sameModel.Id == asModel.Id)
+        // Matched on the version's model id and built from the model half's copy, so a failure of
+        // the version half's own (duplicate) load of that model changes nothing.
+        if (asModel is not null && asVersion is not null && asVersion.Version.ModelId == asModel.Id)
         {
-            matches.Add(MatchFor(sameModel, id, notes, listedLabel: $"Model + version ID {id}"));
+            matches.Add(MatchFor(asModel, id, notes, listedLabel: $"Model + version ID {id}"));
             return matches;
         }
 
@@ -173,6 +176,8 @@ public sealed class CivitaiLinkLookup
     {
         if (versionId is not int v) return new(model, null, $"Model ID {model.Id}");
         if (model.ModelVersions.Any(mv => mv.Id == v)) return new(model, v, listedLabel ?? $"Version ID {v}");
+        // A model ResolveAsync drops gets no card, so a note about its pre-tick would describe nothing.
+        if (!IsShowable(model)) return new(model, null, $"Model ID {model.Id}");
 
         _logger?.Info(LogCategory.Network, LogSource,
             $"Link lookup: version {v} is not listed on model {model.Id}; pre-ticking the latest instead.");

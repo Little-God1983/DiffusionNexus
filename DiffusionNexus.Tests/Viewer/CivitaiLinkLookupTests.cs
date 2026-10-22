@@ -234,6 +234,68 @@ public sealed class CivitaiLinkLookupTests
         result.Message.Should().Contain("Model 123").And.Contain("no longer available");
     }
 
+    /// <summary>
+    /// Review round 4: version N belongs to model N, the model half loaded it, only the version
+    /// half's second load of the same model failed. Still one card, version N ticked, no false note.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_SameModel_SecondLoadFailing_StillMergesIntoOneCard()
+    {
+        var calls = 0;
+        _client.Setup(c => c.GetModelAsync(42, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++calls == 1
+                ? Task.FromResult<CivitaiModel?>(Model(42, 43, 42))
+                : Task.FromException<CivitaiModel?>(new HttpRequestException("rate limited")));
+        HasVersion(42, modelId: 42);
+
+        var result = await Resolve("42");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(42);
+        result.Matches[0].MatchLabel.Should().Be("Model + version ID 42");
+        result.Message.Should().BeNull();
+    }
+
+    /// <summary>Review round 4: notes written for a match that is then dropped must not reach the status line.</summary>
+    [Fact]
+    public async Task BareNumber_DroppedMatch_LeavesNoNoteAboutItsPretick()
+    {
+        HasModel(Model(7, 8));
+        HasVersion(7, modelId: 99);
+        HasModel(Model(99) with { Name = "Empty model" }); // live, but no published versions
+
+        var result = await Resolve("7");
+
+        result.Matches.Should().ContainSingle().Which.Model.Id.Should().Be(7);
+        result.Message.Should().NotContain("ticked instead");
+    }
+
+    /// <summary>Review round 4: both matches unavailable — both are named.</summary>
+    [Fact]
+    public async Task BareNumber_BothMatchesUnavailable_NamesBoth()
+    {
+        HasModel(Model(7, 8) with { Mode = CivitaiModelMode.Archived });
+        HasVersion(7, modelId: 99);
+        HasModel(Model(99, 7) with { Mode = CivitaiModelMode.TakenDown });
+
+        var result = await Resolve("7");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("Model 7").And.Contain("Model 99");
+    }
+
+    /// <summary>Review round 4: a live model with no published versions is not "archived or taken down".</summary>
+    [Fact]
+    public async Task LiveModelWithoutVersions_SaysSo()
+    {
+        HasModel(Model(10));
+
+        var result = await Resolve("https://civitai.com/models/10");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("no published versions").And.NotContain("archived");
+    }
+
     /// <summary>Review finding: the version was found; the empty result is its model's fault, not the version's.</summary>
     [Fact]
     public async Task VersionWhoseModelIsGone_BlamesTheModel()

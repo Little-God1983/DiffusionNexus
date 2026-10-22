@@ -1117,7 +1117,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             // correct, so don't touch it.
             if (!string.IsNullOrWhiteSpace(SearchText))
             {
-                await ResortResultsAsync();
+                await ResortResultsAsync(ct);
                 if (ct.IsCancellationRequested) return;
             }
 
@@ -1176,10 +1176,13 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// Re-sorts the result list on the UI thread by the currently selected sort option.
     /// Move-based so bound cards keep their instances (selection, loaded previews).
     /// </summary>
-    private async Task ResortResultsAsync()
+    private async Task ResortResultsAsync(CancellationToken ct)
     {
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
+            // A superseded search must not re-order the cards of the search (or link lookup) that
+            // replaced it — they may already be in Results when this callback runs.
+            if (ct.IsCancellationRequested) return;
             if (Results.Count < 2) return;
             var desired = CivitaiSearchResultSorter.Sort(Results, r => r.Model, SelectedSort);
             CivitaiSearchResultSorter.ApplyOrder(Results, desired);
@@ -1769,12 +1772,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             {
                 // Refreshes the card badge AND every version row — a download that just
                 // finished must light up the row it landed in, not only the card.
+                var repicked = new List<string>();
                 foreach (var r in Results)
                 {
                     r.ApplyInstalledIndex(_installed);
                     // A link card built before this snapshot may have ticked a version that is in
                     // fact installed; redo its pre-tick unless the user has changed it since.
-                    r.ReapplyLinkPreselectIfUntouched();
+                    if (r.ReapplyLinkPreselectIfUntouched()) repicked.Add($"\"{r.Name}\" → {r.SelectedVersionSummary}");
+                }
+                if (repicked.Count > 0)
+                {
+                    _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                        $"Installed library refreshed: link pre-ticks redone on {repicked.Count} card(s) — {string.Join("; ", repicked)}");
                 }
                 OnSelectionChanged();
                 ApplyClientSideFilters();
