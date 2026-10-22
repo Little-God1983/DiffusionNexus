@@ -275,6 +275,15 @@ public partial class CivitaiResultViewModel : ObservableObject
         PreselectForLink(_linkVersionId, LinkMatchLabel, _linkSelectCard);
     }
 
+    /// <summary>
+    /// The version "Add selection to queue" takes from a selected card with nothing ticked: the
+    /// one a link named (the badge's version, even when installed — the queue then asks before
+    /// re-downloading it), otherwise the latest.
+    /// </summary>
+    public CivitaiVersionPickItemViewModel? DefaultPick =>
+        (_linkVersionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+        ?? Versions.FirstOrDefault();
+
     private int? _linkVersionId;
     private bool _linkSelectCard;
     private string? _linkPreselection;

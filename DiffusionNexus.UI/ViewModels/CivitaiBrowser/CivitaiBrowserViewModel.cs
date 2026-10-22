@@ -333,9 +333,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// <summary>
     /// Resolves a pasted link or bare id into ordinary result cards — version rows, installed
     /// badges and the queue buttons all work as they do for a name search. The cards appear as
-    /// soon as Civitai answers; on the first visit the installed-library scan may still be running
-    /// (gating the grid on it was the "browser opens empty" regression), so when it lands the
-    /// pre-tick is redone on every card the user has not touched yet.
+    /// soon as Civitai answers, built against whatever installed snapshot exists; on the first
+    /// visit the library scan may not have landed yet (gating the grid on it was the "browser opens
+    /// empty" regression), so <see cref="RefreshInstalledSetAsync"/> redoes the pre-tick on every
+    /// link card the user has not touched whenever a new snapshot arrives.
     /// </summary>
     private async Task LoadLinkAsync(CivitaiLinkQuery link, CancellationToken ct)
     {
@@ -387,22 +388,6 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 $"Link lookup complete: {Results.Count} card(s), {Results.Sum(r => r.Versions.Count(v => v.IsSelected))} version(s) pre-ticked, " +
                 $"{Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} already installed ({sw.ElapsedMilliseconds} ms)");
 
-            if (Results.Count > 0 && !_installedRefresh.IsCompleted)
-            {
-                IsBusy = false; // the cards are usable; the scan only refines their ticks
-                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
-                    "Link lookup: installed-library scan still running — the pre-ticks are re-checked when it lands.");
-                await _installedRefresh;
-                if (ct.IsCancellationRequested) return;
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (ct.IsCancellationRequested) return;
-                    foreach (var r in Results) r.ReapplyLinkPreselectIfUntouched();
-                });
-                OnSelectionChanged();
-                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
-                    $"Link lookup: pre-ticks re-checked against the installed library ({Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} installed, {sw.ElapsedMilliseconds} ms).");
-            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -521,10 +506,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         foreach (var result in Results.Where(r => r.IsSelected))
         {
             var picks = result.Versions.Where(v => v.IsSelected).ToList();
-            if (picks.Count == 0 && result.Versions.Count > 0)
+            if (picks.Count == 0 && result.DefaultPick is { } fallback)
             {
-                picks.Add(result.Versions[0]);
-                result.Versions[0].IsSelected = true;
+                picks.Add(fallback);
+                fallback.IsSelected = true;
             }
             foreach (var pick in picks)
             {
@@ -1133,6 +1118,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(SearchText))
             {
                 await ResortResultsAsync();
+                if (ct.IsCancellationRequested) return;
             }
 
             var addedThisBatch = Results.Count - preBatchCount;
@@ -1755,15 +1741,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasSelection));
     }
 
-    /// <summary>
-    /// The latest installed-library refresh. A link lookup awaits it before pre-ticking, so a
-    /// paste on the first visit does not tick a version the snapshot was about to mark installed.
-    /// </summary>
-    private Task _installedRefresh = Task.CompletedTask;
-
-    private Task RefreshInstalledSetAsync() => _installedRefresh = RefreshInstalledSetCoreAsync();
-
-    private async Task RefreshInstalledSetCoreAsync()
+    private async Task RefreshInstalledSetAsync()
     {
         try
         {
@@ -1791,7 +1769,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             {
                 // Refreshes the card badge AND every version row — a download that just
                 // finished must light up the row it landed in, not only the card.
-                foreach (var r in Results) r.ApplyInstalledIndex(_installed);
+                foreach (var r in Results)
+                {
+                    r.ApplyInstalledIndex(_installed);
+                    // A link card built before this snapshot may have ticked a version that is in
+                    // fact installed; redo its pre-tick unless the user has changed it since.
+                    r.ReapplyLinkPreselectIfUntouched();
+                }
+                OnSelectionChanged();
                 ApplyClientSideFilters();
             });
         }

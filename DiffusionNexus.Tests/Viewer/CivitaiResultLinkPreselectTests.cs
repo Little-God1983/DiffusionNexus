@@ -80,6 +80,26 @@ public sealed class CivitaiResultLinkPreselectTests
         card.Versions.Where(v => v.IsSelected).Select(v => v.Version.Id).Should().BeEquivalentTo([20, 10]);
     }
 
+    /// <summary>
+    /// Review round 3: "Add selection to queue" on a selected card with nothing ticked falls back to a
+    /// default version. For a link card that is the version the badge names, not the latest.
+    /// </summary>
+    [Fact]
+    public void DefaultPick_OfALinkCard_IsTheLinkedVersion()
+    {
+        var card = Card(30, 20, 10);
+        card.ApplyInstalledIndex(new CivitaiInstalledIndex([20], []));
+        card.PreselectForLink(20, "Version ID 20");
+
+        card.DefaultPick!.Version.Id.Should().Be(20);
+    }
+
+    [Fact]
+    public void DefaultPick_OfANameSearchCard_IsTheLatest()
+    {
+        Card(30, 20, 10).DefaultPick!.Version.Id.Should().Be(30);
+    }
+
     [Fact]
     public void ModelLink_TicksTheLatest()
     {

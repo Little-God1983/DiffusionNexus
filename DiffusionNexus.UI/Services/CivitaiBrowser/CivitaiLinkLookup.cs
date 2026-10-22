@@ -38,8 +38,11 @@ public sealed class CivitaiLinkLookup
         _logger = logger;
     }
 
-    /// <summary>A version lookup: the version, and its model when Civitai still serves that model.</summary>
-    private sealed record VersionHit(CivitaiModelVersion Version, CivitaiModel? Model);
+    /// <summary>
+    /// A version lookup: the version, and its model when Civitai still serves that model.
+    /// <paramref name="ModelError"/> is set when the version was found but loading its model failed.
+    /// </summary>
+    private sealed record VersionHit(CivitaiModelVersion Version, CivitaiModel? Model, Exception? ModelError = null);
 
     public async Task<CivitaiLinkLookupResult> ResolveAsync(CivitaiLinkQuery query, string? apiKey, CancellationToken ct)
     {
@@ -67,11 +70,14 @@ public sealed class CivitaiLinkLookup
         {
             _logger?.Info(LogCategory.Network, LogSource,
                 $"Link lookup: showing {showable.Count} card(s): {string.Join(", ", showable.Select(m => $"{m.MatchLabel} → model {m.Model.Id} \"{m.Model.Name}\""))}");
-            return new(showable, notes.Count == 0 ? null : string.Join(" ", notes));
+            // A bare number's other match may be archived: say so, or the user who meant that one
+            // only sees an unrelated model.
+            var shownNotes = unavailable.Select(UnavailableNote).Concat(notes).ToList();
+            return new(showable, shownNotes.Count == 0 ? null : string.Join(" ", shownNotes));
         }
 
         var message = unavailable.Count > 0
-            ? string.Join(" ", notes.Prepend($"\"{unavailable[0].Model.Name}\" is no longer available on Civitai (archived or taken down)."))
+            ? string.Join(" ", notes.Prepend(UnavailableNote(unavailable[0])))
             : notes.Count > 0
                 ? string.Join(" ", notes)
                 : query.IsBareId
@@ -82,6 +88,9 @@ public sealed class CivitaiLinkLookup
         _logger?.Info(LogCategory.Network, LogSource, $"Link lookup: nothing to show — {message}");
         return new([], message);
     }
+
+    private static string UnavailableNote(CivitaiLinkMatch match) =>
+        $"Model {match.Model.Id} \"{match.Model.Name}\" is no longer available on Civitai (archived or taken down).";
 
     /// <summary>Same rule the name search applies to its pages (archived/taken-down and empty models are dropped).</summary>
     private static bool IsShowable(CivitaiModel model) => model.Mode is null && model.ModelVersions.Count > 0;
@@ -112,7 +121,7 @@ public sealed class CivitaiLinkLookup
     {
         // Each half on its own: a 429 or 5xx on one must not throw away what the other found.
         var modelTask = Attempt(() => GetModelAsync(id, apiKey, ct), ct);
-        var versionTask = Attempt(() => GetVersionAsync(id, apiKey, ct), ct);
+        var versionTask = Attempt(() => GetVersionAsync(id, apiKey, ct, tolerateModelFailure: true), ct);
         await Task.WhenAll(modelTask, versionTask);
         var (asModel, modelError) = modelTask.Result;
         var (asVersion, versionError) = versionTask.Result;
@@ -145,7 +154,9 @@ public sealed class CivitaiLinkLookup
         if (asModel is not null) matches.Add(new(asModel, null, $"Model ID {id}"));
         if (asVersion is not null)
         {
-            if (asVersion.Model is null) notes.Add(GoneModelNote(asVersion));
+            if (asVersion.ModelError is { } loadError)
+                notes.Add($"Version {id} belongs to model {asVersion.Version.ModelId}, which could not be loaded ({loadError.Message}).");
+            else if (asVersion.Model is null) notes.Add(GoneModelNote(asVersion));
             else matches.Add(MatchFor(asVersion.Model, id, notes));
         }
         return matches;
@@ -197,7 +208,11 @@ public sealed class CivitaiLinkLookup
     }
 
     /// <summary>The version endpoint does not carry the sibling versions, so the card needs the model too.</summary>
-    private async Task<VersionHit?> GetVersionAsync(int versionId, string? apiKey, CancellationToken ct)
+    /// <param name="tolerateModelFailure">
+    /// The bare-id path reports each half on its own: a failure loading the version's model is then
+    /// returned in <see cref="VersionHit.ModelError"/> instead of being taken for a failed version check.
+    /// </param>
+    private async Task<VersionHit?> GetVersionAsync(int versionId, string? apiKey, CancellationToken ct, bool tolerateModelFailure = false)
     {
         var sw = Stopwatch.StartNew();
         var version = await _client.GetModelVersionAsync(versionId, apiKey, ct);
@@ -209,6 +224,9 @@ public sealed class CivitaiLinkLookup
         }
         _logger?.Info(LogCategory.Network, LogSource,
             $"Link lookup: GET model-versions/{versionId} → \"{version.Name}\" of model {version.ModelId} ({sw.ElapsedMilliseconds} ms)");
-        return new(version, await GetModelAsync(version.ModelId, apiKey, ct));
+        if (!tolerateModelFailure) return new(version, await GetModelAsync(version.ModelId, apiKey, ct));
+
+        var (model, error) = await Attempt(() => GetModelAsync(version.ModelId, apiKey, ct), ct);
+        return new(version, model, error);
     }
 }

@@ -202,6 +202,38 @@ public sealed class CivitaiLinkLookupTests
         result.Message.Should().Contain("no longer available").And.Contain("version ID");
     }
 
+    /// <summary>
+    /// Review round 3: the version GET succeeded; only loading its model failed. The note must not
+    /// claim the version-ID check failed.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_VersionFoundButItsModelFailing_BlamesTheModelFetch()
+    {
+        HasVersion(456, modelId: 123);
+        _client.Setup(c => c.GetModelAsync(123, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("service unavailable"));
+
+        var result = await Resolve("456");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("Version 456 belongs to model 123").And.Contain("could not be loaded");
+        result.Message.Should().NotContain("is a version ID");
+    }
+
+    /// <summary>Review round 3: an archived match beside a live one must still be mentioned.</summary>
+    [Fact]
+    public async Task BareNumber_ArchivedModelBesideALiveVersionMatch_IsMentioned()
+    {
+        HasModel(Model(123, 124) with { Mode = CivitaiModelMode.Archived });
+        HasVersion(123, modelId: 999);
+        HasModel(Model(999, 123));
+
+        var result = await Resolve("123");
+
+        result.Matches.Should().ContainSingle().Which.Model.Id.Should().Be(999);
+        result.Message.Should().Contain("Model 123").And.Contain("no longer available");
+    }
+
     /// <summary>Review finding: the version was found; the empty result is its model's fault, not the version's.</summary>
     [Fact]
     public async Task VersionWhoseModelIsGone_BlamesTheModel()
