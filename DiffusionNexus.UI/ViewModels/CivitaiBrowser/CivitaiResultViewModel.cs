@@ -212,13 +212,49 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// </summary>
     public void ApplyInstalledIndex(CivitaiInstalledIndex index)
     {
-        var any = false;
+        var installed = 0;
         foreach (var v in Versions)
         {
             v.IsInstalled = index.IsInstalled(v.Version);
-            any |= v.IsInstalled;
+            if (v.IsInstalled) installed++;
         }
-        IsInstalled = any;
+        IsInstalled = installed > 0;
+        InstalledBadgeText = installed == 0 || Versions.Count <= 1 || installed == Versions.Count
+            ? "Installed"
+            : $"{installed} of {Versions.Count} installed";
+    }
+
+    /// <summary>
+    /// Card badge text: "Installed" when every version (or the only one) is in the library,
+    /// "2 of 3 installed" when only some are — so a multi-version model does not read as done.
+    /// </summary>
+    [ObservableProperty]
+    private string _installedBadgeText = "Installed";
+
+    /// <summary>
+    /// Why this card is on screen when it came from a pasted link or id ("Version ID 123"), so
+    /// the two cards a bare number can yield are told apart. Null for name-search cards.
+    /// </summary>
+    [ObservableProperty]
+    private string? _linkMatchLabel;
+
+    /// <summary>
+    /// Selection for a card a link or id produced (issue #630): tick the version the link named,
+    /// or the latest, unless it is already installed — the user can still tick it to download it
+    /// again. The card itself is selected whenever a version is ticked, so "Add selection to
+    /// queue" takes it in one click. Call after <see cref="ApplyInstalledIndex"/>.
+    /// </summary>
+    public void PreselectForLink(int? versionId, string matchLabel)
+    {
+        LinkMatchLabel = matchLabel;
+        var target = (versionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+                     ?? Versions.FirstOrDefault();
+        foreach (var v in Versions)
+        {
+            v.IsSelected = ReferenceEquals(v, target) && !v.IsInstalled;
+        }
+        IsSelected = HasSelectedVersions;
+        NotifyVersionSummaryChanged();
     }
 
     [RelayCommand]

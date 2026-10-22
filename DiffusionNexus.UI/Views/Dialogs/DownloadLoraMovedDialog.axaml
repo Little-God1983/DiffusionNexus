@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.DownloadLoraMovedDialog"
+        Title="Download LoRA has moved"
+        Width="680"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="24" Spacing="16">
+
+    <TextBlock Text="Download LoRA has moved to Browse Civitai"
+               FontSize="18"
+               FontWeight="Bold"
+               Foreground="White"/>
+
+    <TextBlock TextWrapping="Wrap"
+               Foreground="#CCCCCC"
+               FontSize="14"
+               LineHeight="22"
+               Text="Paste a Civitai link into the search box on the Browse Civitai tab. The model appears as a card: pick one, several or all of its versions, see which ones you already have, and add them to the download queue."/>
+
+    <StackPanel Spacing="4">
+      <TextBlock Text="The search box accepts:"
+                 Foreground="#CCCCCC"
+                 FontSize="14"/>
+      <TextBlock Foreground="#CCCCCC" FontSize="13" Margin="16,0,0,0" TextWrapping="Wrap">
+        <Run Text="•  a full link, for example "/>
+        <Run Text="https://civitai.com/models/123?modelVersionId=456" Foreground="#66CCFF"/>
+      </TextBlock>
+      <TextBlock Foreground="#CCCCCC" FontSize="13" Margin="16,0,0,0" TextWrapping="Wrap"
+                 Text="•  a model ID or a version ID on its own, for example 2815542"/>
+    </StackPanel>
+
+    <!-- Reference screenshot: a link pasted into the Browse Civitai search box. -->
+    <Border Background="#1A1A1A"
+            CornerRadius="6"
+            Padding="8"
+            HorizontalAlignment="Center">
+      <Image Source="avares://DiffusionNexus.UI/Assets/LoraViewer/Browse-Civitai-Link.png"
+             MaxWidth="616"
+             Stretch="Uniform"/>
+    </Border>
+
+    <StackPanel Orientation="Horizontal"
+                HorizontalAlignment="Right"
+                Spacing="8">
+      <Button Content="Close"
+              Width="90"
+              IsCancel="True"
+              Click="OnCloseClick"/>
+      <Button Content="Go to Browse Civitai"
+              MinWidth="160"
+              IsDefault="True"
+              Background="#0088CC"
+              Foreground="White"
+              FontWeight="SemiBold"
+              Click="OnGoToBrowseClick"/>
+    </StackPanel>
+
+  </StackPanel>
+</Window>

@@ -589,22 +589,11 @@ public class DialogService : IDialogService
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
 
-    public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
+    public async Task<bool> ShowDownloadLoraMovedDialogAsync()
     {
-        var settings = App.Services?.GetService<IAppSettingsService>();
-        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
-        var viewModel = new DownloadLoraDialogViewModel(
-            App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
-            settings,
-            this,
-            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            apiKeyProvider: App.Services?.GetService<ICivitaiApiKeyProvider>());
-        await viewModel.InitializeAsync(sourceFolders, favorite);
-
-        var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
-
+        var dialog = new DownloadLoraMovedDialog();
         await dialog.ShowDialog(_window);
-        return dialog.Result ?? DownloadLoraResult.Cancelled();
+        return dialog.GoToBrowse;
     }
 
     public async Task<int> ShowDuplicateFixerAsync(IEnumerable<ViewModels.Tabs.DuplicateClusterItemViewModel> clusters)

@@ -17,7 +17,7 @@
     <vm:LoraViewerViewModel/>
   </Design.DataContext>
 
-  <TabControl Padding="0">
+  <TabControl Padding="0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
     <TabItem Header="Installed">
       <Grid RowDefinitions="Auto,*,Auto">
 
@@ -184,7 +184,7 @@
             </StackPanel>
 
             <Button Command="{Binding DownloadLoraCommand}"
-                    ToolTip.Tip="Download a LoRA from Civitai"
+                    ToolTip.Tip="Downloading a LoRA from a link has moved to Browse Civitai — click to see how"
                     VerticalAlignment="Center"
                     Margin="0,4,12,4">
               <StackPanel Orientation="Horizontal" Spacing="6">

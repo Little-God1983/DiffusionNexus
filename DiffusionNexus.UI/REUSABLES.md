@@ -104,14 +104,17 @@ Generic building blocks — try these before writing a new dialog:
 
 Domain dialogs already covered (check here before building a new one): dataset create /
 version / export / add-to, training-run create / export, caption compare, captioning and
-captioning models, Civitai token, assign Civitai IDs, download LoRA (and version),
-download preflight, sync plan / sync report, workloads / workload details / core
+captioning models, Civitai token, assign Civitai IDs, download LoRA version, "download
+LoRA has moved" (pointer to the Browse Civitai link search), download preflight, sync plan / sync report, workloads / workload details / core
 workloads, VRAM selection, add / edit / remove installation, backup compare, feedback,
 save-as, replace image, file conflict, select versions to delete (dataset and LoRA).
 
 Fixer **windows** (long-running triage surfaces, also reached via `IDialogService`):
 `DuplicateFixerWindow`, `LoraDuplicateFixerWindow`, `ColorFixerWindow`,
 `ImageQualityFixerWindow`.
+
+Placement is automatic: `DialogPlacement` (see section 5) keeps every owned dialog with
+`SizeToContent="Height"` on the owner's screen as its content grows — no opt-in needed.
 
 ---
 
@@ -164,6 +167,7 @@ Others worth knowing:
 | `IInstallActivity` / `InstallActivity` | [Services/InstallActivity.cs](Services/InstallActivity.cs) | Which install is running app-wide (`Begin(name)` returns a handle; `Running`, `Changed`). Any new install flow calls `Begin` so the catalog apply waits for it (#618). |
 | `EngineRemover`, `EngineRemovalPlanner`, `EngineRemovalMessages` | [Services/Engine/](Services/Engine/) | Remove Engine files safely (busy check, stop, maintenance hold, junction-safe delete) and plan/word what a feature removal or Engine uninstall deletes. Files inside the Engine folder are the Engine's; anything else is the user's and is only deleted on explicit choice. |
 | `ScrollKeyNavigation` | [Behaviors/ScrollKeyNavigation.cs](Behaviors/ScrollKeyNavigation.cs) | `behaviors:ScrollKeyNavigation.IsEnabled="True"` on a `ScrollViewer`: Home / End / Page Up / Page Down scroll it, and a click inside focuses it. Text boxes, sliders, NumericUpDowns, lists and trees keep their own keys, so does another key-scrolling area (behavior switched on) that holds focus, and a grid that fits its viewport leaves the key alone. For a view's main grid also call `ScrollKeyNavigation.ForwardKeys(this, scrollViewer)` once from the constructor: it puts a tunnel handler on the window while the view is attached, so the keys work with focus anywhere — right after opening a page focus is on the module button in the sidebar, and a focused tab header would otherwise switch tabs. Use this on any new scrolling grid instead of hand-rolling key handlers. |
+| `DialogPlacement` | [Behaviors/DialogPlacement.cs](Behaviors/DialogPlacement.cs) | Registered once in `App` start-up; applies to every owned dialog with `SizeToContent="Height"`. Caps the client height to the owner screen's working area and pulls the window inside it; when the content changes the height (a section expands), a `CenterOwner` dialog is re-centred on its owner instead of growing off the bottom. A dialog the user dragged aside is only kept on screen, and a user resize is never fought. Give a tall dialog a `ScrollViewer` so the capped height scrolls. |
 
 ---
 

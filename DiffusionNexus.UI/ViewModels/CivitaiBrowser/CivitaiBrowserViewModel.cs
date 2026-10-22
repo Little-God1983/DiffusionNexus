@@ -301,7 +301,103 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         _lastClickedItem = null;   // anchor invalidated by clear
         OnSelectionChanged();
         _nextCursor = null;
+
+        if (CivitaiLinkQuery.TryParse(SearchText, out var link))
+        {
+            await LoadLinkAsync(link!, ct);
+            return;
+        }
+
+        SetLinkMode(false);
         await LoadNextAsync(ct);
+    }
+
+    /// <summary>
+    /// True while the results come from a pasted link or id instead of a name search (issue #630).
+    /// Every filter is ignored then — the API filters are never sent, and the Show toggles hide
+    /// nothing, or "hide installed" would hide the very model the user pasted to check.
+    /// </summary>
+    public bool IsLinkLookup => LinkLookupNotice is not null;
+
+    /// <summary>Banner above link/id results; null during a name search.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLinkLookup))]
+    private string? _linkLookupNotice;
+
+    private const string LinkLookupNoticeText =
+        "Showing the model from your link or ID. Filters are ignored. Clear the search box to go back to your filtered search.";
+
+    private void SetLinkMode(bool on) => LinkLookupNotice = on ? LinkLookupNoticeText : null;
+
+    /// <summary>
+    /// Resolves a pasted link or bare id into ordinary result cards — version rows, installed
+    /// badges and the queue buttons all work as they do for a name search. Waits for a pending
+    /// installed-library refresh first: the pre-tick leaves installed versions unticked, and on
+    /// the first visit the snapshot is still loading in parallel with this search.
+    /// </summary>
+    private async Task LoadLinkAsync(CivitaiLinkQuery link, CancellationToken ct)
+    {
+        SetLinkMode(true);
+        // SearchAsync dropped the cursor; a name search announces that at the end of its fetch,
+        // this path has no pages at all, so say it now or the previous search's "Load more" stays.
+        OnPropertyChanged(nameof(HasMore));
+        ApplyClientSideFilters(); // nothing on screen yet, but reset the hidden counters
+        if (_civitaiClient is null)
+        {
+            StatusMessage = "Civitai client is not available.";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Link lookup skipped — ICivitaiClient is null in this DI scope.");
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            StatusMessage = "Looking up the link on Civitai...";
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            var apiKey = await GetApiKeyAsync();
+            var result = await new CivitaiLinkLookup(_civitaiClient, _logger).ResolveAsync(link, apiKey, ct);
+            await _installedRefresh;
+            if (ct.IsCancellationRequested) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                // Same late-cancellation re-check as LoadNextAsync's dispatch.
+                if (ct.IsCancellationRequested) return;
+                foreach (var match in result.Matches)
+                {
+                    var card = CreateResultCard(match.Model);
+                    card.PreselectForLink(match.VersionId, match.MatchLabel);
+                    Results.Add(card);
+                }
+            });
+            if (ct.IsCancellationRequested) return;
+
+            ApplyClientSideFilters();
+            OnSelectionChanged();
+            StatusMessage = result.Message;
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                $"Link lookup complete: {Results.Count} card(s), {Results.Sum(r => r.Versions.Count(v => v.IsSelected))} version(s) pre-ticked, " +
+                $"{Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} already installed ({sw.ElapsedMilliseconds} ms)");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // user typed again — silently drop
+        }
+        catch (HttpRequestException ex)
+        {
+            StatusMessage = $"Civitai request failed: {ex.StatusCode} {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Link lookup HTTP {ex.StatusCode} — {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Link lookup failed: {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Link lookup failed: {ex.Message}", ex.ToString());
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private void CancelAllPreviews()
@@ -1411,10 +1507,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             // IsEarlyAccess && !IsPermanentlyPaid) — filtering on the raw IsEarlyAccess
             // flag here would make the Paywalled toggle a no-op for permanently-paid
             // cards, since they'd already be caught by Early Access.
-            var hide = (!ShowInstalled && result.IsInstalled)
-                       || (!ShowEarlyAccess && result.ShowEarlyAccessBadge)
-                       || (!ShowPaywalled && result.IsPermanentlyPaid)
-                       || (!ShowNsfw && result.IsNsfw);
+            var hide = !IsLinkLookup
+                       && ((!ShowInstalled && result.IsInstalled)
+                           || (!ShowEarlyAccess && result.ShowEarlyAccessBadge)
+                           || (!ShowPaywalled && result.IsPermanentlyPaid)
+                           || (!ShowNsfw && result.IsNsfw));
             result.IsHidden = hide;
         }
         OnPropertyChanged(nameof(VisibleCount));
@@ -1626,7 +1723,15 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasSelection));
     }
 
-    private async Task RefreshInstalledSetAsync()
+    /// <summary>
+    /// The latest installed-library refresh. A link lookup awaits it before pre-ticking, so a
+    /// paste on the first visit does not tick a version the snapshot was about to mark installed.
+    /// </summary>
+    private Task _installedRefresh = Task.CompletedTask;
+
+    private Task RefreshInstalledSetAsync() => _installedRefresh = RefreshInstalledSetCoreAsync();
+
+    private async Task RefreshInstalledSetCoreAsync()
     {
         try
         {
