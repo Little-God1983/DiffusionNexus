@@ -256,6 +256,29 @@ public sealed class CivitaiLinkLookupTests
         result.Message.Should().BeNull();
     }
 
+    /// <summary>
+    /// Review round 5, the mirror of the test above: the model half failed, but the version half
+    /// loaded that same model. Still one merged card, and no "could not check whether 42 is a model
+    /// ID" note under a card that is model 42.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_SameModel_ModelHalfFailing_StillMergesIntoOneCard()
+    {
+        var calls = 0;
+        _client.Setup(c => c.GetModelAsync(42, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++calls == 1
+                ? Task.FromException<CivitaiModel?>(new HttpRequestException("rate limited"))
+                : Task.FromResult<CivitaiModel?>(Model(42, 43, 42)));
+        HasVersion(42, modelId: 42);
+
+        var result = await Resolve("42");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(42);
+        result.Matches[0].MatchLabel.Should().Be("Model + version ID 42");
+        result.Message.Should().BeNull();
+    }
+
     /// <summary>Review round 4: notes written for a match that is then dropped must not reach the status line.</summary>
     [Fact]
     public async Task BareNumber_DroppedMatch_LeavesNoNoteAboutItsPretick()

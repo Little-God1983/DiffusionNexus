@@ -131,6 +131,15 @@ public sealed class CivitaiLinkLookup
         {
             ExceptionDispatchInfo.Capture(modelError).Throw();
         }
+        // The number is a version of the very model it also names: one card, the version pre-ticked.
+        // Matched on the version's model id and built from whichever half loaded that model, so a
+        // failure of either of the two (duplicate) loads changes nothing — and, decided before the
+        // failure notes, no "could not check whether N is a model ID" lands under model N's card.
+        if (asVersion is not null && asVersion.Version.ModelId == id && (asModel ?? asVersion.Model) is { } sameModel)
+        {
+            return [MatchFor(sameModel, id, notes, listedLabel: $"Model + version ID {id}")];
+        }
+
         // One half failed: say what the other half found too, so a lone failure note can't read as
         // if something had been found.
         if (modelError is not null)
@@ -145,14 +154,6 @@ public sealed class CivitaiLinkLookup
         }
 
         var matches = new List<CivitaiLinkMatch>();
-        // The number is a version of the very model it also names: one card, the version pre-ticked.
-        // Matched on the version's model id and built from the model half's copy, so a failure of
-        // the version half's own (duplicate) load of that model changes nothing.
-        if (asModel is not null && asVersion is not null && asVersion.Version.ModelId == asModel.Id)
-        {
-            matches.Add(MatchFor(asModel, id, notes, listedLabel: $"Model + version ID {id}"));
-            return matches;
-        }
 
         if (asModel is not null) matches.Add(new(asModel, null, $"Model ID {id}"));
         if (asVersion is not null)
