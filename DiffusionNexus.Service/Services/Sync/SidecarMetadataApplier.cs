@@ -3,6 +3,7 @@ using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 
@@ -530,30 +531,44 @@ public sealed class SidecarMetadataApplier
 
     /// <summary>
     /// Creates <see cref="ModelImage"/> entities from a JSON "images" array found in sidecar files.
-    /// Skips images that already exist by CivitaiId or URL.
+    /// An image already held (by URL) is not added again, but gets the sidecar's rating when it has
+    /// none — the API path stored images unrated before #631.
     /// </summary>
     private static bool ApplyImagesFromJson(ModelVersion dbVersion, JsonElement imagesArray)
     {
         var dirty = false;
-        var existingUrls = dbVersion.Images
-            .Select(i => i.Url)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var existingByUrl = dbVersion.Images
+            .Where(i => !string.IsNullOrEmpty(i.Url))
+            .GroupBy(i => i.Url, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        var sortOrder = dbVersion.Images.Count;
+        // After the last order, not at Count: removed duplicates leave gaps, so Count can be in use.
+        var sortOrder = dbVersion.Images.Count == 0 ? 0 : dbVersion.Images.Max(i => i.SortOrder) + 1;
 
         foreach (var imgEl in imagesArray.EnumerateArray())
         {
             var url = imgEl.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
             if (string.IsNullOrEmpty(url)) continue;
 
-            // Skip if we already have this URL
-            if (existingUrls.Contains(url)) continue;
+            var level = ReadImageRating(imgEl);
+
+            if (existingByUrl.TryGetValue(url, out var existing))
+            {
+                // A stored rating came from the API or a later sidecar; the sidecar only fills gaps.
+                if (existing.NsfwLevel == NsfwLevel.None && level != NsfwLevel.None)
+                {
+                    existing.NsfwLevel = level;
+                    dirty = true;
+                }
+                continue;
+            }
 
             var image = new ModelImage
             {
                 ModelVersionId = dbVersion.Id,
                 Url = url,
                 SortOrder = sortOrder++,
+                NsfwLevel = level,
             };
 
             if (imgEl.TryGetProperty("width", out var w) && w.TryGetInt32(out var width)) image.Width = width;
@@ -561,17 +576,30 @@ public sealed class SidecarMetadataApplier
             if (imgEl.TryGetProperty("hash", out var hash) && hash.GetString() is { } hashStr) image.BlurHash = hashStr;
             if (imgEl.TryGetProperty("type", out var type) && type.GetString() is { } typeStr) image.MediaType = typeStr;
 
-            if (imgEl.TryGetProperty("nsfwLevel", out var nsfwLvl) && nsfwLvl.TryGetInt32(out var nsfwLevel))
-            {
-                image.IsNsfw = nsfwLevel > 1;
-            }
-
             dbVersion.Images.Add(image);
-            existingUrls.Add(url);
+            existingByUrl[url] = image;
             dirty = true;
         }
 
         return dirty;
+    }
+
+    /// <summary>
+    /// An image's rating as a sidecar records it: the integer <c>nsfwLevel</c> bitmask of current
+    /// Civitai payloads, or the rating names older ones carried in <c>nsfwLevel</c> or <c>nsfw</c>.
+    /// The old boolean <c>nsfw</c> is not a rating and reads as unrated.
+    /// </summary>
+    private static NsfwLevel ReadImageRating(JsonElement imgEl)
+    {
+        if (imgEl.TryGetProperty("nsfwLevel", out var level))
+        {
+            if (level.ValueKind == JsonValueKind.Number && level.TryGetInt32(out var bits)) return (NsfwLevel)bits;
+            if (level.ValueKind == JsonValueKind.String) return NsfwPolicy.FromLegacyRating(level.GetString());
+        }
+
+        return imgEl.TryGetProperty("nsfw", out var legacy) && legacy.ValueKind == JsonValueKind.String
+            ? NsfwPolicy.FromLegacyRating(legacy.GetString())
+            : NsfwLevel.None;
     }
 
     /// <summary>

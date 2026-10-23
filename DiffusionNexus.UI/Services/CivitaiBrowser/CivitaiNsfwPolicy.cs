@@ -1,4 +1,6 @@
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.UI.Services.CivitaiBrowser;
 
@@ -11,16 +13,13 @@ namespace DiffusionNexus.UI.Services.CivitaiBrowser;
 /// </summary>
 public static class CivitaiNsfwPolicy
 {
-    /// <summary>PG (1) and PG13 (2) — everything Civitai shows without an NSFW opt-in.</summary>
-    private const int SafeLevelMask = 0b11;
-
     /// <summary>
-    /// True when the image is rated PG/PG13. Unrated images (null or 0) count as
-    /// unsafe: with nsfw=true passthrough an unrated image could be anything, and a
-    /// wrongly-shown adult thumbnail is worse than a wrongly-hidden safe one.
+    /// True when the image is rated PG/PG13 — <see cref="NsfwPolicy"/>'s rule, shared with the
+    /// Installed tab (#631). Unrated images (null or 0) count as unsafe: with nsfw=true
+    /// passthrough an unrated image could be anything, and a wrongly-shown adult thumbnail is
+    /// worse than a wrongly-hidden safe one.
     /// </summary>
-    public static bool IsImageSafe(CivitaiModelImage image)
-        => image.NsfwLevel is int level && level != 0 && (level & ~SafeLevelMask) == 0;
+    public static bool IsImageSafe(CivitaiModelImage image) => NsfwPolicy.IsSafe(image.NsfwLevel);
 
     /// <summary>
     /// True when the card must be hidden while the NSFW toggle is off: the model is
@@ -36,7 +35,7 @@ public static class CivitaiNsfwPolicy
 
         // No gallery at all — trust the model-level bitmask; an unrated (0) model
         // that isn't flagged stays visible.
-        return model.NsfwLevel != 0 && (model.NsfwLevel & SafeLevelMask) == 0;
+        return model.NsfwLevel != 0 && ((NsfwLevel)model.NsfwLevel & NsfwPolicy.SafeLevels) == 0;
     }
 
     /// <summary>

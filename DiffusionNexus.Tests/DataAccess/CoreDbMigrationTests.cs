@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -259,6 +260,77 @@ public class CoreDbMigrationTests
                 var row = ctx.AppSettings.Single();
                 row.CatalogChannel.Should().BeNull();
                 row.ApplyCatalogUpdatesAutomatically.Should().BeFalse();
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #631: the rating gets a new integer column, NsfwRating (0 = unrated). The old IsNsfw and
+    /// NsfwLevel columns stay untouched — every older build still maps them, so dropping or retyping
+    /// them would break a rollback (see ModelVersion.BaseModel). Every model that holds a Civitai
+    /// image has its images step un-stamped so the next Download Metadata run rates them; a model
+    /// whose only image is a local file has nothing to fetch and keeps its stamp.
+    /// </summary>
+    [Fact]
+    public void AddNsfwRating_IsAdditive_AndCivitaiImagesAreRecheckedOnce()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "nsfw-level-test.db");
+        const string stamp = "2026-10-01T00:00:00+00:00";
+        string[] seed =
+        [
+            "INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+            "VALUES (1, 'remote', 'LORA', 'Available', 'CivitaiApi', 0, 0, 0, 'None', 0, 0, '" + stamp + "', 0, 0), " +
+            "(2, 'local', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '" + stamp + "', 0, 0);",
+            "INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+            "VALUES (1, 1, 'v1', 'Unknown', 0, '" + stamp + "', 0, 0, 0, 0, 0, 0), (2, 2, 'v1', 'Unknown', 0, '" + stamp + "', 0, 0, 0, 0, 0, 0);",
+            "INSERT INTO ModelImages (Id, ModelVersionId, Url, IsNsfw, NsfwLevel, Width, Height, SortOrder, IsLocalCacheValid, LikeCount, HeartCount, CommentCount) " +
+            "VALUES (1, 1, 'https://image.civitai.com/x/a.jpeg', 1, 'None', 0, 0, 0, 0, 0, 0, 0), " +
+            "(2, 2, 'file:///C:/l/b.preview.png', 0, 'None', 0, 0, 0, 0, 0, 0, 0);",
+            "INSERT INTO ModelSyncStates (ModelId, MetadataOutcome, MetadataAttempts, ImagesCheckedAt, UpdatedAt) " +
+            "VALUES (1, 'Matched', 1, '" + stamp + "', '" + stamp + "'), (2, 'Matched', 1, '" + stamp + "', '" + stamp + "');",
+        ];
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var migrator = ctx.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+                migrator.Migrate("20261011112158_AddCatalogUpdateSettings");
+                foreach (var sql in seed) ctx.Database.ExecuteSqlRaw(sql);
+                ctx.Database.Migrate();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var images = ctx.ModelImages.AsNoTracking().OrderBy(i => i.Id).ToList();
+                images.Select(i => i.NsfwLevel).Should().Equal(NsfwLevel.None, NsfwLevel.None);
+                // Each image is alone in its version, so no context changes the verdict.
+                NsfwPolicy.IsNsfwImage(images[0].NsfwLevel, images[0].Url)
+                    .Should().BeTrue("an unrated Civitai image is not known to be safe");
+                NsfwPolicy.IsNsfwImage(images[1].NsfwLevel, images[1].Url)
+                    .Should().BeFalse("a local-only preview cannot be rated and stays shown");
+
+                var states = ctx.ModelSyncStates.AsNoTracking().OrderBy(s => s.ModelId).ToList();
+                states[0].ImagesCheckedAt.Should().BeNull("its Civitai images must be fetched again to be rated");
+                states[1].ImagesCheckedAt.Should().NotBeNull("a local image has nothing to fetch");
+
+                var columns = ctx.Database
+                    .SqlQueryRaw<string>("SELECT name AS Value FROM pragma_table_info('ModelImages')")
+                    .ToList();
+                columns.Should().Contain(new[] { "IsNsfw", "NsfwLevel", "NsfwRating" });
+                ctx.Database
+                    .SqlQueryRaw<string>("SELECT NsfwLevel || '/' || IsNsfw || '/' || typeof(NsfwRating) AS Value FROM ModelImages ORDER BY Id")
+                    .ToList()
+                    .Should().Equal(new[] { "None/1/integer", "None/0/integer" }, "the old columns keep what older builds wrote");
             }
         }
         finally

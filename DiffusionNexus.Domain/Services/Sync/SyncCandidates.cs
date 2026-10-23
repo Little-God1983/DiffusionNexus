@@ -16,9 +16,10 @@ public sealed record TagCandidate(int ModelId, int CivitaiModelId, string Name, 
 /// The Civitai model page this version belongs to — the same id <see cref="TagCandidate"/> carries
 /// as <c>CivitaiModelId</c>, i.e. <c>Model.CivitaiId</c>. Lets <c>FetchImagesStep</c> fetch every
 /// version of a model with one <c>models/{id}</c> call instead of one <c>model-versions/{id}</c>
-/// call per version.
+/// call per version. Null when the model row holds no Civitai id (another row of the same LoRA
+/// took it) — the version id alone is enough to fetch, one version at a time (#631).
 /// </param>
-public sealed record ImageCandidate(int ModelId, int VersionId, int CivitaiVersionId, int CivitaiModelId, string Name, DateTimeOffset? ImagesCheckedAt);
+public sealed record ImageCandidate(int ModelId, int VersionId, int CivitaiVersionId, int? CivitaiModelId, string Name, DateTimeOffset? ImagesCheckedAt);
 
 /// <summary>
 /// One image eligible for the thumbnail step — the version's <i>primary</i> image, the one
@@ -69,6 +70,10 @@ public sealed record ThumbnailCandidate(
 /// and because "any version" is the rule: a model whose second version was identified by a sidecar
 /// is a sidecar model.
 /// </param>
+/// <param name="HasUnratedCivitaiImages">
+/// Whether any version holds a Civitai (web) image with no rating — fetched before ratings were
+/// stored (#631). Such a model's images are not fully fetched yet, so its images step stays due.
+/// </param>
 public sealed record SyncDerivationInput(
     int ModelId,
     int? CivitaiId,
@@ -76,4 +81,5 @@ public sealed record SyncDerivationInput(
     DataSource Source,
     bool HasTags,
     bool HasImages,
-    bool HasRealBaseModel);
+    bool HasRealBaseModel,
+    bool HasUnratedCivitaiImages = false);

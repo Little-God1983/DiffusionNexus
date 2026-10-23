@@ -393,9 +393,43 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Whether this model has NSFW content.
+    /// Whether the model is flagged NSFW by its creator on Civitai. This alone says nothing about
+    /// the pictures; see <see cref="HasNsfwContent"/>.
     /// </summary>
     public bool IsNsfw => ModelEntity?.IsNsfw ?? false;
+
+    /// <summary>
+    /// Whether the tile would put NSFW content on screen (#631): the model is flagged NSFW, or the
+    /// picture the tile shows is not rated safe. The tile shows its version's
+    /// <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still, so a tile that
+    /// passes this test shows a safe picture. A tile without a picture shows a placeholder.
+    /// </summary>
+    public bool HasNsfwContent => IsNsfw || ShowsNsfwPicture;
+
+    /// <summary>
+    /// The selected version still holds Civitai pictures with no rating — a library synced before
+    /// #631. Asked of hidden tiles only: once Download Metadata rates them, a safe one can become
+    /// the picture the tile shows.
+    /// </summary>
+    internal bool ShowsUnratedImage =>
+        SelectedVersion?.Images.Any(i => i.NsfwLevel == Domain.Enums.NsfwLevel.None
+                                         && NsfwPolicy.IsWebImage(i.Url)) == true;
+
+    /// <summary>The picture the tile shows is not safe, judged in its version (<see cref="ModelVersion.IsImageNsfw"/>).</summary>
+    private bool ShowsNsfwPicture =>
+        SelectedVersion is { } version && version.PrimaryImage is { } picture && version.IsImageNsfw(picture);
+
+    /// <summary>
+    /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
+    /// its picture is safe, but the version chips can switch it to a version whose picture is not;
+    /// <see cref="IsPreviewHidden"/> covers that picture instead of showing it.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
+    private bool _hideNsfwPreviews;
+
+    /// <summary>Whether the tile covers its picture: Show NSFW is off and the picture is not rated safe.</summary>
+    public bool IsPreviewHidden => HideNsfwPreviews && ShowsNsfwPicture;
 
     /// <summary>
     /// Whether this model has multiple versions.
@@ -1061,6 +1095,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(ModelTypeDisplay));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
+        OnPropertyChanged(nameof(IsPreviewHidden));
         OnPropertyChanged(nameof(HasMultipleVersions));
         OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
@@ -1093,6 +1128,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
+        OnPropertyChanged(nameof(IsPreviewHidden));
         OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
@@ -1866,15 +1902,21 @@ public partial class ModelTileViewModel : ViewModelBase
     /// which on a version whose sort-0 row is not the primary image can be a thumbnail the user
     /// uploaded by hand. Hence both clauses.
     /// </remarks>
-    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images) =>
-        images
+    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images)
+    {
+        var all = images.ToList();
+        // SFW judged as ModelVersion.IsImageNsfw judges it: a local preview beside Civitai
+        // pictures is not known to be safe (#631).
+        var hasCivitaiImages = all.Any(i => NsfwPolicy.IsWebImage(i.Url));
+        return all
             .Where(i => !string.IsNullOrEmpty(i.Url)
                         && !IsVideoPreview(i)
                         && !i.HasThumbnail
                         && !i.IsThumbnailDeferred)
-            .OrderBy(i => i.IsNsfw) // prefer SFW
+            .OrderBy(i => NsfwPolicy.IsNsfwImage(i.NsfwLevel, i.Url, hasCivitaiImages)) // prefer SFW
             .ThenBy(i => i.SortOrder)
             .FirstOrDefault();
+    }
 
     /// <summary>
     /// Fetches this image's thumbnail through <see cref="IThumbnailProvider"/> and records the

@@ -3,6 +3,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Utilities;
 using Microsoft.EntityFrameworkCore;
@@ -47,6 +48,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         return created;
     }
 
+    /// <summary>
+    /// A Civitai (web) image with no rating yet (#631). Shared by the backfill projection and the
+    /// images-step selection so the two cannot disagree; the migration and recovery repeat it in
+    /// raw SQL, the tile in memory (<c>NsfwPolicy.IsWebImage</c>). LIKE is case-insensitive for ASCII.
+    /// </summary>
+    private static readonly Expression<Func<ModelImage, bool>> IsUnratedCivitaiImage =
+        i => i.NsfwLevel == NsfwLevel.None
+             && (EF.Functions.Like(i.Url, "http://%") || EF.Functions.Like(i.Url, "https://%"));
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<SyncDerivationInput>> GetDerivationInputsAsync(
         IReadOnlyList<int> modelIds, CancellationToken ct = default)
@@ -71,7 +81,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                 // one, and the alternative is hauling the strings back to compare them in memory.
                 m.Versions.Any(v => v.BaseModelRaw != null
                                     && v.BaseModelRaw.Trim() != ""
-                                    && v.BaseModelRaw != "???")))
+                                    && v.BaseModelRaw != "???"),
+                m.Versions.Any(v => v.Images.AsQueryable().Any(IsUnratedCivitaiImage))))
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -408,21 +419,26 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var models = (await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false))
-            .Where(m => m.CivitaiId != null);
+        // No Model.CivitaiId filter (#631): the version's own id is what the fetch needs, and a model
+        // row whose Civitai id went to another row of the same LoRA still has pictures to rate.
+        var models = await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.
+        // A version is due when it holds no images, or holds a Civitai image with no rating (#631):
+        // libraries synced before ratings were stored get them from the next run. The images step's
+        // stamp still decides when to ask, so a version Civitai cannot rate is asked once, not forever.
         var rows = await (from v in Context.ModelVersions.AsNoTracking()
-                          where v.CivitaiId != null && !v.Images.Any()
+                          where v.CivitaiId != null
+                                && (!v.Images.Any() || v.Images.AsQueryable().Any(IsUnratedCivitaiImage))
                           join m in models on v.ModelId equals m.Id
                           select new
                           {
                               ModelId = m.Id,
                               VersionId = v.Id,
                               CivitaiVersionId = v.CivitaiId!.Value,
-                              // Same source SelectTagCandidatesAsync uses for CivitaiModelId — the
-                              // models filter above already requires it non-null.
-                              CivitaiModelId = m.CivitaiId!.Value,
+                              // Same source SelectTagCandidatesAsync uses for CivitaiModelId; null
+                              // when the model row holds no Civitai id.
+                              CivitaiModelId = m.CivitaiId,
                               m.Name,
                               ImagesCheckedAt = m.SyncState != null ? m.SyncState.ImagesCheckedAt : null,
                           })
@@ -484,7 +500,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                               v.Name,
                               i.Url,
                               i.MediaType,
-                              i.IsNsfw,
+                              // The rating, not IsNsfw: that one is derived in C# and has no column.
+                              i.NsfwLevel,
                               HasThumbnail = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
                               i.ThumbnailAttemptedAt,
                               i.ThumbnailFailure,
@@ -501,7 +518,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
 
         return rows
             .GroupBy(r => r.VersionId)
-            .Select(g => g.OrderBy(r => PrimaryImageRank(r.IsNsfw, r.MediaType, r.Url)).ThenBy(r => r.ImageId).First())
+            .Select(g =>
+            {
+                // Judged in the version, as ModelVersion.IsImageNsfw does: a local preview beside
+                // Civitai pictures is not known to be safe (#631).
+                var hasCivitaiImages = g.Any(r => NsfwPolicy.IsWebImage(r.Url));
+                return g.OrderBy(r => PrimaryImageRank(NsfwPolicy.IsNsfwImage(r.NsfwLevel, r.Url, hasCivitaiImages), r.MediaType, r.Url))
+                    .ThenBy(r => r.ImageId)
+                    .First();
+            })
             // Asked of the primary only. The other images of the version are not work: the tile
             // shows the primary, so bytes for the rest render nowhere and would multiply a
             // library-wide run by the image count per version.

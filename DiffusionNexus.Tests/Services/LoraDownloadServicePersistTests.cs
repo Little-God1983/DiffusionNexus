@@ -181,6 +181,36 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         saved.LastSyncedAt.Should().NotBeNull();
     }
 
+    /// <summary>
+    /// #631: a downloaded LoRA's preview images keep Civitai's rating. They were stored from the
+    /// image "nsfw" field the API no longer sends, so every one of them read as SFW.
+    /// </summary>
+    [Fact]
+    public async Task Persist_StoresEachImagesRating()
+    {
+        var civVersion = NewCivitaiVersion() with
+        {
+            Images =
+            [
+                new CivitaiModelImage { Url = "https://img/xxx.jpeg", NsfwLevel = 16 },
+                new CivitaiModelImage { Url = "https://img/pg13.jpeg", NsfwLevel = 2 },
+            ],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+        var newFile = NewRealFile("rated-download.safetensors");
+
+        var outcome = await service.PersistDownloadedModelAsync(newFile, civVersion);
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        context.ModelImages.AsNoTracking()
+            .OrderBy(i => i.SortOrder)
+            .Select(i => i.NsfwLevel)
+            .ToList()
+            .Should().Equal(NsfwLevel.XXX, NsfwLevel.PG13);
+    }
+
     [Fact]
     public async Task Persist_ExistingUneditedModel_TakesCivitaiText()
     {
@@ -215,6 +245,86 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         saved.Tags.Select(t => t.Tag!.NormalizedName).Should().BeEquivalentTo(new[] { "style", "anime" });
         saved.CivitaiModelPageId.Should().Be(77);
         saved.CivitaiId.Should().Be(77);
+    }
+
+    /// <summary>
+    /// #631 review: re-downloading a version the library already holds attaches the file to that
+    /// version — and its pictures, stored unrated before ratings existed, get Civitai's ratings
+    /// instead of the fresh records being thrown away with the discarded new version.
+    /// </summary>
+    [Fact]
+    public async Task Persist_DuplicateVersion_RatesTheExistingVersionsImages()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model { Name = "local model", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var seedVersion = new ModelVersion { CivitaiId = 700, Name = "v", BaseModelRaw = "Pony" };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = "old.safetensors", LocalPath = @"C:\m\old.safetensors", IsLocalFileValid = true, IsPrimary = true,
+            });
+            seedVersion.Images.Add(new ModelImage { Url = "https://img/xxx.jpeg" });
+            model.Versions.Add(seedVersion);
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion() with
+        {
+            Images = [new CivitaiModelImage { Url = "https://img/xxx.jpeg", NsfwLevel = 16 }],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+
+        var outcome = await service.PersistDownloadedModelAsync(NewRealFile("again.safetensors"), civVersion, existingModelId: modelId);
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var saved = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Should().ContainSingle().Which.Images.Should().ContainSingle()
+            .Which.NsfwLevel.Should().Be(NsfwLevel.XXX);
+    }
+
+    /// <summary>
+    /// The hash fallback can land on a version already linked to a DIFFERENT Civitai version (the
+    /// same bytes re-listed upstream). That version keeps its own pictures: another version's
+    /// gallery, with its ratings, would make its tile show and be judged by images not its own.
+    /// </summary>
+    [Fact]
+    public async Task Persist_HashMatchOnAVersionLinkedElsewhere_LeavesItsImagesAlone()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model { Name = "relisted", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var seedVersion = new ModelVersion { CivitaiId = 699, Name = "v", BaseModelRaw = "Pony" };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = "old.safetensors", LocalPath = @"C:\m\relisted.safetensors", IsLocalFileValid = true,
+                IsPrimary = true, HashSHA256 = "ABC",
+            });
+            seedVersion.Images.Add(new ModelImage { Url = "https://img/own.jpeg", NsfwLevel = NsfwLevel.PG });
+            model.Versions.Add(seedVersion);
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion(id: 700, sha256: "ABC") with
+        {
+            Images = [new CivitaiModelImage { Url = "https://img/other.jpeg", NsfwLevel = 16 }],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+
+        await service.PersistDownloadedModelAsync(NewRealFile("relisted-again.safetensors"), civVersion, existingModelId: modelId);
+
+        using var scope = NewScope();
+        var saved = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single(v => v.CivitaiId == 699).Images.Select(i => i.Url)
+            .Should().Equal("https://img/own.jpeg");
     }
 
     [Fact]

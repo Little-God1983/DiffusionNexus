@@ -72,6 +72,17 @@
               <ProgressBar IsIndeterminate="True" Width="80" VerticalAlignment="Center"/>
             </Border>
 
+            <!-- #631: Show NSFW is off and the selected version's picture is not rated safe
+                 (reachable through the version chips). Opaque, so nothing shows through. -->
+            <Border IsVisible="{Binding IsPreviewHidden}"
+                    Background="#252525">
+              <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Border Background="#333" CornerRadius="8" Padding="12,8">
+                  <TextBlock Text="NSFW preview hidden" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
+                </Border>
+              </StackPanel>
+            </Border>
+
                 </Grid>
               </Border>
             </Button>

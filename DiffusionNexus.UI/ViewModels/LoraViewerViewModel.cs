@@ -2409,6 +2409,47 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     partial void OnShowNsfwChanged(bool value)
     {
         ApplyFilters();
+
+        // Once per switch to "off", not per filter pass: the count follows the search box, and a
+        // line per keystroke would bury the Unified Console.
+        if (!value && HiddenUnratedCount > 0)
+        {
+            _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+                $"{HiddenUnratedCount} LoRA(s) are hidden while Show NSFW is off because their preview has no rating yet. Run Download Metadata to rate them."));
+        }
+    }
+
+    /// <summary>Tiles the last filter pass hid only because their Civitai picture is not rated yet.</summary>
+    internal int HiddenUnratedCount { get; private set; }
+
+    /// <summary>Whether "Show NSFW" off is hiding LoRAs only because their pictures are not rated yet.</summary>
+    public bool HasHiddenUnrated => HiddenUnratedCount > 0;
+
+    /// <summary>
+    /// The hint shown under the toolbar while <see cref="HasHiddenUnrated"/>. The bulk run reaches
+    /// every version Civitai has an id for; a LoRA with no Civitai id at all is only reached by the
+    /// detail view's Download Metadata, which looks the file up by hash — hence the second sentence.
+    /// </summary>
+    public string HiddenUnratedMessage => FormattableString.Invariant(
+        $"{HiddenUnratedCount} {(HiddenUnratedCount == 1 ? "LoRA is" : "LoRAs are")} hidden because the preview has no NSFW rating yet. Download Metadata rates them; if one stays hidden, use Download Metadata in its details.");
+
+    /// <summary>
+    /// What the empty grid says. "Add LoRA source folders" only when there are no LoRAs at all — a
+    /// library whose every tile is filtered out is not an empty library (#631 made that state common
+    /// until the first Download Metadata run rates the pictures).
+    /// </summary>
+    public string EmptyStateMessage =>
+        AllTiles.Count == 0 ? "Add LoRA source folders in Settings, then click Refresh."
+        : HasHiddenUnrated ? "Their previews have no NSFW rating yet. Run Download Metadata to rate them, or turn Show NSFW on."
+        : "No LoRAs match the current filters.";
+
+    /// <summary>Publishes the count the hint shows; the Unified Console line is written by the toggle.</summary>
+    private void ReportHiddenUnrated(int count)
+    {
+        if (count == HiddenUnratedCount) return;
+        HiddenUnratedCount = count;
+        OnPropertyChanged(nameof(HasHiddenUnrated));
+        OnPropertyChanged(nameof(HiddenUnratedMessage));
     }
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
@@ -2437,6 +2478,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             FilteredTiles.Remove(tile);
             TotalModelCount = AllTiles.Count;
             FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
+            // Deleting the last LoRA turns "no match" into "add source folders".
+            OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
         });
     }
@@ -2858,11 +2901,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 t.TagNames.Any(tag => tag.Contains(search, StringComparison.OrdinalIgnoreCase)));
         }
 
-        if (!ShowNsfw)
-        {
-            query = query.Where(t => !t.IsNsfw);
-        }
-
         var activeBaseModels = AvailableBaseModels
             .Where(f => f.IsSelected)
             .Select(f => f.BaseModelRaw)
@@ -2878,7 +2916,29 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                      activeBaseModels.Contains(v.BaseModelRaw))));
         }
 
-        var filtered = SortTiles(query.ToList());
+        // Nothing NSFW on screen with the toggle off (#631): not the creator's flag alone, but the
+        // picture each tile shows too. Applied last, in one pass, so the "hidden for want of a
+        // rating" count covers only the LoRAs the search and base-model filters let through.
+        var candidates = query.ToList();
+        foreach (var tile in AllTiles) tile.HideNsfwPreviews = !ShowNsfw;
+        var hiddenUnrated = 0;
+        if (!ShowNsfw)
+        {
+            var safe = new List<ModelTileViewModel>(candidates.Count);
+            foreach (var tile in candidates)
+            {
+                if (!tile.HasNsfwContent) safe.Add(tile);
+                else if (!tile.IsNsfw && tile.ShowsUnratedImage) hiddenUnrated++;
+            }
+            candidates = safe;
+        }
+        ReportHiddenUnrated(hiddenUnrated);
+
+        var filtered = SortTiles(candidates);
+
+        // Before the early return below: the grid can stay empty while the reason it is empty
+        // changes (an empty library loading only unrated LoRAs, say).
+        OnPropertyChanged(nameof(EmptyStateMessage));
 
         // Unchanged result set AND order (e.g. the extra keystroke matched the same
         // tiles): keep the current tiles and scroll position, skip the rebuild. A sort
@@ -3061,6 +3121,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 Width = 512,
                 Height = 768,
                 SortOrder = 0,
+                NsfwLevel = NsfwLevel.PG, // rated, so "Show NSFW" off still shows the demo
                 ModelVersion = version
             });
 
@@ -3150,6 +3211,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             Width = 512,
             Height = 768,
             SortOrder = 0,
+            NsfwLevel = NsfwLevel.PG,
             ModelVersion = version,
         });
 

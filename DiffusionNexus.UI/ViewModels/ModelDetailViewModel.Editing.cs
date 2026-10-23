@@ -10,6 +10,7 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
@@ -1108,39 +1109,8 @@ public partial class ModelDetailViewModel
                     }
                 }
 
-                // Add new images (skip duplicates by CivitaiId).
-                var existingImageIds = dbVersion.Images
-                    .Where(i => i.CivitaiId.HasValue)
-                    .Select(i => i.CivitaiId!.Value)
-                    .ToHashSet();
-                var sortOrder = dbVersion.Images.Count;
-                foreach (var civImage in civitaiVersion.Images)
-                {
-                    if (string.IsNullOrEmpty(civImage.Url)) continue;
-                    if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value)) continue;
-
-                    dbVersion.Images.Add(new ModelImage
-                    {
-                        ModelVersionId = dbVersion.Id,
-                        CivitaiId = civImage.Id,
-                        Url = civImage.Url,
-                        MediaType = civImage.Type,
-                        IsNsfw = civImage.Nsfw,
-                        Width = civImage.Width ?? 0,
-                        Height = civImage.Height ?? 0,
-                        BlurHash = civImage.Hash,
-                        SortOrder = sortOrder++,
-                        CreatedAt = civImage.CreatedAt,
-                        PostId = civImage.PostId,
-                        Username = civImage.Username,
-                        Prompt = civImage.Meta?.Prompt,
-                        NegativePrompt = civImage.Meta?.NegativePrompt,
-                        Seed = civImage.Meta?.Seed,
-                        Steps = civImage.Meta?.Steps,
-                        Sampler = civImage.Meta?.Sampler,
-                        CfgScale = civImage.Meta?.CfgScale,
-                    });
-                }
+                // Images: new ones added, stored ones rated, duplicate copies dropped (#631).
+                CivitaiImageMerger.Merge(dbVersion, civitaiVersion.Images);
 
                 // File hashes from the primary Civitai file.
                 var civFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)

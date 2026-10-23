@@ -28,6 +28,7 @@
                 BorderBrush="#333"
                 BorderThickness="0,0,0,1">
 
+          <StackPanel>
           <WrapPanel Orientation="Horizontal">
 
             <TextBox Text="{Binding SearchText, Mode=TwoWay}"
@@ -224,6 +225,29 @@
             </Button>
 
           </WrapPanel>
+
+          <!-- #631: "Show NSFW" off hides pictures with no rating yet. Until Download Metadata
+               rates them that can be most of the library, so say so and offer the fix. -->
+          <Border IsVisible="{Binding HasHiddenUnrated}"
+                  Background="#2A2A1A"
+                  BorderBrush="#5A5A2A"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{Binding HiddenUnratedMessage}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="Download Metadata"
+                      Command="{Binding DownloadMissingMetadataCommand}"
+                      ToolTip.Tip="Fetch metadata and preview ratings from Civitai"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+          </StackPanel>
         </Border>
 
         <!-- Main Content: Tiles + Detail Panel (overlay) -->
@@ -279,8 +303,11 @@
                            FontSize="20"
                            FontWeight="SemiBold"
                            HorizontalAlignment="Center"/>
-                <TextBlock Text="Add LoRA source folders in Settings, then click Refresh."
+                <TextBlock Text="{Binding EmptyStateMessage}"
                            Opacity="0.6"
+                           TextWrapping="Wrap"
+                           MaxWidth="420"
+                           TextAlignment="Center"
                            HorizontalAlignment="Center"/>
                 <Button Content="Open Settings"
                         HorizontalAlignment="Center"

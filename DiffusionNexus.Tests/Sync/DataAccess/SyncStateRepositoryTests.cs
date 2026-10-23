@@ -59,7 +59,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
                 FileName = Path.GetFileName(path), LocalPath = path, IsLocalFileValid = validFile,
                 LocalFileVerifiedAt = verifiedAt, IsPrimary = true, HashSHA256 = "AA",
             });
-        if (withImage) v.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
+        if (withImage) v.Images.Add(new ModelImage { Url = "https://x/y.jpeg", NsfwLevel = NsfwLevel.PG });
         m.Versions.Add(v);
         if (withTag) m.Tags.Add(new ModelTag { Tag = new Tag { Name = "style", NormalizedName = "style" } });
         return m;
@@ -392,7 +392,7 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var model = NewLocalModel("imaged", @"C:\m\imaged.safetensors", civitaiId: 1, versionCivitaiId: 10);
 
         var withImage = new ModelVersion { Name = "v2", CivitaiId = 11, BaseModelRaw = "???" };
-        withImage.Images.Add(new ModelImage { Url = "https://x/z.jpeg" });
+        withImage.Images.Add(new ModelImage { Url = "https://x/z.jpeg", NsfwLevel = NsfwLevel.PG });
         model.Versions.Add(withImage);
 
         model.Versions.Add(new ModelVersion { Name = "v3", CivitaiId = null, BaseModelRaw = "???" });
@@ -413,6 +413,37 @@ public sealed class SyncStateRepositoryTests : IDisposable
         candidate.CivitaiVersionId.Should().Be(10);
         candidate.Name.Should().Be("imaged");
         candidate.ImagesCheckedAt.Should().Be(imagesCheckedAt);
+    }
+
+    /// <summary>
+    /// #631: a version holding a Civitai image with no rating is due as well, so the bulk
+    /// Download Metadata run rates libraries synced before ratings were stored. A rated image, or a
+    /// local preview nothing can rate, is not a reason to ask again.
+    /// </summary>
+    [Fact]
+    public async Task ImageCandidatesIncludeVersionsWithUnratedCivitaiImages()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var model = NewLocalModel("unrated", @"C:\m\unrated.safetensors", civitaiId: 1, versionCivitaiId: 10);
+        model.Versions.First().Images.Add(new ModelImage { Url = "https://x/rated.jpeg", NsfwLevel = NsfwLevel.PG });
+        model.Versions.First().Images.Add(new ModelImage { Url = "https://x/unrated.jpeg" });
+
+        var allRated = new ModelVersion { Name = "v2", CivitaiId = 11, BaseModelRaw = "???" };
+        allRated.Images.Add(new ModelImage { Url = "https://x/r.jpeg", NsfwLevel = NsfwLevel.R });
+        model.Versions.Add(allRated);
+
+        var localOnly = new ModelVersion { Name = "v3", CivitaiId = 12, BaseModelRaw = "???" };
+        localOnly.Images.Add(new ModelImage { Url = "file:///C:/m/unrated.preview.png" });
+        model.Versions.Add(localOnly);
+
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+
+        var candidates = await uow.SyncStates.SelectImageCandidatesAsync(SyncScope.Library, Roots);
+
+        candidates.Should().ContainSingle().Which.CivitaiVersionId.Should().Be(10);
     }
 
     // ------------------------------------------------- library scope (R2/R4)
@@ -799,6 +830,33 @@ public sealed class SyncStateRepositoryTests : IDisposable
         var untouchedInput = inputs.Single(i => i.ModelId == untouched.Id);
         untouchedInput.LastSyncedAt.Should().BeNull();
         untouchedInput.HasRealBaseModel.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// #631: the projection tells the deriver whether a model still holds a Civitai picture with no
+    /// rating. A rated picture, or an unrated local preview nothing can rate, does not count.
+    /// </summary>
+    [Fact]
+    public async Task GetDerivationInputs_ReportsUnratedCivitaiImages()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var unrated = NewLocalModel("unrated", @"C:\m\unrated.safetensors", civitaiId: 1, withImage: true);
+        unrated.Versions.First().Images.Add(new ModelImage { Url = "https://x/unrated.jpeg" });
+        var rated = NewLocalModel("rated", @"C:\m\rated.safetensors", civitaiId: 2, withImage: true);
+        var localOnly = NewLocalModel("local", @"C:\m\local.safetensors", civitaiId: 3);
+        localOnly.Versions.First().Images.Add(new ModelImage { Url = "file:///C:/m/local.preview.png" });
+
+        foreach (var m in new[] { unrated, rated, localOnly })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync([unrated.Id, rated.Id, localOnly.Id]);
+
+        inputs.Single(i => i.ModelId == unrated.Id).HasUnratedCivitaiImages.Should().BeTrue();
+        inputs.Single(i => i.ModelId == rated.Id).HasUnratedCivitaiImages.Should().BeFalse();
+        inputs.Single(i => i.ModelId == localOnly.Id).HasUnratedCivitaiImages.Should().BeFalse();
     }
 
     /// <summary>

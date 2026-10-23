@@ -196,6 +196,117 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// #631: a sidecar's image ratings are stored as Civitai's bitmask. Current sidecars carry an
+    /// integer nsfwLevel; older ones carry the rating names, which map None→PG, Soft→PG-13,
+    /// Mature→R and X→X. Before, only nsfwLevel > 1 was honoured, so PG-13 counted as NSFW and the
+    /// old names were lost.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_CivitaiInfoStoresEachImagesRating()
+    {
+        var modelPath = NewModelFile("rated.safetensors");
+        var modelId = await SeedAsync(modelPath);
+
+        var sidecar = """
+        {"id":701,"modelId":78,"model":{"name":"N","nsfw":false},
+         "images":[
+           {"url":"https://x/xxx.jpeg","nsfwLevel":16},
+           {"url":"https://x/pg13.jpeg","nsfwLevel":2},
+           {"url":"https://x/mature.jpeg","nsfw":"Mature"},
+           {"url":"https://x/none.jpeg","nsfw":"None"},
+           {"url":"https://x/unknown.jpeg","nsfw":false}]}
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "rated.civitai.info"), sidecar);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var images = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single().Images
+            .ToDictionary(i => i.Url, i => i.NsfwLevel);
+
+        images.Should().BeEquivalentTo(new Dictionary<string, NsfwLevel>
+        {
+            ["https://x/xxx.jpeg"] = NsfwLevel.XXX,
+            ["https://x/pg13.jpeg"] = NsfwLevel.PG13,
+            ["https://x/mature.jpeg"] = NsfwLevel.R,
+            ["https://x/none.jpeg"] = NsfwLevel.PG,
+            ["https://x/unknown.jpeg"] = NsfwLevel.None,
+        });
+    }
+
+    /// <summary>
+    /// #631: an image the API path stored unrated gets its rating from the sidecar instead of being
+    /// skipped as "already there"; a rating already stored is left alone.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_FillsTheRatingOfAnImageAlreadyStored()
+    {
+        var modelPath = NewModelFile("fill.safetensors");
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            model.Versions.First().Images.Add(new ModelImage { Url = "https://x/unrated.jpeg", SortOrder = 0 });
+            model.Versions.First().Images.Add(new ModelImage { Url = "https://x/rated.jpeg", SortOrder = 1, NsfwLevel = NsfwLevel.X });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var sidecar = """
+        {"id":702,"modelId":79,"model":{"name":"N"},
+         "images":[{"url":"https://x/unrated.jpeg","nsfwLevel":4},{"url":"https://x/rated.jpeg","nsfwLevel":1}]}
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "fill.civitai.info"), sidecar);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using var readScope = NewScope();
+        var readUow = readScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var images = (await readUow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single().Images
+            .ToDictionary(i => i.Url, i => i.NsfwLevel);
+
+        images.Should().HaveCount(2);
+        images["https://x/unrated.jpeg"].Should().Be(NsfwLevel.R);
+        images["https://x/rated.jpeg"].Should().Be(NsfwLevel.X, "a stored rating is newer than the sidecar's");
+    }
+
+    /// <summary>
+    /// After duplicate copies are removed a version's sort orders can have gaps (0, 1, 3). A new
+    /// sidecar image goes after the last one, not to <c>Count</c>, which here is an order in use.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_NewImageSortsAfterTheLastOne_EvenWithGaps()
+    {
+        var modelPath = NewModelFile("gaps.safetensors");
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            foreach (var order in new[] { 0, 1, 3 })
+                model.Versions.First().Images.Add(new ModelImage { Url = $"https://x/{order}.jpeg", SortOrder = order });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var sidecar = """
+        {"id":703,"modelId":80,"model":{"name":"N"},"images":[{"url":"https://x/new.jpeg","nsfwLevel":1}]}
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "gaps.civitai.info"), sidecar);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using var readScope = NewScope();
+        var images = (await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId))!
+            .Versions.Single().Images;
+        images.Single(i => i.Url == "https://x/new.jpeg").SortOrder.Should().Be(4);
+    }
+
     [Fact]
     public async Task ApplyAsync_SimpleJsonSdVersionFallback()
     {

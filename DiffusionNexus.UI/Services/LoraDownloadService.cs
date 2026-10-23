@@ -524,31 +524,8 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 version.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
             }
 
-            var sortOrder = 0;
-            foreach (var civImage in bestVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url)) continue;
-                version.Images.Add(new ModelImage
-                {
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
+            // The one writer of Civitai images, so a download stores their ratings too (#631).
+            CivitaiImageMerger.Merge(version, bestVersion.Images);
 
             var modelFile = new ModelFile
             {
@@ -609,6 +586,16 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 version.Files.Remove(modelFile);
                 modelFile.ModelVersion = duplicateVersion;
                 duplicateVersion.Files.Add(modelFile);
+
+                // The new version (and its freshly rated images) is discarded below; the existing
+                // one gets the images instead — ratings are facts about Civitai, not user text (#631).
+                // Only when it IS that Civitai version (or an unlinked orphan about to be linked to
+                // it): the hash fallback can land on a version linked to a different id, and another
+                // version's gallery would then decide what its tile shows.
+                if (duplicateVersion.CivitaiId is null || duplicateVersion.CivitaiId == version.CivitaiId)
+                {
+                    CivitaiImageMerger.Merge(duplicateVersion, bestVersion.Images);
+                }
 
                 // Backfill Civitai linkage onto an orphan version we just matched
                 // by hash, so future installed-checks work via CivitaiId (the
