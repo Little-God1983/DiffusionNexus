@@ -203,6 +203,25 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         Assert.Contains(logger.Warnings, w => w.Contains("TotalVersionCount"));
     }
 
+    /// <summary>
+    /// #647: AddModelNsfwOverride stamped as applied without its ALTER running would fail every
+    /// LoRA query on "no such column". The self-heal re-adds it, and every LoRA is automatic again.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingNsfwOverrideColumn()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE Models DROP COLUMN NsfwOverride;");
+        Assert.DoesNotContain("NsfwOverride", Columns("Models"));
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+
+        Assert.Contains("NsfwOverride", Columns("Models"));
+        Assert.Empty(logger.Errors);
+        using (var ctx = NewContext()) Assert.Empty(ctx.Models.ToList());
+    }
+
     [Fact]
     public void CheckAndRepairSchema_ReAddsMissingAppSettingsColumn()
     {

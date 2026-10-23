@@ -31,6 +31,13 @@ public interface IModelRepository : IRepository<Model>
     Task<IReadOnlyList<Model>> GetModelsWithLocalFilesLightAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Writes the user's NSFW verdict (<see cref="Model.NsfwOverride"/>) for these models in one
+    /// statement — a tile's whole group at once (#647). <c>null</c> returns them to automatic.
+    /// Returns the number of models updated.
+    /// </summary>
+    Task<int> SetNsfwOverrideAsync(IReadOnlyCollection<int> modelIds, bool? choice, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a single image's ThumbnailData from the database.
     /// Used for on-demand lazy loading when a tile scrolls into view.
     /// </summary>

@@ -339,4 +339,43 @@ public class CoreDbMigrationTests
             tempDir.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// #647: the user's NSFW verdict per LoRA is a new nullable column; every existing LoRA starts
+    /// automatic (null), and nothing else in Models changes.
+    /// </summary>
+    [Fact]
+    public void AddModelNsfwOverride_ExistingLorasStartAutomatic()
+    {
+        var tempDir = Directory.CreateTempSubdirectory();
+        var dbPath = Path.Combine(tempDir.FullName, "nsfw-override-test.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<DiffusionNexusCoreDbContext>()
+                .UseSqlite($"Data Source={dbPath};Pooling=False")
+                .Options;
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                ctx.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
+                    .Migrate("20261023081307_AddNsfwRating");
+                ctx.Database.ExecuteSqlRaw(
+                    "INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+                    "VALUES (1, 'existing', 'LORA', 'Available', 'CivitaiApi', 1, 0, 0, 'None', 0, 0, '2026-10-01T00:00:00+00:00', 0, 0);");
+                ctx.Database.Migrate();
+            }
+
+            using (var ctx = new DiffusionNexusCoreDbContext(options))
+            {
+                var model = ctx.Models.AsNoTracking().Single();
+                model.NsfwOverride.Should().BeNull("an existing LoRA keeps the automatic verdict");
+                model.IsNsfw.Should().BeTrue("the creator flag is untouched");
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            tempDir.Delete(recursive: true);
+        }
+    }
 }

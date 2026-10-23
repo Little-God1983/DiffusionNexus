@@ -36,6 +36,13 @@ public class Model : BaseEntity
     /// <summary>Whether the model contains NSFW content.</summary>
     public bool IsNsfw { get; set; }
 
+    /// <summary>
+    /// The user's own verdict for "Show NSFW" off (#647): <c>false</c> = safe to show,
+    /// <c>true</c> = NSFW, <c>null</c> = automatic (Civitai's ratings and the creator's flag).
+    /// Beats both, and no metadata sync writes it.
+    /// </summary>
+    public bool? NsfwOverride { get; set; }
+
     /// <summary>Whether this is a person of interest model.</summary>
     public bool IsPoi { get; set; }
 

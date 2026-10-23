@@ -759,6 +759,39 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// #647 guard: the user's "safe to show" / "NSFW" choice is theirs — a metadata sync rewrites
+    /// Civitai's facts (ratings, the creator flag) but never the choice. Passes today because no
+    /// applier writes the column; it is here so none starts to.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_KeepsTheUsersNsfwChoice()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("chosen", @"C:\m\chosen.safetensors");
+            model.NsfwOverride = false;
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = model.Versions.First().Files.First().Id;
+        }
+
+        var civVersion = NewCivitaiVersion(images: [NewImage(5, "https://img/5.jpeg") with { Id = null, NsfwLevel = 16 }]);
+        var applier = NewApplier(NewCivitaiModel(civVersion) with { Nsfw = true });
+
+        using (var scope = NewScope())
+            (await applier.ApplyAsync(scope.ServiceProvider.GetRequiredService<IUnitOfWork>(), modelId, fileId, civVersion, apiKey: null))
+                .Should().BeTrue();
+
+        using var readScope = NewScope();
+        var saved = await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.NsfwOverride.Should().BeFalse();
+        saved.IsNsfw.Should().BeTrue("Civitai's flag is still synced; the choice just outranks it");
+    }
+
     [Fact]
     public async Task ApplyAsync_ReturnsFalseWhenModelMissing()
     {

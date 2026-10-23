@@ -72,6 +72,7 @@ CREATE TABLE "Models" (
     "Description" TEXT NULL,
     "Type" TEXT NOT NULL,
     "IsNsfw" INTEGER NOT NULL,
+    "NsfwOverride" INTEGER NULL,
     "IsPoi" INTEGER NOT NULL,
     "Mode" TEXT NOT NULL,
     "Source" TEXT NOT NULL,

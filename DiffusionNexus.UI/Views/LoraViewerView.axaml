@@ -226,9 +226,9 @@
 
           </WrapPanel>
 
-          <!-- #631: "Show NSFW" off hides pictures with no rating yet. Until Download Metadata
-               rates them that can be most of the library, so say so and offer the fix. -->
-          <Border IsVisible="{Binding HasHiddenUnrated}"
+          <!-- #647: how many LoRAs in this view Show NSFW off hides, and the way to see exactly
+               those. The number is what the list shows; the list says why each is hidden. -->
+          <Border IsVisible="{Binding ShowHiddenHint}"
                   Background="#2A2A1A"
                   BorderBrush="#5A5A2A"
                   BorderThickness="1"
@@ -236,13 +236,33 @@
                   Padding="10,6"
                   Margin="0,8,0,0">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="{Binding HiddenUnratedMessage}"
+              <TextBlock Text="{Binding HiddenHint}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center"/>
               <Button Grid.Column="1"
-                      Content="Download Metadata"
-                      Command="{Binding DownloadMissingMetadataCommand}"
-                      ToolTip.Tip="Fetch metadata and preview ratings from Civitai"
+                      Content="{Binding ShowHiddenButtonText}"
+                      Command="{Binding ShowHiddenCommand}"
+                      ToolTip.Tip="List the LoRAs Show NSFW hides, with the reason for each"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+
+          <!-- #647: the hidden list is open. -->
+          <Border IsVisible="{Binding ShowHiddenOnly}"
+                  Background="#1F2A33"
+                  BorderBrush="#2E4A5E"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{Binding HiddenViewTitle}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="Back to all"
+                      Command="{Binding BackToAllCommand}"
                       Margin="12,0,0,0"
                       VerticalAlignment="Center"/>
             </Grid>

@@ -603,6 +603,72 @@ public class ModelRepositoryTests : IDisposable
         image.ThumbnailData.Should().BeNull("a row that never got bytes is not deferred, it is empty");
     }
 
+    /// <summary>
+    /// #647: the grid tells "not rated yet" (the bulk run will fetch it) from "no rating" (Civitai
+    /// was asked and had nothing) by the images step's stamp, so the light load carries the sync
+    /// state — and the user's NSFW choice.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_CarriesSyncStateAndNsfwOverride()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
+            model.NsfwOverride = false;
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+
+        var model1 = loaded.Should().ContainSingle().Subject;
+        model1.NsfwOverride.Should().BeFalse();
+        model1.SyncState.Should().NotBeNull();
+        model1.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>
+    /// #647: marking a LoRA safe or NSFW applies to every model row its tile stands for, survives a
+    /// reload, and "Automatic" clears it again.
+    /// </summary>
+    [Fact]
+    public async Task SetNsfwOverride_PersistsForEveryModelOfTheTile()
+    {
+        int a, b, other;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var ma = CreateModelWithLocalFile("Same", @"C:\m\a.safetensors");
+            var mb = CreateModelWithLocalFile("Same", @"C:\m\b.safetensors");
+            var mo = CreateModelWithLocalFile("Other", @"C:\m\o.safetensors");
+            foreach (var m in new[] { ma, mb, mo }) await seed.Models.AddAsync(m);
+            await seed.SaveChangesAsync();
+            (a, b, other) = (ma.Id, mb.Id, mo.Id);
+        }
+
+        async Task<Dictionary<int, bool?>> ReadAsync()
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var models = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+            return models.ToDictionary(m => m.Id, m => m.NsfwOverride);
+        }
+
+        using (var scope = _serviceProvider.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetNsfwOverrideAsync([a, b], false))
+                .Should().Be(2);
+        (await ReadAsync()).Should().BeEquivalentTo(new Dictionary<int, bool?> { [a] = false, [b] = false, [other] = null });
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetNsfwOverrideAsync([a, b], null);
+        (await ReadAsync()).Values.Should().AllSatisfy(v => v.Should().BeNull());
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

@@ -99,7 +99,7 @@ public class LoraViewerViewModelNsfwFilterTests
     }
 
     [Fact]
-    public void UnratedCivitaiImages_AreHiddenUntilRated_LocalPreviewsAndNoImagesStay()
+    public void UnratedCivitaiImages_AreHidden_LocalPreviewsAndNoImagesStay()
     {
         var local = new ModelImage { Url = "file:///E:/Loras/local.preview.png", MediaType = "image" };
         var vm = ViewModelWith(
@@ -110,37 +110,112 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.ShowNsfw = false;
 
         Visible(vm).Should().BeEquivalentTo("local preview", "no images");
-        vm.HiddenUnratedCount.Should().Be(1, "the user is told how many wait for Download Metadata");
+        vm.HiddenCount.Should().Be(1);
     }
 
     /// <summary>
-    /// Until the first Download Metadata run after the upgrade, nearly every Civitai picture is
-    /// unrated and "Show NSFW" off empties the grid. The tab must say why and what to do, not
-    /// "add LoRA source folders" as if the library were gone.
+    /// #647: the hint's number is exactly what "Show hidden" lists — whatever the reason a LoRA is
+    /// hidden — and the hint promises nothing about Download Metadata.
     /// </summary>
     [Fact]
-    public void HiddenUnratedTiles_AreExplained_WithTheWayToRateThem()
+    public void TheHintCount_IsExactlyWhatShowHiddenLists()
     {
         var vm = ViewModelWith(
-            NewModel("unrated one", flaggedNsfw: false, Image("u1", NsfwLevel.None)),
-            NewModel("unrated two", flaggedNsfw: false, Image("u2", NsfwLevel.None)));
+            NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)),
+            NewModel("creator flag", flaggedNsfw: true, Image("pg", NsfwLevel.PG)),
+            NewModel("unrated", flaggedNsfw: false, Image("u", NsfwLevel.None)),
+            NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG13)));
 
         vm.ShowNsfw = false;
+        vm.HiddenCount.Should().Be(3);
+        vm.HasHiddenInView.Should().BeTrue();
+        vm.HiddenHint.Should().Be("3 LoRAs in this view are hidden by Show NSFW.");
 
-        vm.HasHiddenUnrated.Should().BeTrue();
-        vm.HiddenUnratedMessage.Should().Contain("2 LoRAs").And.Contain("Download Metadata");
-        vm.EmptyStateMessage.Should().Contain("Download Metadata").And.NotContain("source folders");
+        vm.ShowHiddenCommand.Execute(null);
+
+        vm.ShowHiddenOnly.Should().BeTrue();
+        Visible(vm).Should().BeEquivalentTo("rated xxx", "creator flag", "unrated");
+        vm.FilteredTiles.Should().OnlyContain(t => t.IsInHiddenView && t.IsPreviewHidden,
+            "every picture stays covered in the hidden list");
+        vm.FilteredTiles.Select(t => t.HiddenReasonText).Should().BeEquivalentTo(
+            "Rated XXX on Civitai", "Flagged NSFW by its creator", "No rating from Civitai");
+
+        vm.BackToAllCommand.Execute(null);
+        Visible(vm).Should().BeEquivalentTo("safe");
+        vm.FilteredTiles.Should().OnlyContain(t => !t.IsInHiddenView);
+    }
+
+    /// <summary>
+    /// #647: the user's choice per LoRA. Safe to show brings it back (with its usual picture),
+    /// NSFW hides it with that reason, Automatic returns to Civitai's verdict.
+    /// </summary>
+    [Fact]
+    public async Task MarkingALora_SafeNsfwOrAutomatic_ChangesWhatIsHidden()
+    {
+        var vm = ViewModelWith(
+            NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)),
+            NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
+        vm.ShowNsfw = false;
+        var xxx = vm.AllTiles.Single(t => t.DisplayName == "rated xxx");
+        var safe = vm.AllTiles.Single(t => t.DisplayName == "safe");
+
+        await vm.SetNsfwOverrideAsync(xxx, false);
+        Visible(vm).Should().BeEquivalentTo("rated xxx", "safe");
+        xxx.IsPreviewHidden.Should().BeFalse("the user decided it is safe to show");
+
+        await vm.SetNsfwOverrideAsync(safe, true);
+        Visible(vm).Should().BeEquivalentTo("rated xxx");
+        vm.ShowHiddenCommand.Execute(null);
+        vm.FilteredTiles.Should().ContainSingle().Which.HiddenReasonText.Should().Be("Marked NSFW by you");
+
+        await vm.SetNsfwOverrideAsync(safe, null);
+        await vm.SetNsfwOverrideAsync(xxx, null);
+        vm.FilteredTiles.Should().ContainSingle().Which.DisplayName.Should().Be("rated xxx");
+    }
+
+    /// <summary>The tile's buttons and menu ask the Installed tab to record the choice.</summary>
+    [Fact]
+    public void TheTilesMarkCommands_RequestTheChoice()
+    {
+        var tile = ModelTileViewModel.FromModel(NewModel("t", flaggedNsfw: false, Image("x", NsfwLevel.XXX)));
+        var requested = new List<bool?>();
+        tile.NsfwOverrideRequested += (_, choice) => requested.Add(choice);
+
+        tile.MarkSafeToShowCommand.Execute(null);
+        tile.MarkNsfwCommand.Execute(null);
+        tile.MarkNsfwAutomaticCommand.Execute(null);
+
+        requested.Should().Equal(false, true, null);
     }
 
     [Fact]
-    public void EmptyState_SaysNoMatch_WhenFiltersHideARatedLibrary()
+    public void TurningShowNsfwOn_LeavesTheHiddenList()
     {
-        var vm = ViewModelWith(NewModel("explicit gallery", flaggedNsfw: false, Image("a", NsfwLevel.XXX)));
+        var vm = ViewModelWith(NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)));
+        vm.ShowNsfw = false;
+        vm.ShowHiddenCommand.Execute(null);
+
+        vm.ShowNsfw = true;
+
+        vm.ShowHiddenOnly.Should().BeFalse();
+        vm.HiddenCount.Should().Be(0);
+        Visible(vm).Should().BeEquivalentTo("rated xxx");
+    }
+
+    /// <summary>
+    /// When everything in view is hidden the tab says so — not "add LoRA source folders" as if the
+    /// library were gone.
+    /// </summary>
+    [Fact]
+    public void EmptyState_PointsToShowHidden_WhenEverythingInViewIsHidden()
+    {
+        var vm = ViewModelWith(
+            NewModel("one", flaggedNsfw: false, Image("u1", NsfwLevel.None)),
+            NewModel("two", flaggedNsfw: false, Image("x2", NsfwLevel.X)));
 
         vm.ShowNsfw = false;
 
-        vm.HasHiddenUnrated.Should().BeFalse();
-        vm.EmptyStateMessage.Should().Be("No LoRAs match the current filters.");
+        vm.EmptyStateMessage.Should().Be("All 2 LoRAs in this view are hidden by Show NSFW. Click Show hidden to see them, or turn Show NSFW on.");
     }
 
     [Fact]
@@ -155,29 +230,28 @@ public class LoraViewerViewModelNsfwFilterTests
 
     /// <summary>
     /// The count and the empty-state reason are about the LoRAs the other filters let through: a
-    /// search that matches nothing is "no match", not "previews have no rating", even while
-    /// unrated LoRAs elsewhere in the library are hidden.
+    /// search that matches nothing is "no match", even while LoRAs elsewhere are hidden.
     /// </summary>
     [Fact]
-    public async Task HiddenUnratedCount_OnlyCountsWhatTheOtherFiltersLetThrough()
+    public async Task HiddenCount_OnlyCountsWhatTheOtherFiltersLetThrough()
     {
         var vm = ViewModelWith(
             NewModel("alpha", flaggedNsfw: false, Image("u", NsfwLevel.None)),
             NewModel("beta", flaggedNsfw: false, Image("pg", NsfwLevel.PG)));
         vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
         vm.ShowNsfw = false;
-        vm.HiddenUnratedCount.Should().Be(1);
+        vm.HiddenCount.Should().Be(1);
 
         vm.SearchText = "zzz";
         await vm.SearchDebounceTask!;
 
-        vm.HiddenUnratedCount.Should().Be(0);
+        vm.HiddenCount.Should().Be(0);
         vm.EmptyStateMessage.Should().Be("No LoRAs match the current filters.");
     }
 
     /// <summary>
     /// The empty-state text is re-announced even when the grid stays empty: an empty library
-    /// that loads only unrated LoRAs must stop telling the user to add source folders.
+    /// that loads only hidden LoRAs must stop telling the user to add source folders.
     /// </summary>
     [Fact]
     public async Task EmptyStateMessage_IsReannounced_WhenTheGridStaysEmpty()
@@ -246,6 +320,6 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.ShowNsfw = true;
 
         Visible(vm).Should().HaveCount(2);
-        vm.HiddenUnratedCount.Should().Be(0);
+        vm.HiddenCount.Should().Be(0);
     }
 }

@@ -18,6 +18,20 @@
           ClipToBounds="True"
           Cursor="Hand"
           Classes="tile">
+    <!-- #647: the user's own NSFW verdict for this LoRA; it outranks Civitai's ratings. -->
+    <Border.ContextMenu>
+      <ContextMenu>
+        <MenuItem Header="✓ Mark safe to show"
+                  Command="{Binding MarkSafeToShowCommand}"
+                  ToolTip.Tip="Always show this LoRA, even with Show NSFW off"/>
+        <MenuItem Header="✕ Mark NSFW"
+                  Command="{Binding MarkNsfwCommand}"
+                  ToolTip.Tip="Hide this LoRA while Show NSFW is off"/>
+        <MenuItem Header="Automatic (Civitai's rating)"
+                  Command="{Binding MarkNsfwAutomaticCommand}"
+                  ToolTip.Tip="Forget your choice; Civitai's ratings and the creator's flag decide again"/>
+      </ContextMenu>
+    </Border.ContextMenu>
     <Border.Styles>
       <!-- The action buttons are laid out only while the tile is hovered. During scroll
            they are collapsed (IsVisible=False → not measured/arranged), which removes the
@@ -159,6 +173,32 @@
                        Foreground="#99FFFFFF"
                        TextTrimming="CharacterEllipsis"
                        ToolTip.Tip="{Binding FileName}"/>
+          </StackPanel>
+
+          <!-- #647: in the "Show hidden" list, why this LoRA is hidden and the user's two choices. -->
+          <StackPanel IsVisible="{Binding IsInHiddenView}" Margin="8,0,8,6" Spacing="4">
+            <TextBlock Text="{Binding HiddenReasonText}"
+                       FontSize="11"
+                       Foreground="#E0A040"
+                       TextWrapping="Wrap"/>
+            <Grid ColumnDefinitions="*,6,*">
+              <Button Grid.Column="0"
+                      Content="✓ Safe to show"
+                      Command="{Binding MarkSafeToShowCommand}"
+                      ToolTip.Tip="Always show this LoRA, even with Show NSFW off"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      FontSize="11"
+                      Padding="4,3"/>
+              <Button Grid.Column="2"
+                      Content="✕ NSFW"
+                      Command="{Binding MarkNsfwCommand}"
+                      ToolTip.Tip="Keep it hidden — your choice, not Civitai's"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      FontSize="11"
+                      Padding="4,3"/>
+            </Grid>
           </StackPanel>
 
           <!-- Action buttons: collapsed during scroll, shown on pointer-over (see .tileActions style). -->

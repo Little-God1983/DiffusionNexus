@@ -64,6 +64,9 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Files)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // One small row per model: the images step's stamp is how the grid tells "not rated
+            // yet" from "Civitai had no rating" (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .Where(m => m.Versions.Any(v => v.Files.Any(f => f.LocalPath != null && f.LocalPath != "")))
             .AsSplitQuery()
             .AsNoTracking()
@@ -467,6 +470,18 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .SetProperty(m => m.TotalVersionCount, totalVersionCount)
                 .SetProperty(m => m.LastCheckedForUpdatesUtc, checkedAtUtc),
                 cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> SetNsfwOverrideAsync(
+        IReadOnlyCollection<int> modelIds, bool? choice, CancellationToken cancellationToken = default)
+    {
+        if (modelIds.Count == 0) return 0;
+
+        return await Context.Models
+            .Where(m => modelIds.Contains(m.Id))
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.NsfwOverride, choice), cancellationToken)
             .ConfigureAwait(false);
     }
 

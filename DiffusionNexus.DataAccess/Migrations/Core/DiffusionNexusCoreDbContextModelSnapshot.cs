@@ -596,6 +596,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("NsfwOverride")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(20)

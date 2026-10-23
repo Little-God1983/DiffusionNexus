@@ -399,37 +399,84 @@ public partial class ModelTileViewModel : ViewModelBase
     public bool IsNsfw => ModelEntity?.IsNsfw ?? false;
 
     /// <summary>
-    /// Whether the tile would put NSFW content on screen (#631): the model is flagged NSFW, or the
-    /// picture the tile shows is not rated safe. The tile shows its version's
-    /// <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still, so a tile that
-    /// passes this test shows a safe picture. A tile without a picture shows a placeholder.
+    /// Whether "Show NSFW" off hides this tile, and why (#631, #647): <see cref="NsfwPolicy.Judge"/>
+    /// on the picture the tile shows — the user's own choice first, then the creator's flag, then
+    /// the version's <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still.
     /// </summary>
-    public bool HasNsfwContent => IsNsfw || ShowsNsfwPicture;
+    public NsfwVerdict NsfwVerdict =>
+        ModelEntity is { } model ? NsfwPolicy.Judge(model, SelectedVersion) : new NsfwVerdict(NsfwHideReason.None);
 
-    /// <summary>
-    /// The selected version still holds Civitai pictures with no rating — a library synced before
-    /// #631. Asked of hidden tiles only: once Download Metadata rates them, a safe one can become
-    /// the picture the tile shows.
-    /// </summary>
-    internal bool ShowsUnratedImage =>
-        SelectedVersion?.Images.Any(i => i.NsfwLevel == Domain.Enums.NsfwLevel.None
-                                         && NsfwPolicy.IsWebImage(i.Url)) == true;
+    /// <summary>Whether "Show NSFW" off hides this tile (<see cref="NsfwVerdict"/>).</summary>
+    public bool HasNsfwContent => NsfwVerdict.IsHidden;
 
-    /// <summary>The picture the tile shows is not safe, judged in its version (<see cref="ModelVersion.IsImageNsfw"/>).</summary>
-    private bool ShowsNsfwPicture =>
-        SelectedVersion is { } version && version.PrimaryImage is { } picture && version.IsImageNsfw(picture);
+    /// <summary>Why the tile is hidden, as the "Show hidden" list says it under the name.</summary>
+    public string HiddenReasonText => DescribeHideReason(NsfwVerdict);
+
+    internal static string DescribeHideReason(NsfwVerdict verdict) => verdict.Reason switch
+    {
+        NsfwHideReason.MarkedNsfwByYou => "Marked NSFW by you",
+        NsfwHideReason.FlaggedByCreator => "Flagged NSFW by its creator",
+        NsfwHideReason.RatedOnCivitai => $"Rated {RatingLabel(verdict.Rating)} on Civitai",
+        NsfwHideReason.NotRatedYet => "Not rated yet — Download Metadata",
+        NsfwHideReason.NoRating => "No rating from Civitai",
+        _ => string.Empty,
+    };
+
+    /// <summary>The strongest level in a rating, as Civitai names it.</summary>
+    private static string RatingLabel(Domain.Enums.NsfwLevel rating) => rating switch
+    {
+        _ when rating.HasFlag(Domain.Enums.NsfwLevel.Blocked) => "Blocked",
+        _ when rating.HasFlag(Domain.Enums.NsfwLevel.XXX) => "XXX",
+        _ when rating.HasFlag(Domain.Enums.NsfwLevel.X) => "X",
+        _ when rating.HasFlag(Domain.Enums.NsfwLevel.R) => "R",
+        _ when rating.HasFlag(Domain.Enums.NsfwLevel.PG13) => "PG-13",
+        _ => "PG",
+    };
 
     /// <summary>
     /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
-    /// its picture is safe, but the version chips can switch it to a version whose picture is not;
-    /// <see cref="IsPreviewHidden"/> covers that picture instead of showing it.
+    /// it is not hidden, but the version chips can switch it to a version whose picture is not safe,
+    /// and the "Show hidden" list shows hidden tiles on purpose; <see cref="IsPreviewHidden"/>
+    /// covers the picture in both cases.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
     private bool _hideNsfwPreviews;
 
-    /// <summary>Whether the tile covers its picture: Show NSFW is off and the picture is not rated safe.</summary>
-    public bool IsPreviewHidden => HideNsfwPreviews && ShowsNsfwPicture;
+    /// <summary>
+    /// Set by the Installed tab while it lists only the hidden LoRAs (#647): the tile shows why it is
+    /// hidden and the Safe to show / NSFW buttons.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isInHiddenView;
+
+    /// <summary>Whether the tile covers its picture: Show NSFW is off and the tile counts as hidden.</summary>
+    public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent;
+
+    /// <summary>
+    /// Raised when the user marks this LoRA safe to show (<c>false</c>), NSFW (<c>true</c>) or back
+    /// to automatic (<c>null</c>). The Installed tab records the choice for every model of the tile
+    /// and filters again.
+    /// </summary>
+    public event EventHandler<bool?>? NsfwOverrideRequested;
+
+    [RelayCommand]
+    private void MarkSafeToShow() => NsfwOverrideRequested?.Invoke(this, false);
+
+    [RelayCommand]
+    private void MarkNsfw() => NsfwOverrideRequested?.Invoke(this, true);
+
+    [RelayCommand]
+    private void MarkNsfwAutomatic() => NsfwOverrideRequested?.Invoke(this, null);
+
+    /// <summary>Re-announces everything that follows from <see cref="NsfwVerdict"/>.</summary>
+    internal void NotifyNsfwVerdictChanged()
+    {
+        OnPropertyChanged(nameof(NsfwVerdict));
+        OnPropertyChanged(nameof(HasNsfwContent));
+        OnPropertyChanged(nameof(HiddenReasonText));
+        OnPropertyChanged(nameof(IsPreviewHidden));
+    }
 
     /// <summary>
     /// Whether this model has multiple versions.
@@ -1095,7 +1142,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(ModelTypeDisplay));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
-        OnPropertyChanged(nameof(IsPreviewHidden));
+        NotifyNsfwVerdictChanged();
         OnPropertyChanged(nameof(HasMultipleVersions));
         OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
@@ -1128,7 +1175,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
-        OnPropertyChanged(nameof(IsPreviewHidden));
+        NotifyNsfwVerdictChanged();
         OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
