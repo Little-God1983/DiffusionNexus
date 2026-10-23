@@ -17,7 +17,8 @@
           BorderThickness="1"
           ClipToBounds="True"
           Cursor="Hand"
-          Classes="tile">
+          Classes="tile"
+          Classes.inHiddenView="{Binding IsInHiddenView}">
     <!-- #647: the user's own NSFW verdict for this LoRA; it outranks Civitai's ratings. -->
     <Border.ContextMenu>
       <ContextMenu>
@@ -42,6 +43,13 @@
       </Style>
       <Style Selector="Border.tile:pointerover Grid.tileActions">
         <Setter Property="IsVisible" Value="True"/>
+      </Style>
+      <!-- #647: in the "Show hidden" list the bar stays collapsed. Revealing it on hover lifts the
+           whole info area (it is bottom-anchored), so the Safe to show / NSFW buttons jumped away
+           from under the cursor and the click hit Copy Trigger Words instead. Declared after the
+           hover style so it wins; the right-click menu and the details stay available. -->
+      <Style Selector="Border.tile.inHiddenView Grid.tileActions">
+        <Setter Property="IsVisible" Value="False"/>
       </Style>
     </Border.Styles>
 

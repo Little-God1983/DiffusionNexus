@@ -2475,12 +2475,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <summary>The hidden tiles of the last filter pass, for the Unified Console breakdown.</summary>
     private List<ModelTileViewModel> _hiddenInView = [];
 
-    /// <summary>Publishes the count the hint, its button and the hidden list's title show.</summary>
+    /// <summary>
+    /// Publishes the count the hint, its button and the hidden list's title show — in models, the
+    /// toolbar's unit ("N of M models"), so a tile grouping two rows counts twice and shown plus
+    /// hidden adds up.
+    /// </summary>
     private void ReportHidden(List<ModelTileViewModel> hidden)
     {
         _hiddenInView = hidden;
-        if (hidden.Count == HiddenCount) return;
-        HiddenCount = hidden.Count;
+        var count = hidden.Sum(t => t.ModelCount);
+        if (count == HiddenCount) return;
+        HiddenCount = count;
         OnPropertyChanged(nameof(HiddenCount));
         OnPropertyChanged(nameof(HasHiddenInView));
         OnPropertyChanged(nameof(ShowHiddenHint));
@@ -2492,13 +2497,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <summary>One Unified Console line: how many are hidden in this view, by reason.</summary>
     private void LogHiddenInView()
     {
-        if (_hiddenInView.Count == 0) return;
+        if (HiddenCount == 0) return;
+        // Models, the hint's unit, so this line and the hint always say the same number.
         var byReason = string.Join(", ", _hiddenInView
             .GroupBy(t => t.NsfwVerdict.Reason)
-            .OrderByDescending(g => g.Count())
-            .Select(g => FormattableString.Invariant($"{g.Count()} {g.Key}")));
+            .Select(g => (g.Key, Models: g.Sum(t => t.ModelCount)))
+            .OrderByDescending(r => r.Models)
+            .Select(r => FormattableString.Invariant($"{r.Models} {r.Key}")));
         _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
-            $"Show NSFW off hides {_hiddenInView.Count} LoRA(s) in this view: {byReason}"));
+            $"Show NSFW off hides {HiddenCount} LoRA(s) in this view: {byReason}"));
     }
 
     /// <summary>

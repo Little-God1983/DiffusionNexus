@@ -173,6 +173,32 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.FilteredTiles.Should().ContainSingle().Which.DisplayName.Should().Be("rated xxx");
     }
 
+    /// <summary>
+    /// The hint counts models, like the toolbar's "N of M models": a tile that groups two model
+    /// rows of the same LoRA counts twice, so shown + hidden adds up to what the view holds.
+    /// </summary>
+    [Fact]
+    public void TheHintCounts_Models_LikeTheToolbar()
+    {
+        var vm = new LoraViewerViewModel();
+        vm.AllTiles.Clear();
+        vm.AllTiles.Add(ModelTileViewModel.FromModelGroup(
+        [
+            NewModel("same lora", flaggedNsfw: false, Image("x1", NsfwLevel.XXX)),
+            NewModel("same lora", flaggedNsfw: false, Image("x2", NsfwLevel.XXX)),
+        ]));
+        vm.AllTiles.Add(ModelTileViewModel.FromModel(NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG))));
+
+        vm.ShowNsfw = false;
+
+        vm.FilteredModelCount.Should().Be(1);
+        vm.HiddenCount.Should().Be(2);
+        vm.ShowHiddenButtonText.Should().Be("Show hidden (2)");
+
+        vm.ShowHiddenCommand.Execute(null);
+        vm.FilteredModelCount.Should().Be(2, "the list shows exactly what the hint counted");
+    }
+
     /// <summary>The tile's buttons and menu ask the Installed tab to record the choice.</summary>
     [Fact]
     public void TheTilesMarkCommands_RequestTheChoice()
