@@ -988,6 +988,79 @@ public sealed class LoraSorterViewModelTests : IDisposable
         cleanedRoot.Should().BeNull();
     }
 
+    /// <summary>#651: a finished run used to leave nothing but a status line behind.</summary>
+    [Fact]
+    public async Task AFinishedRunOpensTheReportForThePlanThatRan()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report.Should().NotBeNull();
+        report!.TransferredRows.Should().ContainSingle().Which.Path.Should().Be(a);
+        report.IsCancelled.Should().BeFalse();
+        vm.StatusMessage.Should().StartWith("Done:", "the one-line summary stays");
+    }
+
+    /// <summary>
+    /// #651: "N duplicates skipped" never said which. Two identical files that both want
+    /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
+    /// summary sentence and becomes its own link, which opens the list.
+    /// </summary>
+    [Fact]
+    public async Task TheDuplicateCountIsALinkToTheListOfDuplicates()
+    {
+        var first = WriteLora(@"one\a.safetensors");
+        var second = WriteLora(@"two\a.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(first, "SDXL 1.0", "character"),
+            Installed(second, "SDXL 1.0", "character"),
+        ]);
+        var dialog = new Mock<IDialogService>();
+        SortDuplicatesDialogViewModel? shown = null;
+        dialog.Setup(d => d.ShowSortDuplicatesDialogAsync(It.IsAny<SortDuplicatesDialogViewModel>()))
+            .Callback((SortDuplicatesDialogViewModel d) => shown = d)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+
+        await vm.InitializeAsync();
+
+        vm.HasSkippedDuplicates.Should().BeTrue();
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.PreviewSummary.Should().NotContain("duplicate");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeTrue();
+
+        await vm.ShowSkippedDuplicatesCommand.ExecuteAsync(null);
+
+        var row = shown!.Rows.Should().ContainSingle().Subject;
+        new[] { first, second }.Should().Contain(row.Path);
+        row.RelatedPath.Should().EndWith(Path.Combine("SDXL 1.0", "Character", "a.safetensors"));
+    }
+
+    [Fact]
+    public async Task WithoutDuplicatesThereIsNoLinkToFollow()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewSummary.Should().Contain("will move", "the preview did run");
+        vm.HasSkippedDuplicates.Should().BeFalse();
+        vm.SkippedDuplicatesText.Should().Be("0 duplicates skipped");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeFalse();
+    }
+
     private static IDialogService ConfirmingDialogService()
     {
         var dialog = new Mock<IDialogService>();

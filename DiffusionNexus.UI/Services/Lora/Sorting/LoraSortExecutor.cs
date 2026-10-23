@@ -5,7 +5,20 @@ using DiffusionNexus.UI.Utilities;
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 public sealed record LoraSortResult(int Moved, int Copied, int Skipped, int Failed, bool Cancelled,
-    string? ManifestPath);
+    string? ManifestPath)
+{
+    /// <summary>The moves that actually reached their target, in plan order (#651 report).</summary>
+    public IReadOnlyList<PlannedMove> Transferred { get; init; } = [];
+
+    /// <summary>The moves that failed, each with the reason the file system gave.</summary>
+    public IReadOnlyList<SortFailure> Failures { get; init; } = [];
+
+    /// <summary>Wall-clock time of the transfer loop and its DB flushes.</summary>
+    public TimeSpan Elapsed { get; init; }
+}
+
+/// <summary>One file the run could not transfer, and why.</summary>
+public sealed record SortFailure(PlannedMove Move, string Reason);
 
 /// <summary>
 /// Executes a <see cref="LoraSortPlan"/> against disk: transfers each model file
@@ -48,6 +61,16 @@ public sealed class LoraSortExecutor
             + $"{plan.SkippedDuplicateCount} duplicates skipped, {plan.RenamedCount} renamed, "
             + $"{plan.AlreadyInPlaceCount} already in place — {plan.SourceRoot} → {plan.TargetRoot}");
 
+        // A count alone left the user asking "which ones?" (#651) — and in move mode these are
+        // files that stay behind in the source folder, so the log names each and its twin.
+        foreach (var duplicate in plan.Moves.Where(m => m.Action == PlannedAction.SkippedDuplicate))
+        {
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Skipped duplicate: {duplicate.Candidate.FilePath} is identical to {duplicate.TargetFilePath}");
+        }
+
+        var transferred = new List<PlannedMove>();
+        var failures = new List<SortFailure>();
         var moved = 0;
         var copied = 0;
         var failed = 0;
@@ -130,6 +153,7 @@ public sealed class LoraSortExecutor
                     // The file IS transferred by this point whatever the DB did — journal it,
                     // count it and report it, or the manifest and the progress bar contradict disk.
                     MarkCompletedSafely(manifestPath, source);
+                    transferred.Add(move);
                     done++;
                     _logger?.Info(LogCategory.FileSystem, LogSource, $"{source} → {move.TargetFilePath}");
                     progress?.Report(((double)done / plan.TransferCount, Path.GetFileName(move.TargetFilePath)));
@@ -140,6 +164,7 @@ public sealed class LoraSortExecutor
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     _logger?.Error(LogCategory.FileSystem, LogSource, $"Failed to transfer {source}", ex);
+                    failures.Add(new SortFailure(move, ex.Message));
                     failed++;
                 }
             }
@@ -177,7 +202,12 @@ public sealed class LoraSortExecutor
             $"Sort run finished in {runWatch.ElapsedMilliseconds} ms: {moved} moved, {copied} copied, "
             + $"{skipped} skipped, {failed} failed, cancelled={cancelled}");
 
-        return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath);
+        return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath)
+        {
+            Transferred = transferred,
+            Failures = failures,
+            Elapsed = runWatch.Elapsed
+        };
     }
 
     /// <summary>

@@ -105,7 +105,10 @@ Generic building blocks — try these before writing a new dialog:
 Domain dialogs already covered (check here before building a new one): dataset create /
 version / export / add-to, training-run create / export, caption compare, captioning and
 captioning models, Civitai token, assign Civitai IDs, download LoRA version, "download
-LoRA has moved" (pointer to the Browse Civitai link search), download preflight, sync plan / sync report, workloads / workload details / core
+LoRA has moved" (pointer to the Browse Civitai link search), download preflight, sync plan / sync report, LoRA Sorter
+duplicate list / sort report (`SortDuplicatesDialog`, `SortReportDialog`; their per-file line `SortReportFileRow` +
+`SortReportFileRowViewModel` is a path, an optional paired path and detail, with "Open in folder" for both — reuse it for
+any post-run file list), workloads / workload details / core
 workloads, VRAM selection, add / edit / remove installation, backup compare, feedback,
 save-as, replace image, file conflict, select versions to delete (dataset and LoRA).
 

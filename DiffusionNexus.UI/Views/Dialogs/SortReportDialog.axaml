@@ -1,0 +1,148 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:dlg="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SortReportDialog"
+        x:DataType="vm:SortReportDialogViewModel"
+        Title="Sort Report"
+        Width="820"
+        SizeToContent="Height"
+        MaxHeight="760"
+        WindowStartupLocation="CenterOwner"
+        Background="#2D2D30">
+
+  <Window.Styles>
+    <Style Selector="Border.tile">
+      <Setter Property="Background" Value="#1E1E1E"/>
+      <Setter Property="BorderBrush" Value="#444444"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Padding" Value="8,6"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+    </Style>
+    <Style Selector="Border.tile > StackPanel > TextBlock.value">
+      <Setter Property="FontSize" Value="20"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="Border.tile > StackPanel > TextBlock.value.failed">
+      <Setter Property="Foreground" Value="#FF7B72"/>
+    </Style>
+    <Style Selector="Border.tile > StackPanel > TextBlock.caption">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="#999999"/>
+      <Setter Property="HorizontalAlignment" Value="Center"/>
+    </Style>
+    <!-- Each list gets its own bounded scroll area, so a 1400-file Moved list never pushes the
+         sections below it out of reach. -->
+    <Style Selector="ScrollViewer.list">
+      <Setter Property="MaxHeight" Value="260"/>
+    </Style>
+  </Window.Styles>
+
+  <DockPanel Margin="20">
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right"
+                Spacing="8" Margin="0,14,0,0">
+      <Button Content="Open target folder" Command="{Binding OpenTargetFolderCommand}"/>
+      <Button Content="Close" Width="90" Click="OnCloseClick" IsCancel="True" IsDefault="True"/>
+    </StackPanel>
+
+    <StackPanel DockPanel.Dock="Top" Spacing="10" Margin="0,0,0,10">
+      <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Foreground="White"
+                 TextWrapping="Wrap"/>
+
+      <Border Background="#3D3418" CornerRadius="4" Padding="10,6" IsVisible="{Binding IsCancelled}">
+        <TextBlock Text="{Binding CancelledText, StringFormat='⚠ {0}'}" Foreground="#E3B341"
+                   FontSize="12" TextWrapping="Wrap"/>
+      </Border>
+
+      <UniformGrid Columns="6" Margin="0,0,-8,0">
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Text="{Binding TransferredCount}"/>
+          <TextBlock Classes="caption" Text="{Binding TransferredLabel}"/>
+        </StackPanel></Border>
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Text="{Binding RenamedCount}"/>
+          <TextBlock Classes="caption" Text="renamed"/>
+        </StackPanel></Border>
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Text="{Binding DuplicateCount}"/>
+          <TextBlock Classes="caption" Text="duplicates skipped"/>
+        </StackPanel></Border>
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Text="{Binding AlreadyInPlaceCount}"/>
+          <TextBlock Classes="caption" Text="already in place"/>
+        </StackPanel></Border>
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Classes.failed="{Binding HasFailures}" Text="{Binding FailedCount}"/>
+          <TextBlock Classes="caption" Text="failed"/>
+        </StackPanel></Border>
+        <Border Classes="tile"><StackPanel>
+          <TextBlock Classes="value" Text="{Binding DurationText}"/>
+          <TextBlock Classes="caption" Text="duration"/>
+        </StackPanel></Border>
+      </UniformGrid>
+
+      <TextBlock Text="Right-click a file to open it in Explorer." FontSize="12" Foreground="#888888"/>
+    </StackPanel>
+
+    <ScrollViewer>
+      <StackPanel Spacing="8">
+
+        <Expander Header="{Binding FailedHeader}" IsExpanded="True" IsVisible="{Binding HasFailures}"
+                  HorizontalAlignment="Stretch">
+          <ScrollViewer Classes="list">
+            <ItemsControl ItemsSource="{Binding FailedRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Expander>
+
+        <Expander Header="{Binding DuplicatesHeader}" IsExpanded="True" IsVisible="{Binding HasDuplicates}"
+                  HorizontalAlignment="Stretch">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding DuplicatesNote}" FontSize="12" Foreground="#CCCCCC" TextWrapping="Wrap"/>
+            <ScrollViewer Classes="list">
+              <ItemsControl ItemsSource="{Binding DuplicateRows}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Expander>
+
+        <Expander Header="{Binding RenamedHeader}" IsExpanded="True" IsVisible="{Binding HasRenamed}"
+                  HorizontalAlignment="Stretch">
+          <ScrollViewer Classes="list">
+            <ItemsControl ItemsSource="{Binding RenamedRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Expander>
+
+        <!-- Collapsed by default: on a big library this is the whole run, and the sections above
+             are the ones that need attention. Virtualized for the same reason. -->
+        <Expander Header="{Binding TransferredHeader}" IsExpanded="False" IsVisible="{Binding HasTransferred}"
+                  HorizontalAlignment="Stretch">
+          <ScrollViewer Classes="list">
+            <ItemsControl ItemsSource="{Binding TransferredRows}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Expander>
+
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

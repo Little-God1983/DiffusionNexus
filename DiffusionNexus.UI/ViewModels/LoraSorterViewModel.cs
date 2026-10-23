@@ -186,7 +186,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             Name = "Pony", IsSourceSide = true, LoraCount = 3, TotalBytes = 400_000_000, Note = "3 files stay"
         });
-        PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed · 0 duplicates skipped";
+        PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed";
+        SkippedDuplicatesText = "2 duplicates skipped";
+        HasSkippedDuplicates = true;
         TransferCount = 17;
         HasEnoughSpace = true;
     }
@@ -316,6 +318,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     [ObservableProperty]
     private string? _previewSummary;
+
+    /// <summary>
+    /// The duplicate count, out of <see cref="PreviewSummary"/> so the view can make it a link to
+    /// the list of which files they are (#651).
+    /// </summary>
+    [ObservableProperty]
+    private string? _skippedDuplicatesText;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ShowSkippedDuplicatesCommand))]
+    private bool _hasSkippedDuplicates;
+
+    /// <summary>
+    /// The plan <see cref="PreviewSummary"/> describes. Not <c>_lastPlan</c>: the disk-space gate
+    /// disarms that while leaving the preview on screen, and the duplicate link must keep listing
+    /// what the screen shows.
+    /// </summary>
+    private LoraSortPlan? _summaryPlan;
 
     [ObservableProperty]
     private string? _diskSummary;
@@ -547,7 +567,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             PreviewRoots.Clear();
             SourceRoots.Clear();
             ReapplyPreviewFilters();
-            PreviewSummary = null;
+            ClearPreviewSummary();
             DiskSummary = null;
             HasEnoughSpace = false;
             BlockReason = null;
@@ -840,7 +860,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             SourceRoots.Clear();
             // The count beside each box described the tree that just vanished.
             ReapplyPreviewFilters();
-            PreviewSummary = null;
+            ClearPreviewSummary();
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
             // candidates behind these numbers. A keepTree disarm (the disk-space gate) leaves a
@@ -1351,6 +1371,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _statusMessageIsWarning = false;
 
             SortCompleted?.Invoke(this, EventArgs.Empty);
+
+            // The status line keeps the one-sentence tally; the report names the files (#651).
+            // Built from the plan that RAN — the post-run recompute above already replaced _lastPlan.
+            if (DialogService is { } dialogs)
+                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(plan, result, ProcessLauncher, _logger));
         }
         catch (Exception ex)
         {
@@ -1532,6 +1557,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
     /// which exists whenever the destination is an established part of the library.
     /// </summary>
+    /// <summary>
+    /// The "N duplicates skipped" link (#651): lists which files the current plan skips and the
+    /// identical copy each one matched.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSkippedDuplicates))]
+    private Task ShowSkippedDuplicatesAsync()
+        => _summaryPlan is { } plan && DialogService is { } dialogs
+            ? dialogs.ShowSortDuplicatesDialogAsync(new SortDuplicatesDialogViewModel(plan, ProcessLauncher, _logger))
+            : Task.CompletedTask;
+
     [RelayCommand]
     private void OpenInFolder(SortPreviewNodeViewModel? node)
     {
@@ -1799,11 +1834,30 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         ReapplyPreviewFilters();
     }
 
+    /// <summary>The summary and its duplicate link go together — a link must never list the
+    /// duplicates of a plan the screen no longer shows.</summary>
+    private void ClearPreviewSummary()
+    {
+        _summaryPlan = null;
+        PreviewSummary = null;
+        SkippedDuplicatesText = null;
+        HasSkippedDuplicates = false;
+    }
+
     /// <summary>One sentence over the plan's counts, shared by the full recompute and the
     /// view-only hide-settled redraw so the two can never word it differently.</summary>
     private void UpdatePreviewSummary(LoraSortPlan plan, int excludedCount)
-        => PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped"
+    {
+        _summaryPlan = plan;
+        PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed"
             + (excludedCount > 0 ? $"   ·   {excludedCount} excluded" : string.Empty);
+
+        // Rendered after the sentence by the view — as a link to the list when there is one.
+        SkippedDuplicatesText = plan.SkippedDuplicateCount == 1
+            ? "1 duplicate skipped"
+            : $"{plan.SkippedDuplicateCount} duplicates skipped";
+        HasSkippedDuplicates = plan.SkippedDuplicateCount > 0;
+    }
 
     /// <summary>Adds <paramref name="directory"/> and every ancestor to <paramref name="dirs"/>,
     /// normalized the way <see cref="MarkExcludedFolders"/> looks them up. Walking past the pane's
