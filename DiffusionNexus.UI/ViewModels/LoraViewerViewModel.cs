@@ -702,7 +702,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         TotalModelCount = AllTiles.Sum(t => t.ModelCount);
         RebuildAvailableBaseModels();
-        ApplyFilters();
+        ApplyFilters(ratingsChanged: true);
     }
 
     /// <summary>
@@ -1705,7 +1705,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
             TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
-            ApplyFilters();
+            ApplyFilters(ratingsChanged: true);
         });
 
         return distinctModels;
@@ -2573,7 +2573,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         foreach (var write in writes)
             write.Tile.ApplyUserNsfwRating(isNsfw, write.Original);
-        ApplyFilters();
+        ApplyFilters(ratingsChanged: true);
     }
 
     /// <summary>What Civitai says about the picture <paramref name="tile"/> shows, in words.</summary>
@@ -2636,7 +2636,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         tile.NsfwVerdictChanged -= OnTileNsfwVerdictChanged;
     }
 
-    private void OnTileNsfwVerdictChanged(object? sender, EventArgs e) => ApplyFilters();
+    private void OnTileNsfwVerdictChanged(object? sender, EventArgs e) => ApplyFilters(ratingsChanged: true);
 
     /// <summary>
     /// Handles the <see cref="ModelTileViewModel.Deleted"/> event by removing the tile
@@ -2660,7 +2660,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
             // A hidden tile is counted by the unrated hint and may be the unrated list's last one.
-            if (_hiddenInView.Contains(tile)) ApplyFilters();
+            if (_hiddenInView.Contains(tile)) ApplyFilters(ratingsChanged: true);
         });
     }
 
@@ -3061,20 +3061,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         return ordered.ToList();
     }
 
-    private void ApplyFilters()
+    /// <param name="ratingsChanged">
+    /// The pass follows a change of ratings — a rating, a refresh, a delete, a reload — rather than
+    /// of the search or filters: an unrated list it emptied closes (#647).
+    /// </param>
+    private void ApplyFilters(bool ratingsChanged = false)
     {
         // A direct apply supersedes any pending debounced search pass.
         _searchDebounceCts?.Cancel();
-
-        // Once nothing in the library is unrated any more — the last one rated by the user or by a
-        // Download Metadata run — the unrated list (#647) closes instead of showing "the 0 unrated
-        // LoRAs". Not on a search that matches none for a moment: other unrated LoRAs still exist.
-        // Closing it runs this pass again through OnShowUnratedOnlyChanged.
-        if (ShowUnratedOnly && !AllTiles.Any(t => t.IsUnrated))
-        {
-            ShowUnratedOnly = false;
-            return;
-        }
 
         // 1. Build the FULL filtered set (used for count + windowing).
         //    Search / NSFW / base-model filters all run against AllTiles, not against
@@ -3122,6 +3116,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         }
         foreach (var tile in AllTiles) tile.IsInUnratedView = ShowUnratedOnly && !ShowNsfw;
         ReportHidden(hidden);
+
+        // Once ratings changed and no unrated LoRA is left in this view — the last one rated by the
+        // user or by Download Metadata, or deleted — the unrated list closes instead of showing "the
+        // 0 unrated LoRAs", even when unrated LoRAs outside the view remain. Not on a search or
+        // filter change: a search that matches none for a moment must not close it under the user.
+        // Closing it runs this pass again through OnShowUnratedOnlyChanged.
+        if (ratingsChanged && ShowUnratedOnly && UnratedCount == 0)
+        {
+            ShowUnratedOnly = false;
+            return;
+        }
 
         var filtered = SortTiles(candidates);
 

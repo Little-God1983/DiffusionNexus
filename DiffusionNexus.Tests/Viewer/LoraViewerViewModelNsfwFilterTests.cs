@@ -299,25 +299,65 @@ public class LoraViewerViewModelNsfwFilterTests
     }
 
     /// <summary>
-    /// Review round 3: the list also closes once nothing anywhere is unrated any more — after a
-    /// Download Metadata run rated the last ones — instead of showing "the 0 unrated LoRAs".
+    /// Review round 3: the list also closes when the last one got rated another way — a Download
+    /// Metadata run refreshed it with Civitai's rating — instead of showing "the 0 unrated LoRAs".
     /// </summary>
     [Fact]
-    public async Task TheUnratedList_ClosesOnceNothingIsUnrated_HoweverItGotRated()
+    public void TheUnratedList_ClosesOnceNothingIsUnrated_HoweverItGotRated()
     {
         var model = NoRating("got rated");
+        model.Id = 7;
         var vm = ViewModelWith(model, NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
-        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
         vm.ShowNsfw = false;
         vm.ShowUnratedCommand.Execute(null);
 
         // Download Metadata rated it (not the user): its picture now carries Civitai's PG.
-        model.Versions.First().Images.First().NsfwLevel = NsfwLevel.PG;
-        vm.SearchText = "got";
-        await vm.SearchDebounceTask!;
+        var rated = NewModel("got rated", flaggedNsfw: false, Image("got rated", NsfwLevel.PG));
+        rated.Id = 7;
+        vm.AllTiles.First(t => t.DisplayName == "got rated").RefreshModelData(rated);
 
         vm.ShowUnratedOnly.Should().BeFalse();
-        Visible(vm).Should().BeEquivalentTo("got rated");
+        Visible(vm).Should().BeEquivalentTo("got rated", "safe");
+    }
+
+    /// <summary>
+    /// GUI smoke: the list counts the unrated LoRAs in this view (search, base-model filter), so
+    /// rating the last one there closes it — although unrated LoRAs outside the view remain.
+    /// </summary>
+    [Fact]
+    public async Task RatingTheLastUnratedLoraInTheView_ClosesTheList_ThoughOthersAreOutsideIt()
+    {
+        var vm = ViewModelWith(NoRating("lara"), NoRating("outside the view"));
+        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
+        vm.ShowNsfw = false;
+        vm.SearchText = "lara";
+        await vm.SearchDebounceTask!;
+        vm.ShowUnratedCommand.Execute(null);
+
+        await vm.SetUserNsfwRatingAsync(vm.FilteredTiles.Single(), isNsfw: true);
+
+        vm.ShowUnratedOnly.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Owner request: in the unrated list the user can uncover a picture to judge it before
+    /// rating; it is covered again once the list closes.
+    /// </summary>
+    [Fact]
+    public void TheUnratedList_CanUncoverAPicture_UntilTheListCloses()
+    {
+        var vm = ViewModelWith(NoRating("peek"));
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+        var tile = vm.FilteredTiles.Single();
+        tile.IsPreviewHidden.Should().BeTrue();
+
+        tile.RevealPreviewCommand.Execute(null);
+        tile.IsPreviewHidden.Should().BeFalse();
+
+        vm.BackToAllCommand.Execute(null);
+        tile.IsPreviewRevealed.Should().BeFalse();
+        tile.IsPreviewHidden.Should().BeTrue();
     }
 
     /// <summary>

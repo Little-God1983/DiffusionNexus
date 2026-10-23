@@ -507,8 +507,24 @@ public partial class ModelTileViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isInUnratedView;
 
+    /// <summary>
+    /// The user uncovered the picture in the unrated list to judge it before rating (#647). Covered
+    /// again once the tile leaves the list or is rated.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
+    private bool _isPreviewRevealed;
+
+    partial void OnIsInUnratedViewChanged(bool value)
+    {
+        if (!value) IsPreviewRevealed = false;
+    }
+
+    [RelayCommand]
+    private void RevealPreview() => IsPreviewRevealed = true;
+
     /// <summary>Whether the tile covers its picture: Show NSFW is off and the tile counts as hidden.</summary>
-    public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent;
+    public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent && !IsPreviewRevealed;
 
     /// <summary>The cover's text: an unrated picture is not known to be NSFW, only not known to be safe.</summary>
     public string PreviewCoverText => IsUnrated ? "Unrated — preview hidden" : "NSFW preview hidden";
@@ -536,6 +552,7 @@ public partial class ModelTileViewModel : ViewModelBase
             model.UserNsfwRating = isNsfw;
             model.OriginalNsfwRating ??= originalRating;
         }
+        IsPreviewRevealed = false;
         NotifyNsfwVerdictChanged();
     }
 

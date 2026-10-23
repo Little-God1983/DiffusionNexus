@@ -99,6 +99,15 @@
                 <Border Background="#333" CornerRadius="8" Padding="12,8">
                   <TextBlock Text="{Binding PreviewCoverText}" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
                 </Border>
+                <!-- #647: in the unrated list, look at the picture before rating it. -->
+                <Button Content="Show preview"
+                        Command="{Binding RevealPreviewCommand}"
+                        IsVisible="{Binding IsInUnratedView}"
+                        ToolTip.Tip="Uncover this picture to judge it before you rate the LoRA"
+                        HorizontalAlignment="Center"
+                        Margin="0,8,0,0"
+                        FontSize="11"
+                        Padding="10,3"/>
               </StackPanel>
             </Border>
 
