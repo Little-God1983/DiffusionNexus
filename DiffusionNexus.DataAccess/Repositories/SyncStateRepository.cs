@@ -72,7 +72,11 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                 // one, and the alternative is hauling the strings back to compare them in memory.
                 m.Versions.Any(v => v.BaseModelRaw != null
                                     && v.BaseModelRaw.Trim() != ""
-                                    && v.BaseModelRaw != "???")))
+                                    && v.BaseModelRaw != "???"),
+                // Same "unrated Civitai image" test as SelectImageCandidatesAsync (#631).
+                m.Versions.Any(v => v.Images.Any(i => i.NsfwLevel == NsfwLevel.None
+                                                      && (EF.Functions.Like(i.Url, "http://%")
+                                                          || EF.Functions.Like(i.Url, "https://%"))))))
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -409,8 +413,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
     public async Task<IReadOnlyList<ImageCandidate>> SelectImageCandidatesAsync(
         SyncScope scope, IReadOnlyList<string> enabledSourceRoots, CancellationToken ct = default)
     {
-        var models = (await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false))
-            .Where(m => m.CivitaiId != null);
+        // No Model.CivitaiId filter (#631): the version's own id is what the fetch needs, and a model
+        // row whose Civitai id went to another row of the same LoRA still has pictures to rate.
+        var models = await ApplyScopeAsync(Context.Models, scope, enabledSourceRoots, ct).ConfigureAwait(false);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.
         // A version is due when it holds no images, or holds a Civitai image with no rating (#631):
@@ -428,9 +433,9 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                               ModelId = m.Id,
                               VersionId = v.Id,
                               CivitaiVersionId = v.CivitaiId!.Value,
-                              // Same source SelectTagCandidatesAsync uses for CivitaiModelId — the
-                              // models filter above already requires it non-null.
-                              CivitaiModelId = m.CivitaiId!.Value,
+                              // Same source SelectTagCandidatesAsync uses for CivitaiModelId; null
+                              // when the model row holds no Civitai id.
+                              CivitaiModelId = m.CivitaiId,
                               m.Name,
                               ImagesCheckedAt = m.SyncState != null ? m.SyncState.ImagesCheckedAt : null,
                           })

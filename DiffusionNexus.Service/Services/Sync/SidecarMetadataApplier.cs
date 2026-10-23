@@ -542,7 +542,8 @@ public sealed class SidecarMetadataApplier
             .GroupBy(i => i.Url, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        var sortOrder = dbVersion.Images.Count;
+        // After the last order, not at Count: removed duplicates leave gaps, so Count can be in use.
+        var sortOrder = dbVersion.Images.Count == 0 ? 0 : dbVersion.Images.Max(i => i.SortOrder) + 1;
 
         foreach (var imgEl in imagesArray.EnumerateArray())
         {

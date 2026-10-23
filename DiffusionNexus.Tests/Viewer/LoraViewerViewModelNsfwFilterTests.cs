@@ -132,6 +132,88 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.EmptyStateMessage.Should().Be("Add LoRA source folders in Settings, then click Refresh.");
     }
 
+    /// <summary>
+    /// The count and the empty-state reason are about the LoRAs the other filters let through: a
+    /// search that matches nothing is "no match", not "previews have no rating", even while
+    /// unrated LoRAs elsewhere in the library are hidden.
+    /// </summary>
+    [Fact]
+    public async Task HiddenUnratedCount_OnlyCountsWhatTheOtherFiltersLetThrough()
+    {
+        var vm = ViewModelWith(
+            NewModel("alpha", flaggedNsfw: false, Image("u", NsfwLevel.None)),
+            NewModel("beta", flaggedNsfw: false, Image("pg", NsfwLevel.PG)));
+        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
+        vm.ShowNsfw = false;
+        vm.HiddenUnratedCount.Should().Be(1);
+
+        vm.SearchText = "zzz";
+        await vm.SearchDebounceTask!;
+
+        vm.HiddenUnratedCount.Should().Be(0);
+        vm.EmptyStateMessage.Should().Be("No LoRAs match the current filters.");
+    }
+
+    /// <summary>
+    /// The empty-state text is re-announced even when the grid stays empty: an empty library
+    /// that loads only unrated LoRAs must stop telling the user to add source folders.
+    /// </summary>
+    [Fact]
+    public async Task EmptyStateMessage_IsReannounced_WhenTheGridStaysEmpty()
+    {
+        var vm = ViewModelWith();
+        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
+        vm.ShowNsfw = false;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.AllTiles.Add(ModelTileViewModel.FromModel(NewModel("unrated", flaggedNsfw: false, Image("u", NsfwLevel.None))));
+        vm.SearchText = "unrated";
+        await vm.SearchDebounceTask!;
+
+        vm.FilteredTiles.Should().BeEmpty();
+        raised.Should().Contain(nameof(LoraViewerViewModel.EmptyStateMessage));
+        vm.EmptyStateMessage.Should().NotContain("source folders");
+    }
+
+    /// <summary>
+    /// A tile stays on screen when its picture is safe, but its version chips can switch to a
+    /// version whose picture is not. With Show NSFW off that picture must be covered, not shown.
+    /// </summary>
+    [Fact]
+    public void SwitchingATileToAVersionWithAnNsfwPicture_CoversThePicture()
+    {
+        var model = new Model { Name = "two versions", Type = ModelType.LORA };
+        ModelVersion AddVersion(string name, DateTimeOffset created, NsfwLevel level)
+        {
+            var v = new ModelVersion { Name = name, BaseModelRaw = "SDXL 1.0", Model = model, CreatedAt = created };
+            v.Files.Add(new ModelFile { FileName = $"{name}.safetensors", IsPrimary = true, ModelVersion = v });
+            var image = Image(name, level);
+            image.ModelVersion = v;
+            v.Images.Add(image);
+            model.Versions.Add(v);
+            return v;
+        }
+        var safe = AddVersion("safe", DateTimeOffset.UtcNow, NsfwLevel.PG);
+        var explicitVersion = AddVersion("explicit", DateTimeOffset.UtcNow.AddDays(-1), NsfwLevel.XXX);
+        var vm = ViewModelWith(model);
+
+        vm.ShowNsfw = false;
+        var tile = vm.FilteredTiles.Should().ContainSingle().Subject;
+        tile.SelectedVersion.Should().BeSameAs(safe);
+        tile.IsPreviewHidden.Should().BeFalse();
+
+        var raised = new List<string?>();
+        tile.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        tile.SelectedVersion = explicitVersion;
+
+        tile.IsPreviewHidden.Should().BeTrue();
+        raised.Should().Contain(nameof(ModelTileViewModel.IsPreviewHidden));
+
+        vm.ShowNsfw = true;
+        tile.IsPreviewHidden.Should().BeFalse("with Show NSFW on every picture is shown");
+    }
+
     [Fact]
     public void ShowNsfwOn_ShowsEverything()
     {

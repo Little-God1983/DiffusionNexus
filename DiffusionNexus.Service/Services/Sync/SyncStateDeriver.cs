@@ -62,7 +62,9 @@ public static class SyncStateDeriver
             // it is genuinely unknown whether they were ever fetched, so the tag and image
             // steps get to ask once and stamp the answer.
             state.TagsCheckedAt = input.HasTags ? stamp : null;
-            state.ImagesCheckedAt = input.HasImages ? stamp : null;
+            // An unrated Civitai image means the images were fetched before ratings were stored
+            // (#631): the images step has to ask once more, or the picture stays unrated for good.
+            state.ImagesCheckedAt = input.HasImages && !input.HasUnratedCivitaiImages ? stamp : null;
             return state;
         }
 

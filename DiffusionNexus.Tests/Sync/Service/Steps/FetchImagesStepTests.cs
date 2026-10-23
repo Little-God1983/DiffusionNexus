@@ -161,6 +161,50 @@ public sealed class FetchImagesStepTests : IDisposable
     private static SyncOptions Options(bool force = false) =>
         new(new HashSet<SyncStepKind> { SyncStepKind.FetchImages }, ForceImages: force);
 
+    /// <summary>
+    /// #631: a version identified on Civitai under a model row that holds no Civitai id (the id
+    /// went to another row of the same LoRA) still has its pictures rated — fetched by version,
+    /// since there is no model page to ask. A fifth of the owner's library is in this state.
+    /// </summary>
+    [Fact]
+    public async Task ModelWithoutCivitaiId_IsRatedThroughItsVersion()
+    {
+        int modelId, versionId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model { Name = "no-model-id", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var version = new ModelVersion { Name = "v1", BaseModelRaw = "SDXL 1.0", CivitaiId = 703 };
+            version.Files.Add(new ModelFile
+            {
+                FileName = "no-model-id.safetensors",
+                LocalPath = Path.Combine(Path.GetTempPath(), "no-model-id.safetensors"),
+                IsLocalFileValid = true,
+                IsPrimary = true,
+            });
+            version.Images.Add(new ModelImage { Url = "https://img/7030.jpeg" });
+            model.Versions.Add(version);
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            (modelId, versionId) = (model.Id, version.Id);
+        }
+
+        var client = new Mock<ICivitaiClient>();
+        client.Setup(x => x.GetModelVersionAsync(703, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(NewCivitaiVersion(703, NewImage(7030) with { Id = null, NsfwLevel = 8 }));
+        var step = new FetchImagesStep(Scopes, new CivitaiMetadataApplier(client.Object));
+
+        var item = (await step.SelectAsync(SyncScope.Library, Options(), Now, CancellationToken.None))
+            .Should().ContainSingle().Subject;
+        (await step.ExecuteOneAsync(item, apiKey: null, CancellationToken.None)).Should().Be(SyncItemResult.Success);
+
+        client.Verify(x => x.GetModelAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        using var readScope = NewScope();
+        var saved = await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single(v => v.Id == versionId).Images.Should().ContainSingle()
+            .Which.NsfwLevel.Should().Be(NsfwLevel.X);
+    }
+
     [Fact]
     public async Task Select_ReturnsOnlyNeverChecked_UnlessForced()
     {

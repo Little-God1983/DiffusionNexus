@@ -833,6 +833,33 @@ public sealed class SyncStateRepositoryTests : IDisposable
     }
 
     /// <summary>
+    /// #631: the projection tells the deriver whether a model still holds a Civitai picture with no
+    /// rating. A rated picture, or an unrated local preview nothing can rate, does not count.
+    /// </summary>
+    [Fact]
+    public async Task GetDerivationInputs_ReportsUnratedCivitaiImages()
+    {
+        using var scope = NewScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var unrated = NewLocalModel("unrated", @"C:\m\unrated.safetensors", civitaiId: 1, withImage: true);
+        unrated.Versions.First().Images.Add(new ModelImage { Url = "https://x/unrated.jpeg" });
+        var rated = NewLocalModel("rated", @"C:\m\rated.safetensors", civitaiId: 2, withImage: true);
+        var localOnly = NewLocalModel("local", @"C:\m\local.safetensors", civitaiId: 3);
+        localOnly.Versions.First().Images.Add(new ModelImage { Url = "file:///C:/m/local.preview.png" });
+
+        foreach (var m in new[] { unrated, rated, localOnly })
+            await uow.Models.AddAsync(m);
+        await uow.SaveChangesAsync();
+
+        var inputs = await uow.SyncStates.GetDerivationInputsAsync([unrated.Id, rated.Id, localOnly.Id]);
+
+        inputs.Single(i => i.ModelId == unrated.Id).HasUnratedCivitaiImages.Should().BeTrue();
+        inputs.Single(i => i.ModelId == rated.Id).HasUnratedCivitaiImages.Should().BeFalse();
+        inputs.Single(i => i.ModelId == localOnly.Id).HasUnratedCivitaiImages.Should().BeFalse();
+    }
+
+    /// <summary>
     /// F3. The derivation cannot depend on <c>IsUserEdited</c> — the projection does not carry it,
     /// and a hand-edited legacy model must still get a state row like any other, or the backfill
     /// would leave it permanently outside the sync. Asserted here, where the question now lives:

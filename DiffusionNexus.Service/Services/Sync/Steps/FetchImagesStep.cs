@@ -107,16 +107,18 @@ public sealed class FetchImagesStep : ISyncStep
             var versionsGone = 0;
             var imagesAdded = 0;
 
-            // One request for the whole model, then one per version the page did not describe.
-            var civitaiModelId = candidates[0].CivitaiModelId;
-            var byModel = await _civitai
-                .ApplyImagesFromModelAsync(
-                    uow,
-                    civitaiModelId,
-                    candidates.Select(c => (c.ModelId, c.VersionId, c.CivitaiVersionId)).ToList(),
-                    apiKey,
-                    ct)
-                .ConfigureAwait(false);
+            // One request for the whole model, then one per version the page did not describe. A model
+            // row without a Civitai id has no page to ask, so every version is fetched on its own.
+            var byModel = candidates[0].CivitaiModelId is { } civitaiModelId
+                ? await _civitai
+                    .ApplyImagesFromModelAsync(
+                        uow,
+                        civitaiModelId,
+                        candidates.Select(c => (c.ModelId, c.VersionId, c.CivitaiVersionId)).ToList(),
+                        apiKey,
+                        ct)
+                    .ConfigureAwait(false)
+                : new Dictionary<int, int?>();
 
             foreach (var candidate in candidates)
             {

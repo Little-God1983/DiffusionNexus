@@ -202,7 +202,8 @@ public sealed class SyncStateInitializerTests : IDisposable
             IsPrimary = true,
             HashSHA256 = "AA",
         });
-        if (withImage) version.Images.Add(new ModelImage { Url = "https://x/y.jpeg" });
+        // Rated: an unrated Civitai image keeps the images step due (#631), which is not this seed's point.
+        if (withImage) version.Images.Add(new ModelImage { Url = "https://x/y.jpeg", NsfwLevel = NsfwLevel.PG });
         model.Versions.Add(version);
 
         if (withTag) model.Tags.Add(new ModelTag { Tag = new Tag { Name = name + "-tag", NormalizedName = name + "-tag" } });

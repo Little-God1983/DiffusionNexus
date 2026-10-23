@@ -274,6 +274,39 @@ public sealed class SidecarMetadataApplierTests : IDisposable
         images["https://x/rated.jpeg"].Should().Be(NsfwLevel.X, "a stored rating is newer than the sidecar's");
     }
 
+    /// <summary>
+    /// After duplicate copies are removed a version's sort orders can have gaps (0, 1, 3). A new
+    /// sidecar image goes after the last one, not to <c>Count</c>, which here is an order in use.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_NewImageSortsAfterTheLastOne_EvenWithGaps()
+    {
+        var modelPath = NewModelFile("gaps.safetensors");
+        int modelId;
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("local", modelPath);
+            foreach (var order in new[] { 0, 1, 3 })
+                model.Versions.First().Images.Add(new ModelImage { Url = $"https://x/{order}.jpeg", SortOrder = order });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var sidecar = """
+        {"id":703,"modelId":80,"model":{"name":"N"},"images":[{"url":"https://x/new.jpeg","nsfwLevel":1}]}
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_tempDir.FullName, "gaps.civitai.info"), sidecar);
+
+        (await ApplyAsync(modelId, modelPath)).Applied.Should().BeTrue();
+
+        using var readScope = NewScope();
+        var images = (await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId))!
+            .Versions.Single().Images;
+        images.Single(i => i.Url == "https://x/new.jpeg").SortOrder.Should().Be(4);
+    }
+
     [Fact]
     public async Task ApplyAsync_SimpleJsonSdVersionFallback()
     {

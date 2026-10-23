@@ -180,6 +180,24 @@ public sealed class SyncStateDeriverTests
             .Should().BeTrue();
     }
 
+    /// <summary>
+    /// #631: a matched model whose images include a Civitai picture with no rating has not had
+    /// its images fully fetched — the rating is part of the answer — so the images step must stay
+    /// due. Stamping it would leave the picture unrated, and hidden with Show NSFW off, for good.
+    /// </summary>
+    [Fact]
+    public void MatchedModelWithUnratedCivitaiImagesLeavesTheImagesStepDue()
+    {
+        var input = new SyncDerivationInput(
+            ModelId: 11, CivitaiId: 5, LastSyncedAt: Synced, Source: DataSource.CivitaiApi,
+            HasTags: true, HasImages: true, HasRealBaseModel: true, HasUnratedCivitaiImages: true);
+
+        var state = SyncStateDeriver.Derive(input, Now);
+
+        state.ImagesCheckedAt.Should().BeNull();
+        state.TagsCheckedAt.Should().Be(Synced, "only the images step has something left to fetch");
+    }
+
     [Theory]
     [InlineData(null, true)]
     [InlineData("", true)]

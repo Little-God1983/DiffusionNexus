@@ -414,6 +414,18 @@ public partial class ModelTileViewModel : ViewModelBase
         SelectedVersion?.PrimaryImage is { NsfwLevel: Domain.Enums.NsfwLevel.None, IsNsfw: true };
 
     /// <summary>
+    /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
+    /// its picture is safe, but the version chips can switch it to a version whose picture is not;
+    /// <see cref="IsPreviewHidden"/> covers that picture instead of showing it.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
+    private bool _hideNsfwPreviews;
+
+    /// <summary>Whether the tile covers its picture: Show NSFW is off and the picture is not rated safe.</summary>
+    public bool IsPreviewHidden => HideNsfwPreviews && SelectedVersion?.PrimaryImage is { IsNsfw: true };
+
+    /// <summary>
     /// Whether this model has multiple versions.
     /// </summary>
     public bool HasMultipleVersions => Versions.Count > 1;
@@ -1077,6 +1089,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(ModelTypeDisplay));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
+        OnPropertyChanged(nameof(IsPreviewHidden));
         OnPropertyChanged(nameof(HasMultipleVersions));
         OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
@@ -1109,6 +1122,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
+        OnPropertyChanged(nameof(IsPreviewHidden));
         OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));
