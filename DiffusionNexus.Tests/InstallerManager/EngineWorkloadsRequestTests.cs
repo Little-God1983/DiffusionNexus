@@ -1,0 +1,261 @@
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
+using DiffusionNexus.UI.ViewModels;
+using FluentAssertions;
+using Moq;
+
+namespace DiffusionNexus.Tests.InstallerManager;
+
+/// <summary>
+/// Covers the engine branch of <c>InstallerManagerViewModel.OnWorkloadsRequestedAsync</c>.
+/// </summary>
+/// <remarks>
+/// Only the "not installed" refusal path is exercised here. The "installed" path calls
+/// <c>ShowWorkloadsDialogAsync</c>, which unconditionally constructs a real
+/// <c>Views.Dialogs.WorkloadsDialog</c> (an Avalonia <c>Window</c>) inside its try block — there
+/// is no seam to intercept that construction, and this suite must never initialize Avalonia.
+/// See the Task 7 fix report for the documented gap.
+/// </remarks>
+public class EngineWorkloadsRequestTests
+{
+    [Fact]
+    public async Task EngineNotInstalled_ShowsRefusalMessage_AndNeverAttemptsToLoadWorkloads()
+    {
+        var dialog = new Mock<IDialogService>();
+        var catalog = new Mock<ICatalog>();
+
+        // No "Diffusion Nexus Engine" row among the packages -> the engine card starts
+        // uninstalled (IsEngineInstalled = false, InstallationPath empty).
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: [],
+            dialogMock: dialog,
+            catalogMock: catalog);
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+        var engineCard = vm.InstallerCards.Single(c => c.IsEngine);
+        engineCard.IsEngineInstalled.Should().BeFalse();
+
+        await engineCard.ShowWorkloadsCommand.ExecuteAsync(null);
+
+        dialog.Verify(d => d.ShowMessageAsync(
+                "Diffusion Nexus Engine",
+                "Install the engine first — features are installed into it."),
+            Times.Once);
+
+        // Confirms the refusal returns before ever constructing a WorkloadsViewModel /
+        // attempting to open the (Avalonia) workloads dialog.
+        catalog.Verify(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Never);
+        dialog.Verify(d => d.ShowMessageAsync("Error", It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EngineRowWithBlankInstallationPath_StillShowsRefusalMessage()
+    {
+        // Belt-and-braces: a blank InstallationPath can never "look installed" (LooksInstalled
+        // short-circuits on a blank path), so IsEngineInstalled is false here too — but the
+        // refusal guard also checks InstallationPath directly, so a dialog is never opened
+        // against an empty path even if IsEngineInstalled were somehow true.
+        var dialog = new Mock<IDialogService>();
+        var catalog = new Mock<ICatalog>();
+
+        var packages = new List<InstallerPackage>
+        {
+            new()
+            {
+                Id = 1,
+                Name = "Diffusion Nexus Engine",
+                InstallationPath = string.Empty,
+                ExecutablePath = null,
+                Type = InstallerType.ComfyUI,
+                IsAppManaged = true
+            }
+        };
+
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+            packages: packages,
+            dialogMock: dialog,
+            catalogMock: catalog);
+
+        vm.IsEngineTileVisible = true;
+        await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+        var engineCard = vm.InstallerCards.Single(c => c.IsEngine);
+        engineCard.IsEngineInstalled.Should().BeFalse("a blank path can never look installed on disk");
+        engineCard.InstallationPath.Should().BeEmpty();
+
+        await engineCard.ShowWorkloadsCommand.ExecuteAsync(null);
+
+        dialog.Verify(d => d.ShowMessageAsync(
+                "Diffusion Nexus Engine",
+                "Install the engine first — features are installed into it."),
+            Times.Once);
+        catalog.Verify(r => r.GetWorkloadsAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EngineInstalled_OpensTheFeaturesDialog_ScopedToTheEngineRoot()
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(packages: packages);
+            EngineFeaturesViewModel? shown = null;
+            vm.EngineFeaturesDialogPresenter = features => { shown = features; return Task.CompletedTask; };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            await vm.InstallerCards.Single(c => c.IsEngine).ShowWorkloadsCommand.ExecuteAsync(null);
+
+            shown.Should().NotBeNull();
+            shown!.Rows.Select(r => r.DisplayName).Should().Equal("Inpaint & Outpaint", "Outpaint Vision", "Batch Upscale", "Batch Upscale Vision", "Canvas · Krea 2 Turbo");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, true, "http://127.0.0.1:51234", 1)]
+    [InlineData(true, false, "http://127.0.0.1:51234", 0)] // models only: a running ComfyUI picks them up
+    // #606 code review 3 (H3): BaseUrl is also null mid cold-start, when Python may already have
+    // scanned custom_nodes, so the request is made whether or not the Engine reports a URL.
+    [InlineData(true, true, null, 1)]
+    [InlineData(true, false, null, 0)]
+    [InlineData(false, false, "http://127.0.0.1:51234", 0)]
+    public async Task FeaturesDialog_AfterAnInstall_AsksTheEngineToRestart_OnlyForNewNodePacks_AndPublishesEngineChanged(
+        bool didInstall, bool didInstallNodePacks, string? engineBaseUrl, int expectedRestarts)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var engine = new Mock<IManagedComfyUiEngine>();
+            engine.Setup(e => e.BaseUrl).Returns(engineBaseUrl);
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, eventAggregatorMock: aggregator, engine: engine.Object);
+            vm.EngineFeaturesDialogPresenter = features =>
+            {
+                features.DidInstall = didInstall;
+                features.DidInstallNodePacks = didInstallNodePacks;
+                return Task.CompletedTask;
+            };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            aggregator.Invocations.Clear();
+
+            await vm.OpenEngineFeaturesAsync();
+
+            // #606 code review 2 (G1): never stopped now, a job may be running on it (StopAsync is
+            // no longer on IManagedComfyUiEngine at all); it restarts on its next use instead.
+            engine.Verify(e => e.RequestRestart(), Times.Exactly(expectedRestarts));
+            aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()),
+                didInstall ? Times.Once() : Times.Never());
+            aggregator.Verify(a => a.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()), Times.Never,
+                "a Features install changes the Engine, not the settings: no gallery rescan");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, false, 1)]  // a removal alone: panels re-check
+    [InlineData(true, true, 1)]   // removed and installed: one notice, not two
+    [InlineData(false, false, 0)]
+    public async Task FeaturesDialog_AfterARemoval_PublishesEngineChangedOnce_WithoutARestart(
+        bool didRemove, bool didInstall, int expectedNotices)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var aggregator = new Mock<IDatasetEventAggregator>();
+            var engine = new Mock<IManagedComfyUiEngine>();
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, eventAggregatorMock: aggregator, engine: engine.Object);
+            vm.EngineFeaturesDialogPresenter = features =>
+            {
+                features.DidRemove = didRemove;
+                features.DidInstall = didInstall;
+                return Task.CompletedTask;
+            };
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+            aggregator.Invocations.Clear();
+
+            await vm.OpenEngineFeaturesAsync();
+
+            aggregator.Verify(a => a.PublishEngineChanged(It.IsAny<EngineChangedEventArgs>()), Times.Exactly(expectedNotices));
+            engine.Verify(e => e.RequestRestart(), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 1)] // the file did not match the folder list: rewritten -> restart requested
+    [InlineData(true, 0)]  // already up to date: nothing changed for a running Engine
+    public async Task FeaturesDialog_PreDialogModelPathSync_AsksTheEngineToRestart_OnlyWhenItRewroteTheFile(
+        bool fileAlreadyUpToDate, int expectedRestarts)
+    {
+        var root = Directory.CreateTempSubdirectory().FullName;
+        var library = Directory.CreateTempSubdirectory().FullName;
+        File.WriteAllText(Path.Combine(root, "main.py"), "");
+        try
+        {
+            var packages = new List<InstallerPackage>
+            {
+                new() { Id = 1, Name = "Diffusion Nexus Engine", InstallationPath = root, ExecutablePath = Path.Combine(root, "main.py"), Type = InstallerType.ComfyUI, IsAppManaged = true }
+            };
+            var engine = new Mock<IManagedComfyUiEngine>();
+            engine.Setup(e => e.BaseUrl).Returns("http://127.0.0.1:51234");
+            var vm = EngineTestHarness.CreateInstallerManagerViewModel(
+                packages: packages, engine: engine.Object, modelSearchRoots: [library]);
+            vm.EngineFeaturesDialogPresenter = _ => Task.CompletedTask;
+            await vm.LoadInstallationsCommand.ExecuteAsync(null);
+
+            if (fileAlreadyUpToDate)
+            {
+                // A first open writes the file (and so requests a restart); only the second is the case under test.
+                await vm.OpenEngineFeaturesAsync();
+                engine.Invocations.Clear();
+            }
+
+            await vm.OpenEngineFeaturesAsync();
+
+            engine.Verify(e => e.RequestRestart(), Times.Exactly(expectedRestarts));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(library, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void EngineTile_IsVisibleByDefault_WithoutTheCanvasSwitch()
+    {
+        var vm = EngineTestHarness.CreateInstallerManagerViewModel(packages: []);
+        vm.IsEngineTileVisible.Should().BeTrue();
+    }
+}

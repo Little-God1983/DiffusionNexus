@@ -21,6 +21,7 @@ namespace DiffusionNexus.UI.Services.Diffusion;
 ///
 /// Runs when a package is added in the Installer Manager and as an idempotent startup
 /// backfill for already-registered packages. Registration never claims the default flag.
+/// The app-managed Engine contributes only its own models folder.
 /// </summary>
 public sealed class BaseModelFolderRegistrar
 {
@@ -93,6 +94,13 @@ public sealed class BaseModelFolderRegistrar
 
     /// <summary>
     /// Resolves the model roots an installation contributes to the registry.
+    ///
+    /// Uses <see cref="ComfyUiPathDiscovery.EnumerateModelRoots"/>, not
+    /// <c>EnumerateModelSearchPaths</c>: the latter answers "where might a model file be?"
+    /// and therefore also returns every per-category folder from
+    /// <c>extra_model_paths.yaml</c>. Registering those as roots produced a Settings list of
+    /// twenty rows — <c>D:\Models</c> alongside <c>D:\Models\Lora</c>, <c>D:\Models\VAE</c>
+    /// and the rest — where only the base path is a root.
     /// </summary>
     internal static IReadOnlyList<string> ResolveModelRoots(InstallerPackage package)
     {
@@ -101,12 +109,82 @@ public sealed class BaseModelFolderRegistrar
             return [];
         }
 
+        // The Engine reads every user library through its yaml; those belong to the user, and
+        // registering them for the Engine re-linked them to its row on every start. Its own
+        // models folder, where its feature downloads land, is the one root it owns.
+        if (package.IsAppManaged)
+        {
+            var models = Engine.ManagedEngineLocator.ModelsFolder(package.InstallationPath);
+            return Directory.Exists(models) ? [models] : [];
+        }
+
         if (package.Type == InstallerType.ComfyUI)
         {
-            return ComfyUiPathDiscovery.EnumerateModelSearchPaths(package.InstallationPath);
+            return ComfyUiPathDiscovery.EnumerateModelRoots(package.InstallationPath);
         }
 
         var modelsDir = Path.Combine(package.InstallationPath, "models");
         return Directory.Exists(modelsDir) ? [modelsDir] : [];
+    }
+
+    /// <summary>
+    /// Removes Base Model Folder rows this app registered that are not roots at all —
+    /// per-category folders nested inside a root of the same installation, added by the
+    /// pre-fix registrar (see <see cref="ResolveModelRoots"/>).
+    ///
+    /// Never throws: like the backfill, a failure here must not block startup.
+    /// </summary>
+    /// <returns>How many rows were removed (0 when there was nothing redundant).</returns>
+    public async Task<int> PruneRedundantFoldersAsync(
+        IEnumerable<InstallerPackage> packages,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(packages);
+
+        try
+        {
+            var rows = await _settingsService
+                .GetAllBaseModelFoldersAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var rootsByPackage = new Dictionary<int, IReadOnlyList<string>>();
+            foreach (var package in packages)
+            {
+                try
+                {
+                    rootsByPackage[package.Id] = ResolveModelRoots(package);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning(ex, "Failed to resolve model roots for '{Name}' while pruning.", package.Name);
+                }
+            }
+
+            var redundant = RedundantBaseModelFolders.Resolve(rows, rootsByPackage);
+            if (redundant.Count == 0)
+            {
+                return 0;
+            }
+
+            foreach (var row in redundant)
+            {
+                Logger.Information(
+                    "Removing Base Model Folder {Path}: a category folder inside a registered root, not a root itself.",
+                    row.FolderPath);
+            }
+
+            return await _settingsService
+                .RemoveBaseModelFoldersAsync([.. redundant.Select(r => r.Id)], cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Failed to prune redundant Base Model Folders.");
+            return 0;
+        }
     }
 }

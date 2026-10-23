@@ -11,6 +11,12 @@ public sealed class DatasetImportResult
     public int Overridden { get; init; }
     public int Renamed { get; init; }
     public int Ignored { get; init; }
+
+    /// <summary>
+    /// Conflicts resolved with Override whose source is the very file it would overwrite: the
+    /// image is already there, so nothing is copied (#586).
+    /// </summary>
+    public int AlreadyPresent { get; init; }
     public IReadOnlyList<string> ProcessedSourceFiles { get; init; } = [];
 
     public int TotalAdded => Copied + Overridden + Renamed;
@@ -99,6 +105,28 @@ public sealed class DatasetFileImporter
         IVideoThumbnailService? videoThumbnailService,
         bool moveFiles)
     {
+        // Ratings are written once per folder when the files are in place, also after a failure
+        // part way, so the files that did arrive are rated right
+        var ratings = new PendingRatings();
+        try
+        {
+            return await ImportResolvedAsync(
+                nonConflictingFiles, conflictResolutions, destinationFolder, videoThumbnailService, moveFiles, ratings);
+        }
+        finally
+        {
+            ratings.Apply();
+        }
+    }
+
+    private async Task<DatasetImportResult> ImportResolvedAsync(
+        IEnumerable<string> nonConflictingFiles,
+        FileConflictResolutionResult? conflictResolutions,
+        string destinationFolder,
+        IVideoThumbnailService? videoThumbnailService,
+        bool moveFiles,
+        PendingRatings ratings)
+    {
         ArgumentNullException.ThrowIfNull(nonConflictingFiles);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationFolder);
 
@@ -107,6 +135,7 @@ public sealed class DatasetFileImporter
         var overridden = 0;
         var renamed = 0;
         var ignored = 0;
+        var alreadyPresent = 0;
 
         // Track filenames used in this batch to prevent intra-batch collisions.
         var usedFileNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -124,7 +153,7 @@ public sealed class DatasetFileImporter
                 usedFileNames.Add(Path.GetFileName(destPath));
             }
 
-            CopyOrMove(sourceFile, destPath, moveFiles, overwrite: false);
+            CopyOrMove(sourceFile, destPath, moveFiles, overwrite: false, ratings);
             processedSources.Add(sourceFile);
             copied++;
 
@@ -133,29 +162,46 @@ public sealed class DatasetFileImporter
 
         if (conflictResolutions?.Confirmed == true)
         {
+            // A "pair" is image + caption with the same base name from the same source folder.
+            // Two conflict rows can share a file name (a loose file and a same-named ZIP entry,
+            // or two ZIPs), so the key must include the source folder or the second row would
+            // reuse the first row's new name and collide.
             var renamedPairs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var overriddenTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var conflict in conflictResolutions.Conflicts)
             {
                 switch (conflict.Resolution)
                 {
-                    case FileConflictResolution.Override:
-                        CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true);
+                    // A source already in the destination folder conflicts with itself (the Image
+                    // Editor hands over its unedited original, #586). Overriding it would copy the file
+                    // onto itself, which throws; it is already there. Rename still makes a copy beside it.
+                    case FileConflictResolution.Override when FilePaths.AreSame(conflict.NewFilePath, conflict.ExistingFilePath):
+                        alreadyPresent++;
+                        break;
+
+                    case FileConflictResolution.Override when overriddenTargets.Add(conflict.ExistingFilePath):
+                        CopyOrMove(conflict.NewFilePath, conflict.ExistingFilePath, moveFiles, overwrite: true, ratings);
                         processedSources.Add(conflict.NewFilePath);
                         overridden++;
 
                         await GenerateVideoThumbnailAsync(conflict.ExistingFilePath, videoThumbnailService);
                         break;
 
+                    // Second Override onto a slot this batch already overwrote: honouring it would
+                    // silently discard the first file the user also chose to keep, so keep both by
+                    // giving this one a new name instead.
+                    case FileConflictResolution.Override:
                     case FileConflictResolution.Rename:
                     {
                         var baseName = Path.GetFileNameWithoutExtension(conflict.ConflictingName);
-                        if (!renamedPairs.TryGetValue(baseName, out var newBaseName))
+                        var pairKey = Path.GetDirectoryName(conflict.NewFilePath) + "|" + baseName;
+                        if (!renamedPairs.TryGetValue(pairKey, out var newBaseName))
                         {
                             var uniquePath = GenerateUniqueFileName(
                                 destinationFolder, conflict.ConflictingName, usedFileNames);
                             newBaseName = Path.GetFileNameWithoutExtension(uniquePath);
-                            renamedPairs[baseName] = newBaseName;
+                            renamedPairs[pairKey] = newBaseName;
                         }
 
                         var extension = Path.GetExtension(conflict.ConflictingName);
@@ -163,7 +209,7 @@ public sealed class DatasetFileImporter
                         var finalRenamedPath = Path.Combine(destinationFolder, finalNewName);
 
                         usedFileNames.Add(finalNewName);
-                        CopyOrMove(conflict.NewFilePath, finalRenamedPath, moveFiles, overwrite: false);
+                        CopyOrMove(conflict.NewFilePath, finalRenamedPath, moveFiles, overwrite: false, ratings);
                         processedSources.Add(conflict.NewFilePath);
                         renamed++;
 
@@ -184,19 +230,44 @@ public sealed class DatasetFileImporter
             Overridden = overridden,
             Renamed = renamed,
             Ignored = ignored,
+            AlreadyPresent = alreadyPresent,
             ProcessedSourceFiles = processedSources
         };
     }
 
-    private void CopyOrMove(string sourcePath, string destinationPath, bool moveFiles, bool overwrite)
+    private void CopyOrMove(string sourcePath, string destinationPath, bool moveFiles, bool overwrite,
+        PendingRatings ratings)
     {
         if (moveFiles)
         {
             _fileOps.MoveFile(sourcePath, destinationPath, overwrite);
+            ratings.Moves.Add((sourcePath, destinationPath));
         }
         else
         {
             _fileOps.CopyFile(sourcePath, destinationPath, overwrite);
+            ratings.Copies.Add(destinationPath);
+        }
+    }
+
+    /// <summary>
+    /// The rating changes of one import. Writing them file by file rewrites the folder's whole
+    /// ratings file each time, which an import of thousands of files cannot afford.
+    /// </summary>
+    private sealed class PendingRatings
+    {
+        public List<(string Source, string Destination)> Moves { get; } = [];
+        public List<string> Copies { get; } = [];
+
+        public void Apply()
+        {
+            // A moved file keeps its rating, and an overwritten one loses the old file's
+            ImageRatingStore.Shared.MoveMany(Moves);
+
+            // A copy arrives unrated: an overwritten file's rating, or the stale entry of a file
+            // deleted outside the app, judged a different image
+            ImageRatingStore.Shared.SetMany(
+                Copies.Select(c => new KeyValuePair<string, ImageRatingStatus>(c, ImageRatingStatus.Unrated)));
         }
     }
 

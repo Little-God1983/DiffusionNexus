@@ -1,4 +1,4 @@
-using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 
 namespace DiffusionNexus.Domain.Entities;
 
@@ -20,8 +20,19 @@ public class ModelVersion : BaseEntity
     /// <summary>Version description or changelog.</summary>
     public string? Description { get; set; }
 
-    /// <summary>The base model this version is trained for.</summary>
-    public BaseModelType BaseModel { get; set; } = BaseModelType.Unknown;
+    /// <summary>
+    /// Dead column, kept on purpose. Until #553 this stored the name of a hardcoded
+    /// <c>BaseModelType</c> enum that nothing ever read; the enum is gone and
+    /// <see cref="BaseModelRaw"/> is the only base-model spelling the app uses. The column
+    /// itself stays (every new row gets "Unknown") because dropping it would make the schema
+    /// forward-only: every build before #553 still maps this column, and its startup recovery
+    /// un-stamps migrations it does not know about, so a user rolling back to an older installer
+    /// would hit "no such column: BaseModel" on the first LoRA query. "Unknown" was a member of
+    /// that enum, so old builds parse it. Nothing may read or write this; the EF configuration
+    /// refers to it by name so no code has to reference it.
+    /// </summary>
+    [Obsolete("Dead column kept only for downgrade safety (#553) — use BaseModelRaw.", error: true)]
+    public string BaseModel { get; set; } = "Unknown";
 
     /// <summary>Original base model string from Civitai (for display).</summary>
     public string? BaseModelRaw { get; set; }
@@ -77,11 +88,34 @@ public class ModelVersion : BaseEntity
     /// Gets the primary preview image, preferring static images over video previews.
     /// Falls back to video only when no static image is available.
     /// </summary>
-    public ModelImage? PrimaryImage =>
-        Images.FirstOrDefault(i => !i.IsNsfw && !i.IsVideo)
-        ?? Images.FirstOrDefault(i => !i.IsVideo)
-        ?? Images.FirstOrDefault(i => !i.IsNsfw)
-        ?? Images.FirstOrDefault();
+    /// <remarks>
+    /// "Safe" is <see cref="IsImageNsfw"/>'s answer, which needs the version: an unrated local
+    /// preview beside Civitai pictures does not count as safe (#631).
+    /// </remarks>
+    public ModelImage? PrimaryImage
+    {
+        get
+        {
+            var hasCivitaiImages = HasCivitaiImages;
+            bool IsNsfw(ModelImage i) => NsfwPolicy.IsNsfwImage(i.NsfwLevel, i.Url, hasCivitaiImages);
+
+            return Images.FirstOrDefault(i => !IsNsfw(i) && !i.IsVideo)
+                ?? Images.FirstOrDefault(i => !i.IsVideo)
+                ?? Images.FirstOrDefault(i => !IsNsfw(i))
+                ?? Images.FirstOrDefault();
+        }
+    }
+
+    /// <summary>Whether any image of this version is a Civitai (web) image.</summary>
+    public bool HasCivitaiImages => Images.Any(i => NsfwPolicy.IsWebImage(i.Url));
+
+    /// <summary>
+    /// Whether <paramref name="image"/> must stay out of sight with "Show NSFW" off, judged in this
+    /// version's context (<see cref="NsfwPolicy.IsNsfwImage"/>). The one answer for an image —
+    /// an image alone cannot tell whether its local preview has Civitai pictures beside it.
+    /// </summary>
+    public bool IsImageNsfw(ModelImage image) =>
+        NsfwPolicy.IsNsfwImage(image.NsfwLevel, image.Url, HasCivitaiImages);
 
     /// <summary>Gets all trigger words as a single string.</summary>
     public string TriggerWordsText =>

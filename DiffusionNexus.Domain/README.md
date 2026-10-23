@@ -100,7 +100,7 @@ var model = new Model
 model.Versions.Add(new ModelVersion
 {
     Name = "v1.0",
-    BaseModel = BaseModelType.SDXL10
+    BaseModelRaw = "SDXL 1.0"
 });
 ```
 
@@ -112,7 +112,7 @@ A specific version of a model.
 var version = new ModelVersion
 {
     Name = "High Noise",
-    BaseModel = BaseModelType.WanVideo22,
+    BaseModelRaw = "Wan Video 2.2",
     DownloadCount = 5000
 };
 
@@ -157,7 +157,6 @@ Console.WriteLine(file.IsSecure);     // true if scans passed
 | Enum | Values |
 |------|--------|
 | `ModelType` | LORA, Checkpoint, Controlnet, etc. |
-| `BaseModelType` | SD15, SDXL10, Flux1D, WanVideo22, etc. |
 | `FileFormat` | SafeTensor, PickleTensor, Diffusers |
 | `ScanResult` | Pending, Success, Danger, Error |
 | `NsfwLevel` | None, Soft, Mature, X |

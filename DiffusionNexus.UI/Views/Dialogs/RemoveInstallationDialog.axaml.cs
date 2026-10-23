@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -25,6 +26,24 @@ public partial class RemoveInstallationDialog : Window
 
     public static readonly StyledProperty<string> BaseModelFolderLabelProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(BaseModelFolderLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<string> GalleryKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(GalleryKeptLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<string> LoraSourceKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(LoraSourceKeptLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<string> BaseModelFolderKeptLabelProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, string>(nameof(BaseModelFolderKeptLabel), defaultValue: string.Empty);
+
+    public static readonly StyledProperty<bool> HasGalleryKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasGalleryKept));
+
+    public static readonly StyledProperty<bool> HasLoraSourceKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasLoraSourceKept));
+
+    public static readonly StyledProperty<bool> HasBaseModelFolderKeptProperty =
+        AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasBaseModelFolderKept));
 
     public static readonly StyledProperty<bool> HasGalleriesProperty =
         AvaloniaProperty.Register<RemoveInstallationDialog, bool>(nameof(HasGalleries));
@@ -79,6 +98,42 @@ public partial class RemoveInstallationDialog : Window
         set => SetValue(BaseModelFolderLabelProperty, value);
     }
 
+    public string GalleryKeptLabel
+    {
+        get => GetValue(GalleryKeptLabelProperty);
+        set => SetValue(GalleryKeptLabelProperty, value);
+    }
+
+    public string LoraSourceKeptLabel
+    {
+        get => GetValue(LoraSourceKeptLabelProperty);
+        set => SetValue(LoraSourceKeptLabelProperty, value);
+    }
+
+    public string BaseModelFolderKeptLabel
+    {
+        get => GetValue(BaseModelFolderKeptLabelProperty);
+        set => SetValue(BaseModelFolderKeptLabelProperty, value);
+    }
+
+    public bool HasGalleryKept
+    {
+        get => GetValue(HasGalleryKeptProperty);
+        set => SetValue(HasGalleryKeptProperty, value);
+    }
+
+    public bool HasLoraSourceKept
+    {
+        get => GetValue(HasLoraSourceKeptProperty);
+        set => SetValue(HasLoraSourceKeptProperty, value);
+    }
+
+    public bool HasBaseModelFolderKept
+    {
+        get => GetValue(HasBaseModelFolderKeptProperty);
+        set => SetValue(HasBaseModelFolderKeptProperty, value);
+    }
+
     public bool HasGalleries
     {
         get => GetValue(HasGalleriesProperty);
@@ -123,9 +178,24 @@ public partial class RemoveInstallationDialog : Window
     {
         Message = $"Remove \"{prompt.InstallationName}\" from the Installer Manager?\n\nThis will NOT delete any files on disk.";
 
-        GalleryLabel = ComposeLabel("Gallery", prompt.GalleryFolders);
-        LoraSourceLabel = ComposeLabel("LoRA Source", prompt.LoraSourceFolders);
-        BaseModelFolderLabel = ComposeLabel("Base Model Folder", prompt.BaseModelFolders);
+        var gallery = RemoveInstallationLabels.Compose(
+            "Gallery", prompt.GalleryFolders, prompt.SharedGalleryFolders);
+        var loraSource = RemoveInstallationLabels.Compose(
+            "LoRA Source", prompt.LoraSourceFolders, prompt.SharedLoraSourceFolders);
+        var baseModelFolder = RemoveInstallationLabels.Compose(
+            "Base Model Folder", prompt.BaseModelFolders, prompt.SharedBaseModelFolders);
+
+        GalleryLabel = gallery.Text;
+        GalleryKeptLabel = gallery.KeptText;
+        HasGalleryKept = gallery.HasKept;
+
+        LoraSourceLabel = loraSource.Text;
+        LoraSourceKeptLabel = loraSource.KeptText;
+        HasLoraSourceKept = loraSource.HasKept;
+
+        BaseModelFolderLabel = baseModelFolder.Text;
+        BaseModelFolderKeptLabel = baseModelFolder.KeptText;
+        HasBaseModelFolderKept = baseModelFolder.HasKept;
 
         HasGalleries = prompt.GalleryFolders.Count > 0;
         HasLoraSources = prompt.LoraSourceFolders.Count > 0;
@@ -135,11 +205,6 @@ public partial class RemoveInstallationDialog : Window
         RemoveLoraSources = HasLoraSources;
         RemoveBaseModelFolders = HasBaseModelFolders;
     }
-
-    private static string ComposeLabel(string what, System.Collections.Generic.IReadOnlyList<string> folders) =>
-        folders.Count == 0
-            ? $"{what} — none linked"
-            : $"{what}\n{string.Join("\n", folders)}";
 
     private void OnYesClick(object? sender, RoutedEventArgs e)
     {

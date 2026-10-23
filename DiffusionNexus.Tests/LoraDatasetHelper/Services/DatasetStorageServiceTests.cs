@@ -1,4 +1,5 @@
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
 
 namespace DiffusionNexus.Tests.LoraDatasetHelper.Services;
@@ -293,6 +294,41 @@ public class DatasetStorageServiceTests : IDisposable
         File.Exists(imagePath).Should().BeFalse();
         File.Exists(captionPath).Should().BeFalse();
         File.Exists(thumbnailPath).Should().BeFalse();
+    }
+
+    [Fact]
+    public void DeleteMediaFiles_RemovesTheImagesRating()
+    {
+        // Arrange: a deleted image must not leave its rating behind for a later file of that name
+        var imagePath = Path.Combine(_testDirectory, "image.png");
+        var keptPath = Path.Combine(_testDirectory, "kept.png");
+        File.WriteAllText(imagePath, "image");
+        File.WriteAllText(keptPath, "kept");
+        ImageRatingStore.Shared.Set(imagePath, ImageRatingStatus.Rejected);
+        ImageRatingStore.Shared.Set(keptPath, ImageRatingStatus.Approved);
+
+        // Act
+        _sut.DeleteMediaFiles(imagePath, null, null);
+
+        // Assert
+        new ImageRatingStore().Get(imagePath).Should().Be(ImageRatingStatus.Unrated);
+        new ImageRatingStore().Get(keptPath).Should().Be(ImageRatingStatus.Approved);
+    }
+
+    [Fact]
+    public void DeleteMediaFiles_DeletesTheImagesLegacyRatingFile()
+    {
+        // Arrange
+        var imagePath = Path.Combine(_testDirectory, "image.png");
+        var legacyPath = Path.Combine(_testDirectory, "image.rating");
+        File.WriteAllText(imagePath, "image");
+        File.WriteAllText(legacyPath, "Rejected");
+
+        // Act
+        _sut.DeleteMediaFiles(imagePath, null, null);
+
+        // Assert
+        File.Exists(legacyPath).Should().BeFalse();
     }
 
     [Fact]

@@ -4,9 +4,11 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              xmlns:browser="using:DiffusionNexus.UI.Views.CivitaiBrowser"
+             xmlns:views="using:DiffusionNexus.UI.Views"
              xmlns:controls="using:DiffusionNexus.UI.Views.Controls"
              xmlns:air="using:Avalonia.Controls"
              xmlns:al="using:Avalonia.Layout"
+             xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.LoraViewerView"
              x:DataType="vm:LoraViewerViewModel">
@@ -15,7 +17,7 @@
     <vm:LoraViewerViewModel/>
   </Design.DataContext>
 
-  <TabControl Padding="0">
+  <TabControl Padding="0" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
     <TabItem Header="Installed">
       <Grid RowDefinitions="Auto,*,Auto">
 
@@ -26,6 +28,7 @@
                 BorderBrush="#333"
                 BorderThickness="0,0,0,1">
 
+          <StackPanel>
           <WrapPanel Orientation="Horizontal">
 
             <TextBox Text="{Binding SearchText, Mode=TwoWay}"
@@ -182,7 +185,7 @@
             </StackPanel>
 
             <Button Command="{Binding DownloadLoraCommand}"
-                    ToolTip.Tip="Download a LoRA from Civitai"
+                    ToolTip.Tip="Downloading a LoRA from a link has moved to Browse Civitai — click to see how"
                     VerticalAlignment="Center"
                     Margin="0,4,12,4">
               <StackPanel Orientation="Horizontal" Spacing="6">
@@ -222,6 +225,49 @@
             </Button>
 
           </WrapPanel>
+
+          <!-- #647: how many LoRAs in this view are hidden because they have no rating at all, and
+               the way to see exactly those and rate them. The number is what the list shows. -->
+          <Border IsVisible="{Binding ShowUnratedHint}"
+                  Background="#2A2A1A"
+                  BorderBrush="#5A5A2A"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{Binding UnratedHint}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="{Binding ShowUnratedButtonText}"
+                      Command="{Binding ShowUnratedCommand}"
+                      ToolTip.Tip="List the unrated LoRAs so you can rate them SFW or NSFW"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+
+          <!-- #647: the unrated list is open. -->
+          <Border IsVisible="{Binding ShowUnratedOnly}"
+                  Background="#1F2A33"
+                  BorderBrush="#2E4A5E"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{Binding UnratedViewTitle}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="Back to all"
+                      Command="{Binding BackToAllCommand}"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+          </StackPanel>
         </Border>
 
         <!-- Main Content: Tiles + Detail Panel (overlay) -->
@@ -237,12 +283,12 @@
                  thumbnail; scrolling a tile in calls Activate() to load it on demand.
                  Item footprint = 250 wide + 6 margin all round; MinItemHeight leaves a
                  small row gap above the tile's natural height so nothing clips. -->
-            <ScrollViewer Padding="16"
+            <ScrollViewer x:Name="InstalledTileScrollViewer"
                           HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
+                          VerticalScrollBarVisibility="Auto"
+                          behaviors:ScrollKeyNavigation.IsEnabled="True">
 
-              <air:ItemsRepeater ItemsSource="{Binding FilteredTiles}"
-                                 Margin="0,0,0,40">
+              <air:ItemsRepeater Margin="16" ItemsSource="{Binding FilteredTiles}">
                 <air:ItemsRepeater.Layout>
                   <al:UniformGridLayout Orientation="Horizontal"
                                         MinItemWidth="262"
@@ -277,8 +323,11 @@
                            FontSize="20"
                            FontWeight="SemiBold"
                            HorizontalAlignment="Center"/>
-                <TextBlock Text="Add LoRA source folders in Settings, then click Refresh."
+                <TextBlock Text="{Binding EmptyStateMessage}"
                            Opacity="0.6"
+                           TextWrapping="Wrap"
+                           MaxWidth="420"
+                           TextAlignment="Center"
                            HorizontalAlignment="Center"/>
                 <Button Content="Open Settings"
                         HorizontalAlignment="Center"
@@ -328,6 +377,10 @@
 
     <TabItem Header="Browse Civitai">
       <browser:CivitaiBrowserView DataContext="{Binding BrowserViewModel}"/>
+    </TabItem>
+
+    <TabItem Header="LoRA Sorter">
+      <views:LoraSorterView DataContext="{Binding SorterViewModel}"/>
     </TabItem>
   </TabControl>
 </UserControl>

@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services.Lora;
+using DiffusionNexus.Domain.Utilities;
 
 namespace DiffusionNexus.UI.Services.Distiller;
 
@@ -24,7 +25,10 @@ internal readonly record struct TrackedModelFile(string FileName, string? LocalP
 /// </summary>
 internal sealed class ImageResourceHasher
 {
-    private static readonly string[] ModelExtensions = [".safetensors", ".ckpt", ".gguf", ".pt", ".sft", ".bin"];
+    // Recognition only — this decides whether a referenced file LOOKS like a model worth hashing,
+    // and nothing here is moved or discovered on the strength of it. It was the only list missing
+    // ".pth"; the shared set includes it.
+    private static readonly string[] ModelExtensions = ModelFileExtensions.Recognized;
 
     // Search a root and every subfolder, skip locked/no-permission subtrees, match case-insensitively
     // (Windows paths are case-insensitive and ComfyUI records model names in arbitrary case).

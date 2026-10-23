@@ -1,4 +1,6 @@
+using System.Text.RegularExpressions;
 using DiffusionNexus.DataAccess;
+using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -6,6 +8,7 @@ using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace DiffusionNexus.Tests.DataAccess.Repositories;
 
@@ -307,7 +310,6 @@ public class ModelRepositoryTests : IDisposable
         var version = new ModelVersion
         {
             Name = name,
-            BaseModel = BaseModelType.Other,
             Model = model
         };
 
@@ -374,11 +376,14 @@ public class ModelRepositoryTests : IDisposable
     }
 
     [Fact]
-    public void WhenMediaTypeIsNullAndUrlHasMp4ExtensionThenIsVideoReturnsFalse()
+    public void WhenMediaTypeIsNullAndUrlHasMp4ExtensionThenIsVideoReturnsTrue()
     {
-        // IsVideo only checks MediaType, not URL — URL fallback is in the ViewModel
+        // Was ReturnsFalse: the URL fallback used to live only in the ViewModel. It moved onto
+        // ModelImage.IsVideoLike for the Plan B thumbnail ladder, where this exact row — a legacy
+        // sidecar import with no `type` field — otherwise skips the poster rung and gets its full
+        // clip downloaded and thrown away. See ModelImageIsVideoLikeTests for the whole rule.
         var image = new ModelImage { Url = "https://example.com/preview.mp4" };
-        image.IsVideo.Should().BeFalse();
+        image.IsVideo.Should().BeTrue();
     }
 
     [Fact]
@@ -440,6 +445,314 @@ public class ModelRepositoryTests : IDisposable
         var sameGroup = all.Where(m => m.CivitaiModelPageId == 100).ToList();
 
         sameGroup.Should().HaveCount(2);
+    }
+
+    /// <summary>
+    /// The "light" tile load exists precisely so that opening the LoRA viewer does not pull every
+    /// thumbnail BLOB in the library into memory — the projection says as much in a comment. It did
+    /// it anyway: <c>ThumbnailData.Length</c> has no SQLite translation, so EF answered the
+    /// <c>!= null</c> half in SQL, <b>selected the column</b>, and finished the comparison in
+    /// process. Asserted against the SQL the provider actually emitted, the same way
+    /// <c>SyncStateRepositoryThumbnailTests.ThumbnailCandidates_NeverSelectTheBlobColumn</c> does:
+    /// the flag needs the column, so the SQL mentions it — but only inside <c>IS NOT NULL</c> and
+    /// <c>&lt;&gt; X''</c>, neither of which hands the bytes over. Neutralise exactly those two
+    /// forms and nothing may be left.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_NeverSelectsTheThumbnailBlob()
+    {
+        var sql = new List<string>();
+
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+
+        var services = new ServiceCollection();
+        services.AddDataAccessLayer(options => options
+            .UseSqlite(connection)
+            .LogTo(sql.Add, [DbLoggerCategory.Database.Command.Name], LogLevel.Information));
+
+        using var provider = services.BuildServiceProvider();
+
+        using (var seedScope = provider.CreateScope())
+        {
+            seedScope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>().Database.EnsureCreated();
+
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var model = CreateModelWithLocalFile("Heavy", @"C:\m\heavy.safetensors");
+            var version = model.Versions.First();
+            version.Images.Add(new ModelImage
+            {
+                Url = "https://image.civitai.com/abc/width=450/still.jpeg",
+                SortOrder = 0,
+                // A megabyte of it, so a projection that dragged it along would be unmistakable.
+                ThumbnailData = new byte[1024 * 1024],
+                ThumbnailMimeType = "image/jpeg",
+                ModelVersion = version,
+            });
+
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+        }
+
+        sql.Clear();
+
+        using (var scope = provider.CreateScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var models = await uow.Models.GetModelsWithLocalFilesLightAsync();
+
+            var image = models.Should().ContainSingle().Subject
+                .Versions.Should().ContainSingle().Subject
+                .Images.Should().ContainSingle().Subject;
+
+            image.IsThumbnailDeferred.Should().BeTrue(
+                "the tile is told a thumbnail exists so it can lazy-load it, and told nothing more");
+        }
+
+        var captured = string.Join("\n", sql);
+
+        // Positive first: if the flag ever stopped being computed in SQL the assertion below would
+        // pass for the wrong reason.
+        captured.Should().Contain("ThumbnailData", "the has-a-thumbnail flag is answered inside SQLite");
+
+        var withoutFlag = Regex.Replace(
+            captured,
+            @"""\w+""\.""ThumbnailData"" (IS NOT NULL|<> X'')",
+            "<has-thumbnail-flag>");
+
+        withoutFlag.Should().NotContain("ThumbnailData",
+            "anything left is the BLOB column in the SELECT list, and this query reads every image row in the library");
+
+        // And the whole column list, not just the one that hurts. Task 8 had to add two scalars
+        // (ThumbnailAttemptedAt, ThumbnailFailure) so the tile can honour the same retry window the
+        // sync step does; pinning the exact set is what stops the next such addition from being an
+        // `Include` or a whole-entity select nobody notices until the library is 4 000 models deep.
+        ImageColumnsTouchedBy(sql).Should().BeEquivalentTo(ExpectedLightImageColumns);
+    }
+
+    /// <summary>
+    /// Every column the image projection references, taken from the SQL the provider emitted.
+    /// Includes the one the has-a-thumbnail flag tests but never hands over.
+    /// </summary>
+    private static IReadOnlyCollection<string> ImageColumnsTouchedBy(IEnumerable<string> sql)
+    {
+        var imageQuery = sql.Single(s => s.Contains("FROM \"ModelImages\""));
+
+        return Regex.Matches(imageQuery, @"""\w+""\.""(\w+)""")
+            .Select(m => m.Groups[1].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static readonly string[] ExpectedLightImageColumns =
+    [
+        // NsfwRating is the rating (#631); the dead IsNsfw / NsfwLevel columns are never read.
+        "Id", "ModelVersionId", "CivitaiId", "Url", "MediaType", "NsfwRating",
+        "Width", "Height", "BlurHash", "SortOrder", "CreatedAt", "PostId", "Username",
+        "ThumbnailMimeType", "ThumbnailWidth", "ThumbnailHeight",
+        "ThumbnailAttemptedAt", "ThumbnailFailure",
+        "LocalCachePath", "IsLocalCacheValid", "CachedAt", "CachedFileSize",
+        "Prompt", "NegativePrompt", "Seed", "Steps", "Sampler", "CfgScale",
+        "GenerationModel", "DenoisingStrength", "LikeCount", "HeartCount", "CommentCount",
+        // Tested for emptiness by the has-a-thumbnail flag, never selected — see the test above.
+        "ThumbnailData",
+    ];
+
+    /// <summary>
+    /// The tile's scroll path refuses to re-fetch a row whose last attempt says not to, and the
+    /// light query is where the tile gets its rows. A projection that dropped these two stamps
+    /// would hand every image a blank slate — which the retry policy reads as "never attempted",
+    /// putting the per-scroll re-fetch of a dead poster URL straight back.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_CarriesTheRetryStampsTheTileMustHonour()
+    {
+        var attemptedAt = new DateTimeOffset(2026, 8, 20, 9, 30, 0, TimeSpan.Zero);
+
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+            var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
+            var version = model.Versions.First();
+            version.Images.Add(new ModelImage
+            {
+                Url = "https://image.civitai.com/abc/width=450/gone.jpeg",
+                SortOrder = 0,
+                ThumbnailAttemptedAt = attemptedAt,
+                ThumbnailFailure = ThumbnailFailureReason.Http404,
+                ModelVersion = version,
+            });
+
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var loaded = await uow.Models.GetModelsWithLocalFilesLightAsync();
+
+        var image = loaded.Should().ContainSingle().Subject
+            .Versions.Should().ContainSingle().Subject
+            .Images.Should().ContainSingle().Subject;
+
+        image.ThumbnailAttemptedAt.Should().Be(attemptedAt);
+        image.ThumbnailFailure.Should().Be(ThumbnailFailureReason.Http404);
+        image.ThumbnailData.Should().BeNull("a row that never got bytes is not deferred, it is empty");
+    }
+
+    /// <summary>
+    /// #647: the grid tells "not rated yet" (the bulk run will fetch it) from "no rating" (Civitai
+    /// was asked and had nothing) by the images step's stamp, so the light load carries the sync
+    /// state — and the user's rating with the original.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_CarriesSyncStateAndTheUsersRating()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
+            model.UserNsfwRating = false;
+            model.OriginalNsfwRating = "XXX";
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+
+        var model1 = loaded.Should().ContainSingle().Subject;
+        model1.UserNsfwRating.Should().BeFalse();
+        model1.OriginalNsfwRating.Should().Be("XXX");
+        model1.SyncState.Should().NotBeNull();
+        model1.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>
+    /// #647: rating a LoRA SFW or NSFW applies to every model row its tile stands for and survives
+    /// a reload. The original rating (what Civitai said) is kept from the first change: flipping
+    /// SFW to NSFW later does not overwrite it.
+    /// </summary>
+    [Fact]
+    public async Task SetUserNsfwRating_PersistsForEveryModelOfTheTile_KeepingTheFirstOriginal()
+    {
+        int a, b, other;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var ma = CreateModelWithLocalFile("Same", @"C:\m\a.safetensors");
+            var mb = CreateModelWithLocalFile("Same", @"C:\m\b.safetensors");
+            var mo = CreateModelWithLocalFile("Other", @"C:\m\o.safetensors");
+            foreach (var m in new[] { ma, mb, mo }) await seed.Models.AddAsync(m);
+            await seed.SaveChangesAsync();
+            (a, b, other) = (ma.Id, mb.Id, mo.Id);
+        }
+
+        async Task<Dictionary<int, (bool? Rating, string? Original)>> ReadAsync()
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var models = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+            return models.ToDictionary(m => m.Id, m => (m.UserNsfwRating, m.OriginalNsfwRating));
+        }
+
+        using (var scope = _serviceProvider.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: false, originalRating: "XXX"))
+                .Should().Be(2);
+        var afterSfw = await ReadAsync();
+        afterSfw[a].Should().Be((false, "XXX"));
+        afterSfw[b].Should().Be((false, "XXX"));
+        afterSfw[other].Should().Be(((bool?)null, (string?)null));
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: true, originalRating: "PG");
+        (await ReadAsync())[a].Should().Be((true, "XXX"), "the original is what Civitai said before the user's first change");
+    }
+
+    /// <summary>
+    /// Review: a tile refreshed after Download Metadata in the details is reloaded through
+    /// GetByIdWithIncludesAsync. Without the sync state the unrated-reason reads "never checked" and
+    /// promises Download Metadata again for a LoRA Civitai already answered (deleted).
+    /// </summary>
+    [Fact]
+    public async Task GetByIdWithIncludes_CarriesTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Reloaded", @"C:\m\reloaded.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(id);
+
+        loaded!.SyncState.Should().NotBeNull();
+        loaded.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>
+    /// Review round 2: the detail view refreshes a tile after a download through the file-path and
+    /// file-hash lookups too; they carry the sync state for the same reason as GetByIdWithIncludes.
+    /// </summary>
+    [Fact]
+    public async Task FindByLocalFilePathAndHash_CarryTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        const string path = @"C:\m\found.safetensors";
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Found", path);
+            model.Versions.First().Files.First().HashSHA256 = "ABCDEF";
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        (await uow.Models.FindByLocalFilePathAsync(path))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+        (await uow.Models.FindByFileHashAsync("ABCDEF"))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>Review: a rating is a change to the model row like any other save — it stamps UpdatedAt.</summary>
+    [Fact]
+    public async Task SetUserNsfwRating_StampsUpdatedAt()
+    {
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamp", @"C:\m\stamp.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+        var before = DateTimeOffset.UtcNow;
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([id], isNsfw: false, originalRating: "XXX");
+
+        using var readScope = _serviceProvider.CreateScope();
+        var saved = await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdAsync(id);
+        saved!.UpdatedAt.Should().NotBeNull();
+        saved.UpdatedAt!.Value.Should().BeOnOrAfter(before);
     }
 
     public void Dispose()

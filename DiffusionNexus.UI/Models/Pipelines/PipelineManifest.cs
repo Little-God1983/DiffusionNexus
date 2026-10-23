@@ -9,7 +9,7 @@ namespace DiffusionNexus.UI.Models.Pipelines;
 ///
 /// A pipeline is intentionally an <b>app-level</b> concept (e.g. "Anime-To-Real produces
 /// photoreal renders via the local DiffusionNexus core"), distinct from an installable
-/// ComfyUI workload in the SDK database. The assets are downloaded into the default
+/// ComfyUI workload in the workload catalog. The assets are downloaded into the default
 /// ComfyUI installation's <c>models/</c> tree, which is the same layout the local
 /// renderer scans.
 /// </summary>

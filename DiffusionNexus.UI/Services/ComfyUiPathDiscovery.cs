@@ -70,4 +70,57 @@ public static class ComfyUiPathDiscovery
 
         return [.. paths];
     }
+
+    /// <summary>
+    /// Returns only the model <em>roots</em> of an installation: its own <c>models/</c>,
+    /// the portable sibling <c>models/</c>, and each <c>base_path</c> declared in
+    /// <c>extra_model_paths.yaml</c>. A root is a directory that holds (or receives) the
+    /// ComfyUI category subfolders — <c>loras/</c>, <c>vae/</c>, <c>diffusion_models/</c>, …
+    ///
+    /// Deliberately narrower than <see cref="EnumerateModelSearchPaths"/>, which also
+    /// returns every per-category folder because searching has to look inside all of them.
+    /// A category folder is not a root: registering <c>D:\Models\Lora</c> as one makes a
+    /// download aimed at <c>{root}\loras</c> land in <c>D:\Models\Lora\loras</c>.
+    /// </summary>
+    public static IReadOnlyList<string> EnumerateModelRoots(string comfyUiRootPath)
+    {
+        if (string.IsNullOrWhiteSpace(comfyUiRootPath) || !Directory.Exists(comfyUiRootPath))
+        {
+            return [];
+        }
+
+        var installationType = ConfigurationCheckerService.DetectInstallationType(comfyUiRootPath);
+        var repositoryPath = ConfigurationCheckerService.GetRepositoryPath(comfyUiRootPath, installationType);
+
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var repoModelsDir = Path.Combine(repositoryPath, "models");
+        if (Directory.Exists(repoModelsDir))
+        {
+            roots.Add(repoModelsDir);
+        }
+
+        foreach (var baseRoot in ConfigurationCheckerService.ParseExtraModelPathRoots(repositoryPath))
+        {
+            if (Directory.Exists(baseRoot))
+            {
+                roots.Add(baseRoot);
+            }
+        }
+
+        if (installationType == ComfyUIInstallationType.Portable)
+        {
+            var rootParent = Path.GetDirectoryName(repositoryPath);
+            if (!string.IsNullOrWhiteSpace(rootParent))
+            {
+                var portableRootModels = Path.Combine(rootParent, "models");
+                if (Directory.Exists(portableRootModels))
+                {
+                    roots.Add(portableRootModels);
+                }
+            }
+        }
+
+        return [.. roots];
+    }
 }

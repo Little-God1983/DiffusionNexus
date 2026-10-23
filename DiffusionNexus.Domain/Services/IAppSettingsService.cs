@@ -16,6 +16,39 @@ public interface IAppSettingsService
     Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads only Settings → ComfyUI Server mode: a read-only query that creates, seeds and tracks
+    /// nothing, cheap enough for every readiness check. Without a settings row it answers
+    /// <see cref="Enums.ComfyUiServerMode.Engine"/>, the default of a fresh database.
+    /// </summary>
+    Task<Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads only Settings → ComfyUI Server mode and URL, as light as
+    /// <see cref="GetComfyUiServerModeAsync"/>: read-only, nothing created, seeded or tracked. Without a
+    /// settings row it answers <see cref="Enums.ComfyUiServerMode.Engine"/> with a null URL.
+    /// </summary>
+    Task<Models.ComfyUiServerConnection> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The catalog channel (null = never chosen) and "apply catalog updates automatically" (#618).
+    /// Read-only: nothing is created, seeded or tracked; without a settings row it answers (null, false).
+    /// </summary>
+    Task<Models.CatalogUpdateSettings> GetCatalogUpdateSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Saves the catalog channel the app follows (#618). Creates the settings row if missing.</summary>
+    Task SetCatalogChannelAsync(string channel, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves the catalog channel only when the settings row exists and holds no channel yet; false (nothing written)
+    /// otherwise. For the background first-start copy (#618): on a fresh install the UI creates the row at the same
+    /// time (two inserts of row 1 would make one fail), and a channel the user picked meanwhile is never overwritten.
+    /// </summary>
+    Task<bool> SetCatalogChannelIfSettingsExistAsync(string channel, CancellationToken cancellationToken = default);
+
+    /// <summary>Saves "apply catalog updates automatically" (#618). Creates the settings row if missing.</summary>
+    Task SetApplyCatalogUpdatesAutomaticallyAsync(bool on, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Saves the application settings.
     /// </summary>
     /// <param name="settings">The settings to save.</param>
@@ -29,6 +62,11 @@ public interface IAppSettingsService
     /// <param name="lastBackupAt">The timestamp of the last backup.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task UpdateLastBackupAtAsync(DateTimeOffset lastBackupAt, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stamps when the last user-started library sync completed, without touching any other setting.
+    /// </summary>
+    Task UpdateLastLibrarySyncAtAsync(DateTimeOffset lastLibrarySyncAt, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the decrypted Civitai API key.
@@ -117,6 +155,24 @@ public interface IAppSettingsService
     /// <returns><c>true</c> when a new row was inserted; <c>false</c> when the path already existed.</returns>
     Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Gets every Base Model Folder row, disabled ones included, ordered by <c>Order</c>.
+    /// Unlike <see cref="GetEnabledBaseModelFoldersAsync"/> this is for maintenance work
+    /// that has to see the whole registry rather than what is currently scanned.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<BaseModelFolder>> GetAllBaseModelFoldersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Removes Base Model Folder rows by id. The ⭐ default row is never removed, whatever
+    /// the caller asks: losing the default download target silently would be worse than
+    /// keeping one redundant row.
+    /// </summary>
+    /// <param name="ids">Row ids to remove; unknown ids are ignored.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>How many rows were actually removed.</returns>
+    Task<int> RemoveBaseModelFoldersAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default);
+
     /// <summary>Gets the remembered feedback-reporter e-mail, or null if not set.</summary>
     Task<string?> GetFeedbackReporterEmailAsync(CancellationToken cancellationToken = default);
 
@@ -128,4 +184,16 @@ public interface IAppSettingsService
 
     /// <summary>Stores the LoRA Viewer's base-model filter JSON; whitespace/empty clears it to null.</summary>
     Task SetLoraViewerFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets the Civitai Browser's saved filter JSON, or null if never saved.</summary>
+    Task<string?> GetCivitaiBrowserFilterJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the Civitai Browser's filter JSON; whitespace/empty clears it to null.</summary>
+    Task SetCivitaiBrowserFilterJsonAsync(string? json, CancellationToken cancellationToken = default);
+
+    /// <summary>Gets the LoRA Sorter's excluded-folders JSON (a string array of absolute paths), or null if none.</summary>
+    Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Stores the LoRA Sorter's excluded-folders JSON; whitespace/empty clears it to null.</summary>
+    Task SetLoraSorterExcludedFoldersJsonAsync(string? json, CancellationToken cancellationToken = default);
 }

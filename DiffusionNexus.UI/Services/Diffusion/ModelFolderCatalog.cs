@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using Serilog;
 
@@ -24,17 +25,36 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "DiffusionNexus", "Models");
 
-    public ModelFolderCatalog(IAppSettingsService settingsService)
+    private readonly IUnitOfWork? _unitOfWork;
+
+    // The catalog is resolved once, so _unitOfWork is one long-lived DbContext: a second read started
+    // while one runs makes EF throw, and the filter would fail open. One package read at a time.
+    private readonly SemaphoreSlim _packagesLock = new(1, 1);
+
+    /// <param name="settingsService">The Base Model Folders.</param>
+    /// <param name="unitOfWork">
+    /// Reads the installer packages, so folders inside the app-managed Engine are never a download
+    /// target. Without it every enabled folder is offered.
+    /// </param>
+    public ModelFolderCatalog(IAppSettingsService settingsService, IUnitOfWork? unitOfWork = null)
     {
         _settingsService = settingsService ?? throw new ArgumentNullException(nameof(settingsService));
+        _unitOfWork = unitOfWork;
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<ModelFolderOption>> GetDownloadTargetsAsync(CancellationToken cancellationToken = default)
     {
-        var folders = await _settingsService
+        var enabled = await _settingsService
             .GetEnabledBaseModelFoldersAsync(cancellationToken)
             .ConfigureAwait(false);
+
+        // A folder inside the app-managed Engine is read (search roots) but never downloaded into:
+        // Uninstall Engine deletes everything inside it.
+        var engineRoots = await AppManagedRootsAsync(cancellationToken).ConfigureAwait(false);
+        var folders = enabled
+            .Where(f => !engineRoots.Any(root => FolderPathMatch.Contains(root, f.FolderPath)))
+            .ToList();
 
         if (folders.Count == 0)
         {
@@ -83,6 +103,40 @@ public sealed class ModelFolderCatalog : IModelFolderCatalog
                 root, FallbackRoot);
             Directory.CreateDirectory(FallbackRoot);
             return FallbackRoot;
+        }
+    }
+
+    /// <summary>
+    /// The install folders of the app-managed packages (the Diffusion Nexus Engine). By path, not by the
+    /// row's package link: an old startup backfill linked the user's own libraries to the Engine row. A
+    /// blank, relative or drive-root path is skipped (a corrupted row must not hide a whole drive), and a
+    /// failing read skips the filter rather than blocking downloads.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> AppManagedRootsAsync(CancellationToken cancellationToken)
+    {
+        if (_unitOfWork is null) return [];
+        await _packagesLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _unitOfWork.ClearChangeTracker();
+            var packages = await _unitOfWork.InstallerPackages.GetAllAsync(cancellationToken).ConfigureAwait(false);
+            return packages
+                .Where(p => p.IsAppManaged && Engine.EngineRemovalPlanner.IsSafeEngineRoot(p.InstallationPath))
+                .Select(p => p.InstallationPath)
+                .ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warning(ex, "Could not read the installer packages; every enabled model folder is offered as a download target");
+            return [];
+        }
+        finally
+        {
+            _packagesLock.Release();
         }
     }
 

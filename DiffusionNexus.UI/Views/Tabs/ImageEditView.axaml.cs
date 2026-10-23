@@ -87,6 +87,8 @@ public partial class ImageEditView : UserControl
         if (_wiredImageEditor is not null)
         {
             _wiredImageEditor.SaveImageFunc = null;
+            _wiredImageEditor.SaveLayeredTiffFunc = null;
+            _wiredImageEditor.HasTransparencyFunc = null;
             _wiredImageEditor.ShowSaveFileDialogFunc = null;
             _wiredImageEditor = null;
         }
@@ -233,6 +235,8 @@ public partial class ImageEditView : UserControl
         WireTextToolEvents(imageEditor);
         WireInpaintingEvents(imageEditor);
         WireOutpaintingEvents(imageEditor);
+        WireCanvasExtendEvents(imageEditor);
+        WireLayerTransformEvents(imageEditor);
         WireSaveAndExportEvents(vm, imageEditor);
         WireLayerEvents(vm, imageEditor);
         WireZoomSlider();
@@ -264,6 +268,14 @@ public partial class ImageEditView : UserControl
         };
         _imageEditorCanvas!.ImageChanged += onImageChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.ImageChanged -= onImageChanged);
+
+        // Mirror the core's unsaved-changes flag into the view model so the tab can ask before
+        // anything replaces the canvas (#567).
+        _eventCleanup.Add(imageEditor.TrackUnsavedChanges(_imageEditorCanvas.EditorCore).Dispose);
+
+        // ...and whether the canvas is still the file on disk, so hand-offs can give tools that
+        // file instead of a re-encoded copy (#586).
+        _eventCleanup.Add(imageEditor.TrackFileMatch(_imageEditorCanvas.EditorCore).Dispose);
 
         EventHandler onZoomChanged = (_, _) =>
         {
@@ -429,9 +441,10 @@ public partial class ImageEditView : UserControl
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_outpaint_{Guid.NewGuid():N}.png");
 
-                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath))
+                if (imageEditor.SaveImageFunc is null || !imageEditor.SaveImageFunc(tempPath, null))
                 {
                     imageEditor.StatusMessage = "Failed to export current image for outpainting.";
+                    imageEditor.Outpainting.EndWithoutRun();
                     imageEditor.Outpainting.RefreshCommandStates();
                     return;
                 }
@@ -442,6 +455,7 @@ public partial class ImageEditView : UserControl
             catch (Exception ex)
             {
                 imageEditor.StatusMessage = $"Outpainting failed: {ex.Message}";
+                if (imageEditor.Outpainting.IsBusy) imageEditor.Outpainting.EndWithoutRun();
             }
             finally
             {
@@ -498,6 +512,182 @@ public partial class ImageEditView : UserControl
         };
         imageEditor.Outpainting.ResultReady += onOutpaintResult;
         _eventCleanup.Add(() => imageEditor.Outpainting.ResultReady -= onOutpaintResult);
+    }
+
+    private void WireCanvasExtendEvents(ImageEditorViewModel imageEditor)
+    {
+        EventHandler onActivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsCanvasExtendToolActive = true;
+            // Push the initial state so the panel shows the current size before any drag.
+            var tool = _imageEditorCanvas.EditorCore.CanvasExtendTool;
+            tool.ImagePixelWidth = _imageEditorCanvas.EditorCore.Width;
+            tool.ImagePixelHeight = _imageEditorCanvas.EditorCore.Height;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
+        };
+        imageEditor.CanvasExtend.ToolActivated += onActivated;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ToolActivated -= onActivated);
+
+        EventHandler onDeactivated = (_, _) =>
+        {
+            // Clearing IsCanvasExtendToolActive resets the tool through IsActive; no second Reset.
+            _imageEditorCanvas!.IsCanvasExtendToolActive = false;
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.ToolDeactivated += onDeactivated;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ToolDeactivated -= onDeactivated);
+
+        EventHandler<(int Width, int Height)> onTargetSize = (_, size) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetTargetSize(size.Width, size.Height);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.TargetSizeRequested += onTargetSize;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.TargetSizeRequested -= onTargetSize);
+
+        EventHandler<(float W, float H)> onAspect = (_, ratio) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetAspectRatio(ratio.W, ratio.H);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.SetAspectRatioRequested += onAspect;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.SetAspectRatioRequested -= onAspect);
+
+        EventHandler<CanvasAnchor> onAnchor = (_, anchor) =>
+        {
+            _imageEditorCanvas!.EditorCore.CanvasExtendTool.SetAnchor(anchor);
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.CanvasExtend.AnchorRequested += onAnchor;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.AnchorRequested -= onAnchor);
+
+        EventHandler onApply = (_, _) => _imageEditorCanvas!.ApplyCanvasExtend();
+        imageEditor.CanvasExtend.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.CanvasExtend.ApplyRequested -= onApply);
+
+        EventHandler onRegionChanged = (_, _) =>
+        {
+            var tool = _imageEditorCanvas!.EditorCore.CanvasExtendTool;
+            var (w, h) = tool.GetNewDimensions();
+            imageEditor.CanvasExtend.UpdateResolution(w, h, tool.HasExtension);
+            imageEditor.CanvasExtend.UpdateAnchor(tool.Anchor);
+        };
+        _imageEditorCanvas!.CanvasExtendRegionChanged += onRegionChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendRegionChanged -= onRegionChanged);
+
+        EventHandler onShrink = (_, _) => imageEditor.CanvasExtend.OnShrinkAttempted();
+        _imageEditorCanvas.CanvasExtendShrinkAttempted += onShrink;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendShrinkAttempted -= onShrink);
+
+        EventHandler onApplied = (_, _) =>
+        {
+            // ImageChanged fires first and already syncs the layer panel and the dimensions.
+            var core = _imageEditorCanvas!.EditorCore;
+            imageEditor.CanvasExtend.OnApplied(core.Width, core.Height);
+        };
+        _imageEditorCanvas.CanvasExtendApplied += onApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendApplied -= onApplied);
+
+        EventHandler onApplyFailed = (_, _) =>
+        {
+            imageEditor.CanvasExtend.OnApplyFailed();
+            imageEditor.StatusMessage = "The canvas could not be extended. Try a smaller size.";
+        };
+        _imageEditorCanvas.CanvasExtendFailed += onApplyFailed;
+        _eventCleanup.Add(() => _imageEditorCanvas!.CanvasExtendFailed -= onApplyFailed);
+    }
+
+    private void WireLayerTransformEvents(ImageEditorViewModel imageEditor)
+    {
+        void PushToolState()
+        {
+            var tool = _imageEditorCanvas!.EditorCore.LayerTransformTool;
+            if (!tool.IsArmed)
+            {
+                // Ineligible layer (mask/locked/none): clear stale fields rather than leaving the
+                // panel showing the previous layer's numbers next to the amber hint.
+                imageEditor.LayerTransform.UpdateFromTool(string.Empty, 0, 0, 0, 0, 0, false);
+                return;
+            }
+            // X/Y come from TransformedBounds (matches SetPosition); W/H show the unrotated box
+            // (what the handles sit on and what SetSize operates on), never the rotated bounds.
+            var b = tool.TransformedBounds;
+            var box = tool.UnrotatedBox;
+            imageEditor.LayerTransform.UpdateFromTool(tool.Layer?.Name ?? string.Empty, b.Left, b.Top, box.Width, box.Height, tool.RotationDegrees, tool.HasTransform);
+        }
+
+        EventHandler onActivated = (_, _) =>
+        {
+            _imageEditorCanvas!.IsLayerTransformToolActive = true;   // arms and raises EligibilityChanged
+            _imageEditorCanvas.EditorCore.LayerTransformTool.KeepAspect = imageEditor.LayerTransform.KeepAspect;
+            PushToolState();
+        };
+        imageEditor.LayerTransform.ToolActivated += onActivated;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ToolActivated -= onActivated);
+
+        EventHandler onDeactivated = (_, _) =>
+        {
+            // Clearing IsLayerTransformToolActive commits a pending transform through IsActive.
+            _imageEditorCanvas!.IsLayerTransformToolActive = false;
+            _imageEditorCanvas.InvalidateVisual();
+        };
+        imageEditor.LayerTransform.ToolDeactivated += onDeactivated;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ToolDeactivated -= onDeactivated);
+
+        EventHandler<(float X, float Y)> onPosition = (_, p) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetPosition(p.X, p.Y);
+        imageEditor.LayerTransform.PositionRequested += onPosition;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.PositionRequested -= onPosition);
+
+        EventHandler<(float W, float H)> onSize = (_, s) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetSize(s.W, s.H);
+        imageEditor.LayerTransform.SizeRequested += onSize;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.SizeRequested -= onSize);
+
+        EventHandler<float> onRotation = (_, r) => _imageEditorCanvas!.EditorCore.LayerTransformTool.SetRotation(r);
+        imageEditor.LayerTransform.RotationRequested += onRotation;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.RotationRequested -= onRotation);
+
+        EventHandler<bool> onKeepAspect = (_, k) => _imageEditorCanvas!.EditorCore.LayerTransformTool.KeepAspect = k;
+        imageEditor.LayerTransform.KeepAspectChanged += onKeepAspect;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.KeepAspectChanged -= onKeepAspect);
+
+        EventHandler<bool> onFlip = (_, horizontal) =>
+        {
+            var tool = _imageEditorCanvas!.EditorCore.LayerTransformTool;
+            if (horizontal) tool.FlipHorizontal(); else tool.FlipVertical();
+        };
+        imageEditor.LayerTransform.FlipRequested += onFlip;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.FlipRequested -= onFlip);
+
+        EventHandler onReset = (_, _) => _imageEditorCanvas!.EditorCore.LayerTransformTool.Reset();
+        imageEditor.LayerTransform.ResetRequested += onReset;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ResetRequested -= onReset);
+
+        EventHandler onApply = (_, _) => _imageEditorCanvas!.ApplyLayerTransform();
+        imageEditor.LayerTransform.ApplyRequested += onApply;
+        _eventCleanup.Add(() => imageEditor.LayerTransform.ApplyRequested -= onApply);
+
+        EventHandler onChanged = (_, _) => PushToolState();
+        _imageEditorCanvas!.LayerTransformChanged += onChanged;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformChanged -= onChanged);
+
+        EventHandler<LayerTransformEligibility> onEligibility = (_, r) => imageEditor.LayerTransform.OnIneligible(r);
+        _imageEditorCanvas.LayerTransformEligibilityChanged += onEligibility;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformEligibilityChanged -= onEligibility);
+
+        EventHandler onApplied = (_, _) =>
+        {
+            imageEditor.LayerTransform.OnApplied();
+            imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas!.EditorCore.Layers);
+            PushToolState();
+        };
+        _imageEditorCanvas.LayerTransformApplied += onApplied;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformApplied -= onApplied);
+
+        EventHandler<LayerTransformFailure> onFailed = (_, f) => imageEditor.LayerTransform.OnApplyFailed(f);
+        _imageEditorCanvas.LayerTransformFailed += onFailed;
+        _eventCleanup.Add(() => _imageEditorCanvas!.LayerTransformFailed -= onFailed);
     }
 
     private void WireZoomAndTransformEvents(ImageEditorViewModel imageEditor)
@@ -857,27 +1047,30 @@ public partial class ImageEditView : UserControl
                 var editorCore = _imageEditorCanvas.EditorCore;
                 var versionBefore = editorCore.InpaintBaseVersion;
 
-                var prepareResult = editorCore.PrepareInpaintMaskedImage(imageEditor.Inpainting.MaskFeather);
+                // Both calls copy base and mask before returning; the encodes run off the UI thread.
+                var prepareTask = editorCore.PrepareInpaintMaskedImageAsync(imageEditor.Inpainting.MaskFeather);
+                var beforeTask = imageEditor.Inpainting.IsCompareModePending
+                    ? editorCore.GetInpaintBaseAsPngAsync()
+                    : null;
+                var versionAfterCapture = editorCore.InpaintBaseVersion;
+                var prepareResult = await prepareTask;
 
-                if (editorCore.InpaintBaseVersion != versionBefore)
+                if (versionAfterCapture != versionBefore)
                 {
-                    _lastSyncedInpaintBaseVersion = editorCore.InpaintBaseVersion;
+                    _lastSyncedInpaintBaseVersion = versionAfterCapture;
                     imageEditor.Inpainting.UpdateBaseThumbnail(CreateThumbnailFromEditorCore(editorCore));
                 }
 
                 if (!prepareResult.Success)
                 {
                     imageEditor.StatusMessage = prepareResult.ErrorMessage;
+                    imageEditor.Inpainting.EndWithoutRun();
                     return;
                 }
 
-                // Capture the before PNG synchronously (before any await) so the
-                // inpaint base bitmap cannot be modified by another event during a yield.
-                byte[]? beforePng = null;
-                if (imageEditor.Inpainting.IsCompareModePending)
-                {
-                    beforePng = editorCore.GetInpaintBaseAsPng();
-                }
+                // The before image was copied above, before the first await, so the inpaint
+                // base cannot be changed by another event while the encodes run.
+                var beforePng = beforeTask is null ? null : await beforeTask;
 
                 tempPath = Path.Combine(Path.GetTempPath(), $"diffnexus_inpaint_{Guid.NewGuid():N}.png");
                 await File.WriteAllBytesAsync(tempPath, prepareResult.MaskedImagePng!);
@@ -894,6 +1087,7 @@ public partial class ImageEditView : UserControl
             catch (Exception ex)
             {
                 imageEditor.StatusMessage = $"Inpainting failed: {ex.Message}";
+                if (imageEditor.Inpainting.IsBusy) imageEditor.Inpainting.EndWithoutRun();
             }
             finally
             {
@@ -937,18 +1131,6 @@ public partial class ImageEditView : UserControl
         _imageEditorCanvas.InpaintMaskChanged += onMaskChanged;
         _eventCleanup.Add(() => _imageEditorCanvas!.InpaintMaskChanged -= onMaskChanged);
 
-        EventHandler onHideMask = (_, _) =>
-        {
-            if (_imageEditorCanvas is null) return;
-            if (_imageEditorCanvas.EditorCore.SetInpaintMaskVisible(false))
-            {
-                imageEditor.LayerPanel.SyncLayers(_imageEditorCanvas.EditorCore.Layers);
-                _imageEditorCanvas.InvalidateVisual();
-            }
-        };
-        imageEditor.Inpainting.HideMaskRequested += onHideMask;
-        _eventCleanup.Add(() => imageEditor.Inpainting.HideMaskRequested -= onHideMask);
-
         EventHandler onPaintingStarted = (_, _) =>
         {
             if (_imageEditorCanvas is null) return;
@@ -965,16 +1147,10 @@ public partial class ImageEditView : UserControl
     private void WireSaveAndExportEvents(ImageEditTabViewModel vm, ImageEditorViewModel imageEditor)
     {
         // Provide the View's save capability to the ViewModel (cleaned up in UnwireEvents)
-        imageEditor.SaveImageFunc = path =>
+        imageEditor.SaveImageFunc = (path, fill) =>
         {
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path) ?? false;
-        };
-
-        imageEditor.SaveJpegFunc = path =>
-        {
-            _imageEditorCanvas?.EditorCore.CommitPendingOperations();
-            return _imageEditorCanvas?.EditorCore.SaveImage(path, SkiaSharp.SKEncodedImageFormat.Jpeg, 95) ?? false;
+            return _imageEditorCanvas?.EditorCore.SaveImage(path, fillColor: fill?.ToSKColor()) ?? false;
         };
 
         imageEditor.SaveLayeredTiffFunc = path =>
@@ -982,6 +1158,38 @@ public partial class ImageEditView : UserControl
             _imageEditorCanvas?.EditorCore.CommitPendingOperations();
             return _imageEditorCanvas?.EditorCore.SaveLayeredTiff(path) ?? false;
         };
+
+        // No commit here, unlike the saves: this runs before the user decides whether to save at
+        // all, and committing would bake placed text or an open Move into the layer even on Cancel.
+        imageEditor.HasTransparencyFunc = () => _imageEditorCanvas?.EditorCore.HasTransparency() ?? false;
+
+        Func<Task<TransparencyFill?>> onJpegTransparencyPrompt = async () =>
+        {
+            if (vm.DialogService is null) return null;
+
+            var choice = await vm.DialogService.ShowOptionsAsync(
+                TransparencyFillPrompt.Title,
+                TransparencyFillPrompt.Message,
+                [.. TransparencyFillPrompt.Options]);
+
+            return TransparencyFillPrompt.FromChoice(choice);
+        };
+        imageEditor.JpegTransparencyPromptRequested += onJpegTransparencyPrompt;
+        _eventCleanup.Add(() => imageEditor.JpegTransparencyPromptRequested -= onJpegTransparencyPrompt);
+
+        // A user-initiated save/export declares the canvas clean; the temp exports that share
+        // SaveImageFunc do not raise this. A save over the loaded file also makes the canvas that
+        // file again, which hand-offs then give out as is (#586).
+        EventHandler<CanvasSavedEventArgs> onCanvasSaved = (_, e) =>
+        {
+            var core = _imageEditorCanvas?.EditorCore;
+            if (core is null) return;
+            core.MarkClean();
+            if (e.SavedOverPath is { } savedOver)
+                core.MarkSavedOverFile(savedOver);
+        };
+        imageEditor.CanvasSaved += onCanvasSaved;
+        _eventCleanup.Add(() => imageEditor.CanvasSaved -= onCanvasSaved);
 
         imageEditor.ShowSaveFileDialogFunc = async (title, suggestedFileName, filter) =>
         {
@@ -1042,6 +1250,50 @@ public partial class ImageEditView : UserControl
         };
         imageEditor.LayerPanel.AddLayerRequested += onAddLayer;
         _eventCleanup.Add(() => imageEditor.LayerPanel.AddLayerRequested -= onAddLayer);
+
+        // Drop "Add as Layer" / thumbnail "Add as Layer to Canvas": one layer per file (#567).
+        EventHandler<IReadOnlyList<string>> onAddLayersFromFiles = async (_, paths) =>
+        {
+            if (_imageEditorCanvas is null) return;
+            var core = _imageEditorCanvas.EditorCore;
+            imageEditor.StatusMessage = paths.Count == 1 ? "Adding layer…" : $"Adding {paths.Count} layers…";
+
+            IReadOnlyList<LayerImportItem> decoded;
+            try
+            {
+                // Decoding is the slow part; keep it off the render thread. Only the adds below
+                // touch editor state.
+                decoded = await Task.Run(() => ImageEditorCore.DecodeLayerFiles(paths, core.Logger));
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError("Decoding files for new layers failed", ex);
+                imageEditor.StatusMessage = $"Could not add layers: {ex.Message}";
+                return;
+            }
+
+            if (_imageEditorCanvas is null || !ReferenceEquals(_imageEditorCanvas.EditorCore, core))
+            {
+                foreach (var item in decoded) item.Dispose();
+                return;
+            }
+
+            var result = core.AddDecodedLayers(decoded);
+            imageEditor.LayerPanel.SyncLayers(core.Layers);
+            _imageEditorCanvas.InvalidateVisual();
+
+            var failed = result.Failed.Count == 0
+                ? string.Empty
+                : $" Could not decode: {string.Join(", ", result.Failed.Select(Path.GetFileName))}.";
+            imageEditor.StatusMessage = result.Added switch
+            {
+                0 => $"No layers added.{failed}",
+                1 => $"Added 1 layer.{failed}",
+                _ => $"Added {result.Added} layers.{failed}",
+            };
+        };
+        imageEditor.AddLayersFromFilesRequested += onAddLayersFromFiles;
+        _eventCleanup.Add(() => imageEditor.AddLayersFromFilesRequested -= onAddLayersFromFiles);
 
         EventHandler<Layer> onDeleteLayer = (_, layer) =>
         {
@@ -1145,6 +1397,12 @@ public partial class ImageEditView : UserControl
                 if (args.Property.Name == nameof(Slider.Value) && _imageEditorCanvas is not null)
                 {
                     var percentage = (int)zoomSlider.Value;
+                    // The slider's Value is also written by the ZoomPercentage binding whenever
+                    // the viewport reports a change. Echoing that back through SetZoom would
+                    // round a fractional fit scale (42.71 % -> 43 %) and, because the zoom
+                    // setter clears fit mode, silently switch Fit off on the first render.
+                    if (percentage == _imageEditorCanvas.ZoomPercentage)
+                        return;
                     _imageEditorCanvas.SetZoom(percentage / 100f);
                 }
             };
@@ -1250,7 +1508,7 @@ public partial class ImageEditView : UserControl
         }
     }
 
-    private void OnImageDrop(object? sender, DragEventArgs e)
+    private async void OnImageDrop(object? sender, DragEventArgs e)
     {
         // Reset border
         if (_imageDropZone is not null)
@@ -1272,14 +1530,25 @@ public partial class ImageEditView : UserControl
             .Where(IsImageFile)
             .ToList();
 
+        // OnImageDrop is attached to both the drop zone Border and its parent editor Grid, and
+        // DropEvent bubbles. Mark handled (before the first await, while the event is still
+        // live) so one drop dispatches the selection exactly once.
+        e.Handled = true;
+
         if (imagePaths.Count > 0 && DataContext is ImageEditTabViewModel vm)
         {
-            vm.LoadDirectDropSelection(imagePaths);
+            try
+            {
+                // With an image already open this asks Replace / Add to Selection / Add as Layer.
+                await vm.HandleDroppedImagesAsync(imagePaths);
+            }
+            catch (Exception ex)
+            {
+                // async void: an escaped exception would take down the dispatcher.
+                FileLogger.LogError("Handling dropped images failed", ex);
+                vm.StatusMessage = $"Could not open the dropped images: {ex.Message}";
+            }
         }
-
-        // OnImageDrop is attached to both the drop zone Border and its parent editor Grid, and
-        // DropEvent bubbles. Mark handled so one drop dispatches the selection exactly once.
-        e.Handled = true;
     }
 
     private bool AnalyzeImageFilesInDrag(DragEventArgs e)
@@ -1342,7 +1611,15 @@ public partial class ImageEditView : UserControl
 
         if (imagePaths.Count > 0)
         {
-            vm.LoadDirectDropSelection(imagePaths);
+            try
+            {
+                await vm.HandleDroppedImagesAsync(imagePaths);
+            }
+            catch (Exception ex)
+            {
+                FileLogger.LogError("Opening images failed", ex);
+                vm.StatusMessage = $"Could not open the images: {ex.Message}";
+            }
         }
     }
 

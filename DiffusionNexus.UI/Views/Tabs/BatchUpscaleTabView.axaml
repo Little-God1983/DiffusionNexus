@@ -180,6 +180,16 @@
                       IsVisible="{Binding IsProcessing}"/>
             </Grid>
 
+            <!-- Vision runs in two steps (#608): say which, and why no upscaled image has appeared yet -->
+            <Border IsVisible="{Binding HasStep}" Background="#1F2A36" CornerRadius="4" Padding="10,8"
+                    BorderBrush="#3A7BD5" BorderThickness="1">
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding StepText}" FontWeight="SemiBold" FontSize="13"/>
+                <TextBlock Text="{Binding StepExplanation}" FontSize="12" Opacity="0.8" TextWrapping="Wrap"
+                           IsVisible="{Binding StepExplanation, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+              </StackPanel>
+            </Border>
+
             <!-- Progress -->
             <ProgressBar Minimum="0" Maximum="100"
                          Value="{Binding TotalProgress}"
@@ -232,11 +242,17 @@
                 <Border Background="#333" CornerRadius="4" Padding="4" Margin="2"
                         Width="80" Height="80"
                         BorderThickness="2"
+                        Classes.described="{Binding IsDescribed}"
                         Classes.processing="{Binding IsProcessing}"
-                        Classes.processed="{Binding IsProcessed}">
+                        Classes.processed="{Binding IsProcessed}"
+                        ToolTip.Tip="{Binding Description}"
+                        ToolTip.IsEnabled="{Binding HasDescription}">
                   <Border.Styles>
                     <Style Selector="Border">
                       <Setter Property="BorderBrush" Value="Transparent"/>
+                    </Style>
+                    <Style Selector="Border.described">
+                      <Setter Property="BorderBrush" Value="#3A7BD5"/>
                     </Style>
                     <Style Selector="Border.processing">
                       <Setter Property="BorderBrush" Value="#FF9800"/>

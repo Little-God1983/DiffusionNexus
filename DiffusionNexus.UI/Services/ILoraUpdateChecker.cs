@@ -18,13 +18,6 @@ public enum LoraUpdateTriggerSource
     /// The user opened the detail view for a single tile.
     /// </summary>
     DetailView,
-
-    /// <summary>
-    /// The user pressed the "Download Metadata" button. This path operates on
-    /// the entire library; per-tile trigger logging is suppressed to avoid
-    /// flooding the log with 10K identical entries.
-    /// </summary>
-    DownloadMetadataButton,
 }
 
 /// <summary>

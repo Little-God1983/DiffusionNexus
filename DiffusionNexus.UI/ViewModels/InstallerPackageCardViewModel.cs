@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -28,9 +29,23 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string _versionDisplay = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RemoveTooltip))]
+    [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
+    [NotifyPropertyChangedFor(nameof(SettingsTooltip))]
+    [NotifyPropertyChangedFor(nameof(MakeDefaultTooltip))]
+    [NotifyPropertyChangedFor(nameof(OpenFolderTooltip))]
+    [NotifyPropertyChangedFor(nameof(ShowRemoveMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyCanExecuteChangedFor(nameof(OpenSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MakeDefaultCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
     private InstallerType _type;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PathDisplay))]
     private string _installationPath = string.Empty;
 
     [ObservableProperty]
@@ -64,6 +79,8 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
     [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
     private bool _isMissing;
 
     // ── Process state ──
@@ -79,10 +96,189 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     private string? _detectedWebUrl;
 
     /// <summary>
-    /// True when not running, not missing, AND this is not a non-launchable
-    /// pseudo-installer (e.g. Diffusion Nexus Core) — show the Launch button.
+    /// True when this card represents the built-in Diffusion Nexus Engine (the
+    /// app-owned ComfyUI). Not derived from <see cref="Type"/>: the backing row is an
+    /// ordinary <see cref="InstallerType.ComfyUI"/> installation so the rest of the app
+    /// (model roots, extra_model_paths discovery) treats it normally.
     /// </summary>
-    public bool ShowLaunchButton => !IsRunning && !IsMissing && !IsCore;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowLaunchButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowActionsPanel))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(RemoveTooltip))]
+    [NotifyPropertyChangedFor(nameof(DeleteFromDiskTooltip))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteFromDiskCommand))]
+    [NotifyPropertyChangedFor(nameof(SettingsTooltip))]
+    [NotifyPropertyChangedFor(nameof(MakeDefaultTooltip))]
+    [NotifyPropertyChangedFor(nameof(OpenFolderTooltip))]
+    [NotifyPropertyChangedFor(nameof(ShowRemoveMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowDeleteFromDiskMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyCanExecuteChangedFor(nameof(OpenSettingsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MakeDefaultCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
+    private bool _isEngine;
+
+    /// <summary>True when the engine has been installed (a backing row exists on disk).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    private bool _isEngineInstalled;
+
+    /// <summary>True while the engine install is running.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowMissingBanner))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineStatusMessage))]
+    private bool _isEngineInstalling;
+
+    /// <summary>
+    /// True while Uninstall Engine deletes and forgets the Engine: Features, Install and Uninstall are
+    /// hidden then, and the status line says what runs.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowEngineInstallButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineWorkloadsButton))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineUninstallMenuItem))]
+    [NotifyPropertyChangedFor(nameof(ShowEngineStatusMessage))]
+    private bool _isEngineUninstalling;
+
+    /// <summary>The status line under the Engine's buttons: while it installs or uninstalls.</summary>
+    public bool ShowEngineStatusMessage => IsEngineInstalling || IsEngineUninstalling;
+
+    /// <summary>Shows the Engine uninstall on the tile. <see cref="EndEngineUninstall"/> ends it.</summary>
+    public void BeginEngineUninstall()
+    {
+        EngineStatusMessage = "Stopping the Engine and deleting its folder...";
+        IsEngineUninstalling = true;
+        RefreshEngineStatus();
+    }
+
+    /// <summary>Ends the Engine uninstall on the tile; it shows the folder as it was read last.</summary>
+    public void EndEngineUninstall()
+    {
+        if (!IsEngineUninstalling) return;
+        IsEngineUninstalling = false;
+        EngineStatusMessage = null;
+        RefreshEngineStatus();
+    }
+
+    // What the Engine row's folder holds; null when there is no row. The status line and the banner
+    // are derived from it and IsEngineInstalling (RefreshEngineStatus), never written on their own.
+    private EngineFolderState? _engineFolder;
+
+    // The folder an Engine install writes into, shown as the path while it runs. Kept apart from
+    // InstallationPath, which stays the row's folder.
+    private string? _installTarget;
+
+    /// <summary>Live status line shown on the engine tile during install: the running step.</summary>
+    [ObservableProperty]
+    private string? _engineStatusMessage;
+
+    /// <summary>
+    /// The latest install-log line, one line of it, under the step: shows a long step is still
+    /// working. The full log is in the Unified Console.
+    /// </summary>
+    [ObservableProperty]
+    private string? _engineActivity;
+
+    /// <summary>Install progress 0-100; 0 when idle.</summary>
+    [ObservableProperty]
+    private double _engineProgressPercent;
+
+    /// <summary>
+    /// Shows the Engine install on the tile: the folder it goes into, "Installing...", and no
+    /// "missing" banner (#609). <see cref="EndEngineInstall"/> ends it.
+    /// </summary>
+    public void BeginEngineInstall(string targetFolder)
+    {
+        _installTarget = targetFolder;
+        OnPropertyChanged(nameof(PathDisplay));
+        EngineProgressPercent = 0;
+        EngineStatusMessage = "Starting engine install...";
+        EngineActivity = null;
+        IsEngineInstalling = true;
+        RefreshEngineStatus();
+    }
+
+    /// <summary>
+    /// Ends the Engine install on the tile. With <paramref name="installedPath"/>, a working engine
+    /// now stands behind the row; without, the tile shows the row's folder as it was read last (the
+    /// caller reads it again with <see cref="ApplyEngineFolder"/>). Does nothing when no install runs.
+    /// </summary>
+    public void EndEngineInstall(string? installedPath)
+    {
+        if (!IsEngineInstalling) return;
+        IsEngineInstalling = false;
+        EngineStatusMessage = null;
+        EngineActivity = null;
+        EngineProgressPercent = 0;
+        _installTarget = null;
+        OnPropertyChanged(nameof(PathDisplay));
+
+        if (installedPath is not null)
+        {
+            InstallationPath = installedPath;
+            ApplyEngineFolder(EngineFolderState.Installed);
+            return;
+        }
+
+        RefreshEngineStatus();
+    }
+
+    /// <summary>
+    /// What the Engine row's folder holds (<see cref="ManagedEngineLocator.Probe"/>), or null when
+    /// there is no row. The one place the tile's installed / missing state is set from the disk.
+    /// </summary>
+    public void ApplyEngineFolder(EngineFolderState? folder)
+    {
+        _engineFolder = folder;
+        OnPropertyChanged(nameof(HasEngineRow));
+        OnPropertyChanged(nameof(ShowEngineUninstallMenuItem));
+        OnPropertyChanged(nameof(OpenFolderTooltip));
+        OpenFolderCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(MissingBannerText));
+        IsEngineInstalled = folder == EngineFolderState.Installed;
+        IsMissing = folder is EngineFolderState.Missing or EngineFolderState.Incomplete;
+        RefreshEngineStatus();
+    }
+
+    /// <summary>True when an Engine row exists, whatever its folder holds.</summary>
+    public bool HasEngineRow => _engineFolder is not null;
+
+    private void RefreshEngineStatus()
+    {
+        if (IsEngineInstalling)
+        {
+            VersionDisplay = "Installing...";
+            return;
+        }
+
+        if (IsEngineUninstalling)
+        {
+            VersionDisplay = "Uninstalling...";
+            return;
+        }
+
+        VersionDisplay = _engineFolder switch
+        {
+            null => "Not installed",
+            EngineFolderState.Installed => "App-managed",
+            EngineFolderState.Incomplete => "Installation incomplete",
+            _ => "Installation folder not found"
+        };
+    }
+
+    /// <summary>
+    /// True when not running, not missing, AND this is not a non-launchable
+    /// pseudo-installer (e.g. Diffusion Nexus Core or the Engine) — show the Launch button.
+    /// </summary>
+    public bool ShowLaunchButton => !IsRunning && !IsMissing && !IsCore && !IsEngine;
 
     /// <summary>
     /// True when running — show Stop/Restart/Console buttons.
@@ -91,9 +287,9 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
 
     /// <summary>
     /// True when an update is available, not currently updating, not running,
-    /// not missing, and not a Core pseudo-card.
+    /// not missing, and not a Core or Engine pseudo-card.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsCore;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsCore && !IsEngine;
 
     /// <summary>
     /// True when this installation is a ComfyUI installation.
@@ -110,17 +306,96 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     /// True when the Workloads button should be visible. ComfyUI installations
     /// have curated model bundles, but only when the install still exists on
     /// disk; Core always offers its captioning/embedding workloads regardless
-    /// of disk state.
+    /// of disk state. The Engine tile uses its own dedicated
+    /// <see cref="ShowEngineWorkloadsButton"/> instead.
     /// </summary>
-    public bool ShowWorkloadsButton => IsCore || (IsComfyUi && !IsMissing);
+    public bool ShowWorkloadsButton => !IsEngine && (IsCore || (IsComfyUi && !IsMissing));
+
+    /// <summary>
+    /// True when the kebab menu should offer "Delete from Disk". Hidden once the
+    /// installation folder is gone: there is nothing left on disk to delete, so the
+    /// only honest action for a stale row is the plain "Remove", which drops the
+    /// database row and the settings folders that pointed into it.
+    /// </summary>
+    public bool ShowDeleteFromDiskMenuItem => !IsMissing && !IsEngine;
+
+    /// <summary>Remove drops a row; the Engine is uninstalled with its own item instead.</summary>
+    public bool ShowRemoveMenuItem => !IsEngine;
+
+    /// <summary>
+    /// Uninstall Engine: whenever the Engine has a row (installed, incomplete or missing folder), and not
+    /// while it installs or uninstalls.
+    /// </summary>
+    public bool ShowEngineUninstallMenuItem => IsEngine && HasEngineRow && !IsEngineInstalling && !IsEngineUninstalling;
+
+    /// <summary>
+    /// The ordinary Remove and Delete from Disk never act on the Engine (it has Uninstall Engine) nor on
+    /// Core (no row, nothing on disk).
+    /// </summary>
+    private bool CanRemoveOrDelete() => !IsEngine && !IsCore;
+
+    /// <summary>Why Remove is greyed out; null where it is not.</summary>
+    public string? RemoveTooltip => IsCore ? "This is built into the app, so there is nothing to remove." : null;
+
+    /// <summary>Why Delete from Disk is greyed out; null where it is not.</summary>
+    public string? DeleteFromDiskTooltip => IsCore ? "This is built into the app, so there is nothing on disk to delete." : null;
+
+    private bool CanOpenSettings() => !IsEngine && !IsCore;
+
+    /// <summary>The gear's and the menu item's tooltip: why Settings is greyed out, else "Settings".</summary>
+    public string SettingsTooltip =>
+        IsEngine ? "The app manages the Diffusion Nexus Engine's settings. To install it somewhere else, uninstall it and install it again."
+        : IsCore ? "This is built into the app: it has no settings of its own."
+        : "Settings";
+
+    private bool CanMakeDefault() => !IsEngine && !IsCore;
+
+    /// <summary>Why Make Default is greyed out; null where it is not.</summary>
+    public string? MakeDefaultTooltip =>
+        IsEngine ? "The Engine runs in the background for Diffusion Nexus features, so it can't be your default ComfyUI."
+        : IsCore ? "This is built into the app, so it can't be a default installation."
+        : null;
+
+    // The Engine's folder can be opened when it exists: not with no row, not when the row's folder is gone.
+    private bool CanOpenFolder() => !IsCore && (!IsEngine || (HasEngineRow && _engineFolder != EngineFolderState.Missing));
+
+    /// <summary>Why Open Folder is greyed out; null where it is not.</summary>
+    public string? OpenFolderTooltip =>
+        IsCore ? "This is built into the app, so there is no folder to open."
+        : !IsEngine ? null
+        : !HasEngineRow ? "The Diffusion Nexus Engine is not installed, so there is no folder to open."
+        : _engineFolder == EngineFolderState.Missing ? "The Engine's folder is gone. Use Uninstall Engine to remove it from the app, or install it again."
+        : null;
+
+    /// <summary>
+    /// The red "missing" banner. Not while the Engine installs: the tile shows the install then,
+    /// and a red banner under a running install read as a failure (#609).
+    /// </summary>
+    public bool ShowMissingBanner => IsMissing && !IsEngineInstalling;
+
+    /// <summary>The path line: the folder an Engine install writes into while it runs, else the row's.</summary>
+    public string PathDisplay => _installTarget ?? InstallationPath;
+
+    /// <summary>The banner's text. An Engine folder that exists but holds no working engine says so.</summary>
+    public string MissingBannerText => _engineFolder == EngineFolderState.Incomplete
+        ? "Installation incomplete"
+        : "Installation folder not found";
+
+    /// <summary>Install button: engine tile, not yet installed, not currently installing or uninstalling.</summary>
+    public bool ShowEngineInstallButton => IsEngine && !IsEngineInstalled && !IsEngineInstalling && !IsEngineUninstalling;
+
+    /// <summary>Workloads button on the engine tile: only once the engine exists, and not while it is uninstalled.</summary>
+    public bool ShowEngineWorkloadsButton => IsEngine && IsEngineInstalled && !IsEngineUninstalling;
 
     /// <summary>
     /// True when the bottom action panel (Launch + Workloads container) should
     /// be visible at all. The container is hidden when neither action applies
     /// — e.g. when the install is currently running, missing on disk, and not
-    /// Core. Used by the view to avoid leaving an empty gap on the card.
+    /// Core. Always true for the Engine tile, whose own Install/Workloads
+    /// buttons live inside this same panel. Used by the view to avoid leaving
+    /// an empty gap on the card.
     /// </summary>
-    public bool ShowActionsPanel => ShowLaunchButton || ShowWorkloadsButton;
+    public bool ShowActionsPanel => ShowLaunchButton || ShowWorkloadsButton || IsEngine;
 
     /// <summary>
     /// Console output lines captured from the process.
@@ -185,6 +460,14 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     public event Func<InstallerPackageCardViewModel, Task>? UpdateRequested;
 
     /// <summary>
+    /// Raised when the user presses Install on the engine tile.
+    /// </summary>
+    public event Func<InstallerPackageCardViewModel, Task>? EngineInstallRequested;
+
+    /// <summary>Raised when the user chose Uninstall Engine on the Engine tile.</summary>
+    public event Func<InstallerPackageCardViewModel, Task>? EngineUninstallRequested;
+
+    /// <summary>
     /// Logo image resolved from the installer type.
     /// </summary>
     public Bitmap? LogoImage { get; }
@@ -233,7 +516,7 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             throw new ArgumentException("Use the public constructor for database-backed packages.", nameof(forCore));
 
         Id = 0;
-        _name = "Diffusion Nexus Core";
+        _name = "Legacy Engine Core (Deprecated)";
         _type = InstallerType.DiffusionNexusCore;
         _installationPath = string.Empty;
         _executablePath = null;
@@ -243,6 +526,34 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
         _versionDisplay = "Built-in";
 
         LogoImage = LoadLogo(InstallerType.DiffusionNexusCore);
+    }
+
+    /// <summary>
+    /// Creates the singleton "Diffusion Nexus Engine" tile. Pass the app-managed
+    /// <see cref="InstallerPackage"/> when a database row exists, or <c>null</c> when it does
+    /// not — either way, "installed" is grounded in <see cref="ManagedEngineLocator.LooksInstalled"/>
+    /// rather than the row's mere existence: an install can fail after writing the row, or the
+    /// user can delete the folder directly, and a database row alone must never claim the tile is
+    /// installed when the folder backing it is gone. When that happens the tile falls back to
+    /// offering Install again (with the "Installation folder not found" banner via
+    /// <see cref="IsMissing"/>) instead of showing "App-managed" with a Workloads button that runs
+    /// the checker against a path that no longer exists — and no way back.
+    /// </summary>
+    public static InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? installed)
+    {
+        var card = installed is null
+            ? new InstallerPackageCardViewModel(forCore: true)
+            : new InstallerPackageCardViewModel(installed);
+
+        var folder = installed is null ? (EngineFolderState?)null : ManagedEngineLocator.Probe(installed.InstallationPath);
+
+        card.Name = "Diffusion Nexus Engine";
+        card.Type = InstallerType.ComfyUI;
+        card.IsEngine = true;
+        card.InstallationPath = installed?.InstallationPath ?? string.Empty;
+        card.ApplyEngineFolder(folder);
+
+        return card;
     }
 
     /// <summary>
@@ -322,35 +633,35 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
             await WorkloadsRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenSettings))]
     private async Task OpenSettingsAsync()
     {
         if (SettingsRequested is not null)
             await SettingsRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanMakeDefault))]
     private async Task MakeDefaultAsync()
     {
         if (MakeDefaultRequested is not null)
             await MakeDefaultRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemoveOrDelete))]
     private async Task RemoveAsync()
     {
         if (RemoveRequested is not null)
             await RemoveRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemoveOrDelete))]
     private async Task DeleteFromDiskAsync()
     {
         if (DeleteFromDiskRequested is not null)
             await DeleteFromDiskRequested.Invoke(this);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenFolder))]
     private void OpenFolder()
     {
         OpenFolderRequested?.Invoke(this);
@@ -361,5 +672,19 @@ public partial class InstallerPackageCardViewModel : ViewModelBase
     {
         if (UpdateRequested is not null)
             await UpdateRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task InstallEngineAsync()
+    {
+        if (EngineInstallRequested is not null)
+            await EngineInstallRequested.Invoke(this);
+    }
+
+    [RelayCommand]
+    private async Task UninstallEngineAsync()
+    {
+        if (EngineUninstallRequested is not null)
+            await EngineUninstallRequested.Invoke(this);
     }
 }

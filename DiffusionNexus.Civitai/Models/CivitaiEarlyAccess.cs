@@ -36,4 +36,14 @@ public static class CivitaiEarlyAccessExtensions
         return version.PaidAccess is { } paid
             && (paid.Permanent == true || paid.EndsAt is null || paid.EndsAt > now);
     }
+
+    /// <summary>
+    /// True when the version is paywalled forever (<c>paidAccess.permanent</c>) —
+    /// it will never lapse into a free download, so waiting for it is pointless.
+    /// Companion to <see cref="IsEarlyAccessActive"/>: that answers "gated right
+    /// now?", this answers "gated forever?". Keep both here so no consumer reads
+    /// the raw fields.
+    /// </summary>
+    public static bool IsPermanentlyPaid(this CivitaiModelVersion? version)
+        => version?.PaidAccess?.Permanent == true;
 }

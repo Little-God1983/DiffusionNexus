@@ -27,4 +27,12 @@ internal static class FileSizeFormatter
             return $"{bytes / (1024.0 * 1024.0):F1} MB";
         return $"{bytes / (1024.0 * 1024.0 * 1024.0):F2} GB";
     }
+
+    /// <summary>
+    /// Formats a size expressed in kilobytes (as Civitai file metadata reports it) by
+    /// converting to bytes and delegating to <see cref="Format"/>. Non-positive sizes
+    /// (missing/unknown metadata) render as <c>"Unknown"</c>.
+    /// </summary>
+    public static string FormatKilobytes(double sizeKb)
+        => sizeKb <= 0 ? "Unknown" : Format((long)(sizeKb * 1024));
 }

@@ -1,10 +1,9 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -250,7 +249,7 @@ public sealed class ImageTaggingService : IImageTaggingService
         // Decode here rather than accepting a caller-supplied pixel buffer: the
         // model only ever sees a ~448² square, so the decoded full-resolution
         // image should be the single large allocation on this path.
-        using var original = Image.Load<Rgba32>(imagePath);
+        using var original = SkiaPixels.DecodeRgba(imagePath);
         using var prepared = ResizeAndPadToSquare(original, _inputSize);
 
         var inputTensor = PreprocessImage(prepared);
@@ -281,19 +280,23 @@ public sealed class ImageTaggingService : IImageTaggingService
     /// ~144 MB for that one buffer, per image, in a loop over the whole
     /// gallery. Scaling first caps the intermediate at the source itself.
     /// </remarks>
-    internal static Image<Rgba32> ResizeAndPadToSquare(Image<Rgba32> source, int size)
+    internal static SKBitmap ResizeAndPadToSquare(SKBitmap source, int size)
     {
         var scale = (double)size / Math.Max(source.Width, source.Height);
         var scaledWidth = Math.Clamp((int)Math.Round(source.Width * scale), 1, size);
         var scaledHeight = Math.Clamp((int)Math.Round(source.Height * scale), 1, size);
 
-        using var scaled = source.Clone(ctx => ctx.Resize(scaledWidth, scaledHeight));
+        using var scaled = SkiaPixels.ResizeTo(source, scaledWidth, scaledHeight);
 
-        var padded = new Image<Rgba32>(source.Configuration, size, size, new Rgba32(255, 255, 255, 255));
+        // Premul so a canvas can draw into it; the result is fully opaque (white matte
+        // under the content), so the bytes read back exactly as unpremultiplied RGBA.
+        var padded = new SKBitmap(new SKImageInfo(size, size, SKColorType.Rgba8888, SKAlphaType.Premul));
         try
         {
-            padded.Mutate(ctx => ctx.DrawImage(scaled, new Point(
-                (size - scaled.Width) / 2, (size - scaled.Height) / 2), 1f));
+            using var canvas = new SKCanvas(padded);
+            canvas.Clear(SKColors.White);
+            canvas.DrawBitmap(scaled, new SKPoint((size - scaled.Width) / 2, (size - scaled.Height) / 2));
+            canvas.Flush();
             return padded;
         }
         catch
@@ -310,30 +313,28 @@ public sealed class ImageTaggingService : IImageTaggingService
     /// against real sample output before trusting this in production (see
     /// the manual verification task in this plan).
     /// </summary>
-    private DenseTensor<float> PreprocessImage(Image<Rgba32> image)
+    private DenseTensor<float> PreprocessImage(SKBitmap image)
     {
         var tensor = new DenseTensor<float>([1, _inputSize, _inputSize, 3]);
         // Write through the contiguous backing buffer: Tensor<T>'s only int
         // indexer is `this[params int[]]`, which would allocate an int[4] for
         // every one of the ~600k pixel-channel writes per image.
-        var buffer = tensor.Buffer;
+        var span = tensor.Buffer.Span;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        var stride = image.RowBytes;
+        for (var y = 0; y < image.Height; y++)
         {
-            var span = buffer.Span;
-            for (var y = 0; y < accessor.Height; y++)
+            var row = pixels.Slice(y * stride, image.Width * 4);
+            var offset = y * image.Width * 3;
+            for (var x = 0; x < image.Width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                var offset = y * accessor.Width * 3;
-                for (var x = 0; x < accessor.Width; x++)
-                {
-                    var pixel = row[x];
-                    span[offset++] = pixel.B;
-                    span[offset++] = pixel.G;
-                    span[offset++] = pixel.R;
-                }
+                var p = x * 4; // RGBA
+                span[offset++] = row[p + 2]; // B
+                span[offset++] = row[p + 1]; // G
+                span[offset++] = row[p];     // R
             }
-        });
+        }
 
         return tensor;
     }

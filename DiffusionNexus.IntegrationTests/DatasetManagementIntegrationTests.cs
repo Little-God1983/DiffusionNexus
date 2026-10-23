@@ -56,6 +56,96 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             string.Equals(Path.GetFileName(image.ImagePath), Path.GetFileName(sourceImagePath), StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task CreateVersion_CarriesRatingsIntoTheNewVersionsRatingsFile()
+    {
+        var viewModel = CreateViewModel();
+        var datasetPath = _host.CreateDatasetFolder($"RatingsVersion_{Guid.NewGuid():N}");
+        var v1 = Path.Combine(datasetPath, "V1");
+        File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "a.png"));
+        File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "b.png"));
+        File.Copy(CreateTempPng(_host.RootPath), Path.Combine(v1, "c.png"));
+        // A version that was never converted: its ratings are still legacy sidecars
+        File.WriteAllText(Path.Combine(v1, "a.rating"), "Approved");
+        File.WriteAllText(Path.Combine(v1, "b.rating"), "Rejected");
+
+        var datasetCard = DatasetCardViewModel.FromFolder(datasetPath);
+        await viewModel.OpenDatasetCommand.ExecuteAsync(datasetCard);
+        viewModel.DialogService = new StubDialogService
+        {
+            CreateVersionResult = new CreateVersionResult
+            {
+                Confirmed = true,
+                SourceOption = VersionSourceOption.CopyFromVersion,
+                SourceVersion = 1,
+                CopyImages = true,
+                CopyRatings = true,
+                IncludeProductionReady = true,
+                IncludeUnrated = true,
+                IncludeTrash = true,
+            }
+        };
+
+        await viewModel.IncrementVersionCommand.ExecuteAsync(null);
+
+        var v2 = Path.Combine(datasetPath, "V2");
+        var store = new ImageRatingStore();
+        store.Get(Path.Combine(v2, "a.png")).Should().Be(ImageRatingStatus.Approved);
+        store.Get(Path.Combine(v2, "b.png")).Should().Be(ImageRatingStatus.Rejected);
+        store.Get(Path.Combine(v2, "c.png")).Should().Be(ImageRatingStatus.Unrated);
+        File.Exists(Path.Combine(v2, ImageRatingStore.RatingsFileName)).Should().BeTrue();
+        Directory.GetFiles(v2, "*.rating").Should().BeEmpty("the new version starts in the new format");
+    }
+
+    [Fact]
+    public async Task ReplaceImage_WithAnotherFileName_KeepsTheRating()
+    {
+        var viewModel = CreateViewModel();
+        var datasetPath = _host.CreateDatasetFolder($"RatingsReplace_{Guid.NewGuid():N}");
+        var v1 = Path.Combine(datasetPath, "V1");
+        var original = Path.Combine(v1, "a.png");
+        var other = Path.Combine(v1, "other.png");
+        File.Copy(CreateTempPng(_host.RootPath), original);
+        File.Copy(CreateTempPng(_host.RootPath), other);
+        ImageRatingStore.Shared.Set(original, ImageRatingStatus.Rejected);
+        ImageRatingStore.Shared.Set(other, ImageRatingStatus.Approved);
+
+        var datasetCard = DatasetCardViewModel.FromFolder(datasetPath);
+        await viewModel.OpenDatasetCommand.ExecuteAsync(datasetCard);
+        var image = viewModel.DatasetImages.Single(i => Path.GetFileName(i.ImagePath) == "a.png");
+        var replacement = Path.Combine(_host.RootPath, $"replacement-{Guid.NewGuid():N}.png");
+        File.Copy(CreateTempPng(_host.RootPath), replacement);
+        viewModel.DialogService = new StubDialogService
+        {
+            ReplaceImageResult = new ReplaceImageResult
+            {
+                Confirmed = true,
+                Action = ReplaceAction.Replace,
+                NewFilePath = replacement,
+            }
+        };
+
+        await viewModel.ReplaceImageCommand.ExecuteAsync(image);
+
+        var replaced = Path.Combine(v1, Path.GetFileName(replacement));
+        var store = new ImageRatingStore();
+        store.Get(replaced).Should().Be(ImageRatingStatus.Rejected);
+        store.Get(original).Should().Be(ImageRatingStatus.Unrated, "the old name must not keep a stale rating");
+        store.Get(other).Should().Be(ImageRatingStatus.Approved);
+    }
+
+    private DatasetManagementViewModel CreateViewModel()
+    {
+        return new DatasetManagementViewModel(
+            _host.Services.GetRequiredService<IAppSettingsService>(),
+            _host.Services.GetRequiredService<IDatasetStorageService>(),
+            _host.Services.GetRequiredService<IDatasetEventAggregator>(),
+            _host.Services.GetRequiredService<IDatasetState>())
+        {
+            DialogService = new StubDialogService()
+        };
+    }
+
     private static string CreateTempPng(string rootPath)
     {
         var imagePath = Path.Combine(rootPath, $"dataset-test-{Guid.NewGuid():N}.png");
@@ -73,6 +163,10 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         {
             _filePath = filePath;
         }
+
+        public ReplaceImageResult ReplaceImageResult { get; init; } = ReplaceImageResult.Cancelled();
+
+        public CreateVersionResult CreateVersionResult { get; init; } = CreateVersionResult.Cancelled();
 
         public Task<string?> ShowOpenFileDialogAsync(string title, string? filter = null) =>
             Task.FromResult<string?>(null);
@@ -95,14 +189,14 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<string?> ShowInputAsync(string title, string message, string? defaultValue = null) =>
             Task.FromResult<string?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title) =>
+            Task.FromResult<FileDropResult?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions) =>
+            Task.FromResult<FileDropResult?>(null);
 
-        public Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles) =>
-            Task.FromResult<List<string>?>(null);
+        public Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles) =>
+            Task.FromResult<FileDropResult?>(null);
 
         public Task<int> ShowOptionsAsync(string title, string message, params string[] options) =>
             Task.FromResult(-1);
@@ -145,7 +239,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
 
 
         public Task<ReplaceImageResult> ShowReplaceImageDialogAsync(DatasetImageViewModel originalImage) =>
-            Task.FromResult(ReplaceImageResult.Cancelled());
+            Task.FromResult(ReplaceImageResult);
 
         public Task<LoraDeleteResult?> ShowSelectLoraVersionsToDeleteDialogAsync(
             string displayName,
@@ -159,6 +253,11 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
         public Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync() =>
             Task.FromResult(new AssignCivitaiIdsDialogResult(false, null, null));
 
+        public Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel) =>
+            Task.FromResult(SyncPlanDialogResult.Cancelled());
+
+        public Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel) => Task.CompletedTask;
+
         public Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats) =>
             Task.FromResult(false);
 
@@ -166,7 +265,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             int currentVersion,
             IReadOnlyList<int> availableVersions,
             IEnumerable<DatasetImageViewModel> mediaFiles) =>
-            Task.FromResult(CreateVersionResult.Cancelled());
+            Task.FromResult(CreateVersionResult);
 
         public Task ShowCaptioningDialogAsync(
             ICaptioningService captioningService,
@@ -235,8 +334,7 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             IReadOnlyList<string> sourceFolders, string? category = null) =>
             Task.FromResult(DownloadLoraVersionResult.Cancelled());
 
-        public Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders) =>
-            Task.FromResult(DownloadLoraResult.Cancelled());
+        public Task<bool> ShowDownloadLoraMovedDialogAsync() => Task.FromResult(false);
 
         public Task<ExportTrainingRunsResult> ShowExportTrainingRunsDialogAsync(
             string datasetName,

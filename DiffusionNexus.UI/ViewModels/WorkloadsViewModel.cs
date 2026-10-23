@@ -3,27 +3,38 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.Installer.SDK.Models.Configuration;
 using DiffusionNexus.Installer.SDK.Models.Enums;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
+using DiffusionNexus.UI.Services.Engine;
 using DiffusionNexus.UI.Views.Dialogs;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the Workloads dialog showing ComfyUI workloads
-/// from the SDK database, split into two tabs by <see cref="WorkloadTargetType"/>.
+/// from the workload catalog, split into two tabs by <see cref="WorkloadTargetType"/>.
 /// </summary>
 public partial class WorkloadsViewModel : ViewModelBase
 {
-    private readonly IConfigurationRepository _configurationRepository;
+    private readonly ICatalog _catalog;
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly string _comfyUIRootPath;
+    private readonly IReadOnlyList<Guid>? _allowedConfigurationIds;
+
+    /// <summary>
+    /// Optional VRAM detector used to preselect the best-fitting tier in the details dialog.
+    /// Null in the ordinary Workloads dialog and in tests that don't exercise the suggestion.
+    /// </summary>
+    private readonly IResourceMonitorService? _resourceMonitor;
+
+    /// <summary>Says a workload install is running, so the catalog apply waits (#618). Null in tests.</summary>
+    private readonly IInstallActivity? _installActivity;
 
     /// <summary>
     /// Cached configurations so we can pass them to the install service.
@@ -47,24 +58,30 @@ public partial class WorkloadsViewModel : ViewModelBase
     public ObservableCollection<WorkloadItemViewModel> InstallerWorkloads { get; } = [];
 
     public WorkloadsViewModel(
-        IConfigurationRepository configurationRepository,
+        ICatalog catalog,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
-        string comfyUIRootPath)
+        string comfyUIRootPath,
+        IReadOnlyList<Guid>? allowedConfigurationIds = null,
+        IResourceMonitorService? resourceMonitor = null,
+        IInstallActivity? installActivity = null)
     {
-        ArgumentNullException.ThrowIfNull(configurationRepository);
+        _installActivity = installActivity;
+        ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(checkerService);
         ArgumentNullException.ThrowIfNull(installService);
         ArgumentException.ThrowIfNullOrWhiteSpace(comfyUIRootPath);
 
-        _configurationRepository = configurationRepository;
+        _catalog = catalog;
         _checkerService = checkerService;
         _installService = installService;
         _comfyUIRootPath = comfyUIRootPath;
+        _allowedConfigurationIds = allowedConfigurationIds;
+        _resourceMonitor = resourceMonitor;
     }
 
     /// <summary>
-    /// Loads ComfyUI workloads from the SDK database, splits them by target type,
+    /// Loads ComfyUI workloads from the workload catalog, splits them by target type,
     /// and runs the configuration checker against the local ComfyUI installation.
     /// </summary>
     [RelayCommand]
@@ -76,12 +93,15 @@ public partial class WorkloadsViewModel : ViewModelBase
             DiffusionNexusWorkloads.Clear();
             InstallerWorkloads.Clear();
 
-            var configurations = await _configurationRepository.GetAllAsync();
+            // Read on every load, never cached here: a background catalog apply invalidates the
+            // catalog, so the next open of this dialog shows the new content.
+            var configurations = await _catalog.GetWorkloadsAsync();
 
-            Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from SDK database", configurations.Count);
+            Serilog.Log.Information("WorkloadsViewModel: Loaded {Count} configurations from the workload catalog", configurations.Count);
 
             var comfyConfigurations = configurations
                 .Where(c => c.Repository.Type == RepositoryType.ComfyUI)
+                .Where(c => _allowedConfigurationIds is null || _allowedConfigurationIds.Contains(c.Id))
                 .ToList();
 
             _loadedConfigurations = comfyConfigurations;
@@ -95,7 +115,7 @@ public partial class WorkloadsViewModel : ViewModelBase
                     config.ConfigurationVersion,
                     config.ConfigurationSubVersion)
                 {
-                    ConfiguredVramProfiles = ParseVramProfiles(config.Vram.VramProfiles)
+                    ConfiguredVramProfiles = EngineFeatureCatalog.ParseVramProfiles(config.Vram.VramProfiles)
                 };
 
                 if (config.WorkloadTarget == WorkloadTargetType.DiffusionNexusCore)
@@ -117,7 +137,7 @@ public partial class WorkloadsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to load workloads from SDK database");
+            Serilog.Log.Error(ex, "Failed to load workloads from the workload catalog");
         }
         finally
         {
@@ -154,6 +174,27 @@ public partial class WorkloadsViewModel : ViewModelBase
                 item.Status = "Error";
             }
         }
+    }
+
+    /// <summary>
+    /// Computes the VRAM tier to preselect in the details dialog, or <c>null</c> when no
+    /// resource monitor is available (the dialog then keeps its own pre-existing default: the
+    /// smallest configured tier).
+    /// </summary>
+    /// <remarks>
+    /// Split out of <see cref="ShowDetailsAsync"/> so the computation is testable on its own —
+    /// <see cref="ShowDetailsAsync"/> constructs a real <see cref="WorkloadDetailsDialog"/>
+    /// (an Avalonia <c>Window</c>) immediately afterwards, which cannot be exercised in tests.
+    /// </remarks>
+    internal async Task<int?> ComputeSuggestedVramGbAsync(int[] configuredVramProfiles)
+    {
+        if (_resourceMonitor is null)
+        {
+            return null;
+        }
+
+        var snapshot = await _resourceMonitor.GetSnapshotAsync();
+        return EngineFeatureCatalog.SuggestVramTier(snapshot.VramTotalMB, configuredVramProfiles);
     }
 
     /// <summary>
@@ -198,6 +239,7 @@ public partial class WorkloadsViewModel : ViewModelBase
             DetailItems = detailItems,
             Summary = item.CheckResult.Summary,
             ConfiguredVramProfiles = item.ConfiguredVramProfiles,
+            SuggestedVramGb = await ComputeSuggestedVramGbAsync(item.ConfiguredVramProfiles),
             InstallCallback = CreateInstallCallback(item),
             RepairCallback = CreateRepairCallback(item)
         };
@@ -245,11 +287,43 @@ public partial class WorkloadsViewModel : ViewModelBase
                 .Where(m => modelIds.Contains(m.Id))
                 .ToList();
 
-            return await _installService.InstallSelectedAsync(
-                config, _comfyUIRootPath,
-                selectedNodes, selectedModels,
+            return await InstallItemsAsync(
+                config, selectedNodes, selectedModels,
                 vramGb, progress, downloadProgress, skipTokenProvider, ct);
         };
+    }
+
+    /// <summary>
+    /// Installs the selected node packs and models. A workload whose node packs run GGUF models through
+    /// llama.cpp (Outpainting-Qwen 2512, #607) gets the prebuilt llama-cpp-python wheel for this ComfyUI's
+    /// Python and CUDA first, because the packs' requirements would otherwise make pip compile it from
+    /// source. A wheel that fails to install keeps its node packs out: a pack on disk reads as installed,
+    /// so Install would never retry the wheel. Without a wheel for this ComfyUI the packs go in anyway.
+    /// </summary>
+    internal async Task<string> InstallItemsAsync(
+        InstallationConfiguration config,
+        IReadOnlyList<CustomNodeCheckResult> nodes,
+        IReadOnlyList<ModelCheckResult> models,
+        int vramGb,
+        IProgress<WorkloadInstallProgress> progress,
+        IProgress<DownloadProgress> downloadProgress,
+        Func<CancellationToken> skipTokenProvider,
+        CancellationToken ct)
+    {
+        using var running = _installActivity?.Begin(config.Name);
+        var wheelNote = "";
+        if (nodes.Count > 0 && config.InstallLamaCpp
+            && await _installService.EnsureLlamaCppWheelAsync(_comfyUIRootPath, await _catalog.GetLamaCppWheelsAsync(ct), progress, ct)
+                == LlamaCppWheelOutcome.Failed)
+        {
+            wheelNote = "llama-cpp-python was not installed, so its node packs were left out; Install again to retry. ";
+            nodes = [];
+        }
+
+        return wheelNote + await _installService.InstallSelectedAsync(
+            config, _comfyUIRootPath,
+            nodes, models,
+            vramGb, progress, downloadProgress, skipTokenProvider, cancellationToken: ct);
     }
 
     /// <summary>
@@ -292,23 +366,5 @@ public partial class WorkloadsViewModel : ViewModelBase
         {
             Serilog.Log.Error(ex, "Failed to re-check workload {Name}", item.Name);
         }
-    }
-
-    /// <summary>
-    /// Parses the comma-separated VRAM profiles string (e.g. "8,16,24,24+")
-    /// into an array of integer GB values, matching the installer behaviour.
-    /// </summary>
-    private static int[] ParseVramProfiles(string? vramProfiles)
-    {
-        if (string.IsNullOrWhiteSpace(vramProfiles))
-        {
-            return [];
-        }
-
-        return vramProfiles
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(p => int.TryParse(p.Replace("GB", "").Replace("+", ""), out var val) ? val : 0)
-            .Where(v => v > 0)
-            .ToArray();
     }
 }

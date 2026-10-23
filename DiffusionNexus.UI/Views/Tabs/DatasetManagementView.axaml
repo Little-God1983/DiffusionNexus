@@ -7,6 +7,7 @@
              xmlns:views="using:DiffusionNexus.UI.Views.Tabs"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              xmlns:viewControls="using:DiffusionNexus.UI.Views.Controls"
+             xmlns:behaviors="using:DiffusionNexus.UI.Behaviors"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
              x:Class="DiffusionNexus.UI.Views.Tabs.DatasetManagementView"
              x:DataType="vmTabs:DatasetManagementViewModel">
@@ -169,7 +170,7 @@
           <StackPanel Orientation="Vertical" VerticalAlignment="Center" Spacing="0">
             <CheckBox IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
                       Content="Show NSFW"
-                      ToolTip.Tip="Show datasets marked as NSFW"/>
+                      ToolTip.Tip="Show datasets and versions marked as NSFW"/>
             <TextBlock Text="{Binding HiddenText}"
                        FontSize="10"
                        Foreground="#888"
@@ -269,8 +270,9 @@
       </Border>
 
       <!-- Dataset Overview (only when NOT viewing dataset and has datasets) -->
-      <ScrollViewer IsVisible="{Binding HasDatasetsToShow}" Padding="16">
-        <ItemsControl ItemsSource="{Binding FilteredGroupedDatasets}">
+      <ScrollViewer x:Name="DatasetListScrollViewer" IsVisible="{Binding HasDatasetsToShow}"
+                    behaviors:ScrollKeyNavigation.IsEnabled="True">
+        <ItemsControl Margin="16" ItemsSource="{Binding FilteredGroupedDatasets}">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
               <StackPanel Orientation="Vertical" Spacing="8"/>
@@ -333,6 +335,10 @@
                                            MaxLines="1" IsVisible="{Binding HasDescription}" Margin="0,2,0,0"/>
                                 <TextBlock Text="{Binding DetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding IsVersionCard}"/>
                                 <TextBlock Text="{Binding AllVersionsDetailedCountText}" FontSize="12" Opacity="0.6" IsVisible="{Binding !IsVersionCard}"/>
+                                <!-- Versions the "Show NSFW" filter is hiding (both flattened and collapsed view) -->
+                                <TextBlock Text="{Binding HiddenVersionsText}" FontSize="11" Foreground="#E0A040" Opacity="0.9"
+                                           IsVisible="{Binding HasHiddenVersions}" Margin="0,2,0,0"
+                                           ToolTip.Tip="Turn on 'Show NSFW' to see every version of this dataset"/>
                               </StackPanel>
                             </Border>
                           </Grid>
@@ -421,8 +427,9 @@
               </Border>
               
               <!-- Image Grid -->
-              <ScrollViewer Grid.Row="1" Padding="16">
-                <ItemsControl ItemsSource="{Binding DatasetImages}">
+              <ScrollViewer Grid.Row="1" x:Name="DatasetImageScrollViewer"
+                            behaviors:ScrollKeyNavigation.IsEnabled="True">
+                <ItemsControl Margin="16" ItemsSource="{Binding DatasetImages}">
                   <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                       <WrapPanel Orientation="Horizontal"/>

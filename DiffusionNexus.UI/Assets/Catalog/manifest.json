@@ -1,0 +1,611 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": 5,
+  "channel": "Stable",
+  "commit": "51e1684cfa48d22344e82e7037e8e97018be72bd",
+  "generatedAt": "2026-09-25T14:15:43.8266732+00:00",
+  "archive": {
+    "name": "catalog.zip",
+    "sha256": "e7d3ee7a4d63d9b7d96ad562444ac265f968d71089aa0136afd055ce67711e18",
+    "bytes": 1846573
+  },
+  "workloads": [
+    {
+      "id": "08a686b2-42c4-4aeb-bd59-0321455d06e1",
+      "name": "Ernie-Image-Turbo",
+      "version": 2,
+      "subVersion": 2,
+      "isReleaseConfig": true,
+      "hash": "642e529d3542e3078b1043a6f76154d21d62db0b75baeda86a24ba12aca166fe"
+    },
+    {
+      "id": "0d7a24d9-80ae-443b-9ff3-497cd54f5b7b",
+      "name": "Wan 2.2 - GGUF",
+      "version": 1,
+      "subVersion": 5,
+      "isReleaseConfig": true,
+      "hash": "bd818a4064dc1d1b0a636d8ff230cf03962853aa7e9cbcc3c74c3c97c408c06b"
+    },
+    {
+      "id": "137929e4-5c05-4304-80d4-5d785d45fd3f",
+      "name": "Outpainting-Qwen 2512",
+      "version": 1,
+      "subVersion": 21,
+      "isReleaseConfig": true,
+      "hash": "2cb0c00f81d33e8352b7d8ee61a599e2a57e3b9a6226c990b37b7c01a8a35206"
+    },
+    {
+      "id": "1f0a3aef-15d9-4b8a-80dc-b03f318e414f",
+      "name": "Blank ComfyUI \u002B Manager \u002B Triton \u0026 SageAttention",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": true,
+      "hash": "43d62743ac5742e153cfa3a556ea72ace34496ec361db25009539277b0cd83ad"
+    },
+    {
+      "id": "3b463f60-a862-4135-ac0f-0ab18d8e3eb8",
+      "name": "Qwen-Image-Edit-2511 - Deprecated",
+      "version": 1,
+      "subVersion": 7,
+      "isReleaseConfig": false,
+      "hash": "60d90e6a4c816e2a5b389e4315afccfcdd64f415d0efb4d41e91b7b1d5390951"
+    },
+    {
+      "id": "3f207e2b-b0d3-439e-82cf-53901f3904e1",
+      "name": "Fooocus",
+      "version": 1,
+      "subVersion": 4,
+      "isReleaseConfig": true,
+      "hash": "a4869bb7c5f991cea7e93ec6df9e1f922686580f2988b15b8a2377d5c5e8a30f"
+    },
+    {
+      "id": "4c486765-a4c1-4e94-acc2-bbac0e405b6a",
+      "name": "Inpainting-Qwen 2512",
+      "version": 1,
+      "subVersion": 17,
+      "isReleaseConfig": true,
+      "hash": "a06f8ccdee8a66fd5397009c02ff65187b1372a3ed1f28222c1d635399ae8229"
+    },
+    {
+      "id": "5a0e080a-2dc3-4d48-98db-28c3b3aff7a7",
+      "name": "ACE-Step-1.5",
+      "version": 1,
+      "subVersion": 4,
+      "isReleaseConfig": true,
+      "hash": "82c1e9a055a85ad9c0a1e86806622ad9b828edac95b3e1ffc882ae70d141b3e2"
+    },
+    {
+      "id": "6bc68a3f-2e93-4866-9827-25d666d4249a",
+      "name": "Ideogram-4.0",
+      "version": 2,
+      "subVersion": 2,
+      "isReleaseConfig": true,
+      "hash": "d1fc4594a6a94ee07ffd5d0c1f4481d276a0aacdc48774fe1e99fad097a1a34a"
+    },
+    {
+      "id": "6e7dfafd-1261-4f9a-a63b-c79cd69a1267",
+      "name": "ComfyUI Llama Cpp test",
+      "version": 1,
+      "subVersion": 2,
+      "isReleaseConfig": false,
+      "hash": "e9758bb2e4170640200622fbe1c23b4f771e9a81b4d5eb28d243ec778a61816b"
+    },
+    {
+      "id": "701da214-2b25-44b4-a904-e4b036621564",
+      "name": "Captioning-Qwen-3-VL",
+      "version": 1,
+      "subVersion": 4,
+      "isReleaseConfig": true,
+      "hash": "4b8d843f5caf007b911ff9a610eeb34cd8644ccb8f7fcc3a427d756271efa1a5"
+    },
+    {
+      "id": "713496d3-6bf4-405f-97c5-1f4d4c22c11a",
+      "name": "LTX-2-3-GGUF",
+      "version": 1,
+      "subVersion": 7,
+      "isReleaseConfig": true,
+      "hash": "1286afecddad6b48b101b225ae0185dc19090b96e03cd683f4b93f74240111ca"
+    },
+    {
+      "id": "725ffdfb-22b6-436f-905a-ce678bda287d",
+      "name": "Qwen-Image-Edit-2511 - 2512 - Layered",
+      "version": 2,
+      "subVersion": 2,
+      "isReleaseConfig": true,
+      "hash": "011e633fe18dcb9abdf5927954934e3cd87e9756850fc540ff91aca2acc211ee"
+    },
+    {
+      "id": "737be0cb-5349-4d18-a058-82ea3ef61aae",
+      "name": "AI-Toolkit",
+      "version": 1,
+      "subVersion": 5,
+      "isReleaseConfig": true,
+      "hash": "ccd6590c0f8c014e0c9295de1ea326dfc8d257d9c03073645b93fd3919b3aeef"
+    },
+    {
+      "id": "8063df6d-2cdd-4535-bc7c-d3fddbef05ab",
+      "name": "FlashVSR-Video\u0026Image Upscale",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": true,
+      "hash": "d75672540bd95b498d05934a2cd2255ca417ce4e6ba5ab9603c4bd457fde8faf"
+    },
+    {
+      "id": "8819a1f9-09bf-48d7-9da0-214127852ab3",
+      "name": "Stable Diffusion WebUI Forge",
+      "version": 1,
+      "subVersion": 0,
+      "isReleaseConfig": true,
+      "hash": "05350bf583afac33659642a45cf60d9615757220724a64aa2f29cab42735c20c"
+    },
+    {
+      "id": "a229c02e-2586-47df-8be2-b342defc78ec",
+      "name": "MiniMax H3",
+      "version": 1,
+      "subVersion": 8,
+      "isReleaseConfig": true,
+      "hash": "097c6c3e7cd1f39a40b7028f21d8daa49b949ce4d311bc2115f610e37502b26a"
+    },
+    {
+      "id": "a6d086d1-0347-45fe-adab-432c7dd5b52a",
+      "name": "Config535",
+      "version": 1,
+      "subVersion": 2,
+      "isReleaseConfig": false,
+      "hash": "7f8d7a0e601ba8ca534abd041371a4589357b0d0afc5e0a996f8c828e3c694a9"
+    },
+    {
+      "id": "b62b0806-39a2-4184-b830-c948b1a02126",
+      "name": "Stable Diffusion web UI",
+      "version": 1,
+      "subVersion": 2,
+      "isReleaseConfig": true,
+      "hash": "4405418eb38403324bdb14482466820d4ed337834161dcf398166ce848de5f2c"
+    },
+    {
+      "id": "b853eb7c-0a0e-48a6-985e-e32b2f8848f5",
+      "name": "Upscaling-Z-Image-Turbo",
+      "version": 1,
+      "subVersion": 6,
+      "isReleaseConfig": true,
+      "hash": "9e1d03c400b629fb9c12fd61e8da0e4f31dea872b160ab207d9c01ec013e491e"
+    },
+    {
+      "id": "be99376d-c213-4375-94d0-2a9a4a4dc92c",
+      "name": "LTX2 - GGUF - Legacy",
+      "version": 2,
+      "subVersion": 0,
+      "isReleaseConfig": true,
+      "hash": "14d51b5a2366308f8b7c0171e5937a7c9533e8e5e412fb0ffb12edd99a5402cd"
+    },
+    {
+      "id": "c56c7ff7-3ca0-4420-bc72-a1ac6f537824",
+      "name": "Qwen-Image-2.1",
+      "version": 1,
+      "subVersion": 2,
+      "isReleaseConfig": true,
+      "hash": "d6250005b9478b3bf8dde0dc5da4029e8d3821b9f4d0b1b5a4c8619075625a4a"
+    },
+    {
+      "id": "e358f5aa-5204-4c5f-a1ed-266265c1f413",
+      "name": "LTX-2-3-V1.1-Director-GGUF",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": true,
+      "hash": "719a05a99e74d4ad0ef66733fb7c735ad4e9f68e24b9873f7cd217d00192fd54"
+    },
+    {
+      "id": "e4b40bf4-7cb1-4765-8ff2-24e663b6a271",
+      "name": "Blanck-ComfyUI",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": false,
+      "hash": "4729d39abe23e57edfba6783344841360be808a44acd248ec8952efa713fafef"
+    },
+    {
+      "id": "e79c079a-2fd7-4fe7-8086-23731092555d",
+      "name": "Krea-2-Turbo",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": true,
+      "hash": "790bdc3cb22bbf10e07d092278cb0d5665274e564d39615878a4ddacfcab1328"
+    },
+    {
+      "id": "f07ee6e0-742f-47a5-9828-b48d2601ccf3",
+      "name": "Flux-Klein 9b \u002B 4b",
+      "version": 2,
+      "subVersion": 1,
+      "isReleaseConfig": true,
+      "hash": "39a8b858b7840383c5729f7fef13d8fc3e64f1c4581babeebac6ae15759aaa8d"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "040b2ad6-f131-4084-bb92-25fb7446fff0",
+      "name": "Text-2-Image-Flux2-Klein-4b\u002B9b-by AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "f07ee6e0-742f-47a5-9828-b48d2601ccf3"
+      ],
+      "hash": "9476d0b528c0e1919e7a4256d9239c761dc9cee4891403fc4d96828bd4750efd"
+    },
+    {
+      "id": "0be5b4d9-516d-40de-9ad7-ec5de5e4cd70",
+      "name": "WAN 2.2 I2V by AI Knowledege2Go-GGUF",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "0d7a24d9-80ae-443b-9ff3-497cd54f5b7b"
+      ],
+      "hash": "e0ce3ca22b807b237608780bd9cc7da55d959dc05f1f94a6f4ee12088ce1e211"
+    },
+    {
+      "id": "19b40e7a-1e36-4e3b-b7d8-588ab2ac7237",
+      "name": "Image\u002BAudio2Video-LTX2-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "be99376d-c213-4375-94d0-2a9a4a4dc92c"
+      ],
+      "hash": "87ad4605c6e7cd4188cf6bdbe0bdf755722acd3d0e37f8308bb550be23cbb398"
+    },
+    {
+      "id": "287a4e71-2821-42cf-a62d-253ed0a13527",
+      "name": "Video-Upscale-FlashVSR Ultra - by AIknowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "8063df6d-2cdd-4535-bc7c-d3fddbef05ab"
+      ],
+      "hash": "07acca42c75f1286cc24d779991b12e635b5fa2c0258b5a0155901a99772dda5"
+    },
+    {
+      "id": "3c393d66-b4fa-4f81-ad18-594b99bb84d9",
+      "name": "3. Text\u002BAudio2Video-LTX2-3-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "713496d3-6bf4-405f-97c5-1f4d4c22c11a",
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "1f20b8790d194cfd1c80d5f2d1a1fa48c7dc46d6057bf61a566861692390e83a"
+    },
+    {
+      "id": "4448a798-dbc7-49f4-9a8d-b74e81e844cf",
+      "name": "Image2Video-LTX2-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "be99376d-c213-4375-94d0-2a9a4a4dc92c"
+      ],
+      "hash": "34e0b05dff7f34d904722445915e6fe97e0741390651a92cbcb7350af9ed6c9f"
+    },
+    {
+      "id": "589b0ba3-00a4-4073-807b-1d30d556e9b3",
+      "name": "Qwen2-1- 3. Text 2 Image \u002B OpenPose by IntoTheLatent",
+      "version": 1,
+      "subVersion": 2,
+      "workloads": [
+        "c56c7ff7-3ca0-4420-bc72-a1ac6f537824"
+      ],
+      "hash": "ca59ae3e8fdaf2987e946aedae6f0f954e6ed59eaf80b10dbfe7d45f097b58cb"
+    },
+    {
+      "id": "63436b9f-8cb9-4c24-adbf-d7c8f3109eff",
+      "name": "Qwen_image_edit_2511-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "3b463f60-a862-4135-ac0f-0ab18d8e3eb8",
+        "725ffdfb-22b6-436f-905a-ce678bda287d"
+      ],
+      "hash": "c47c91221c3dd6a7fb364002644d6f53d917c800884474c190f43e0a379c5fc7"
+    },
+    {
+      "id": "67333b63-66d4-49a3-8256-b243d4668183",
+      "name": "Qwen2-1- 1. Text 2 Image by IntoTheLatent",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "c56c7ff7-3ca0-4420-bc72-a1ac6f537824"
+      ],
+      "hash": "44ec2d26b5a91bc3fc895c9ca0f70b24aa09f0c45523b16b48dfae039a2f505d"
+    },
+    {
+      "id": "67ed1c80-9af6-44dd-ba65-916cc1204398",
+      "name": "Image-Upscale-FlashVSR Ultra - by AIknowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "8063df6d-2cdd-4535-bc7c-d3fddbef05ab"
+      ],
+      "hash": "ea3d82558d4bed6b43cf0f9f50105edbf707bfe83a6798b6c85f05ba71e6c7f8"
+    },
+    {
+      "id": "792f24e8-6b1e-497d-9646-a1f196a80035",
+      "name": "LEGACY 5. Director-LTX2-3-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "06468fc6e0bae8e381c72da160bb5bc473adddc8d40a593b4a6f7cf187d9ca02"
+    },
+    {
+      "id": "7a1cbc59-16b6-4ed5-9be4-86d86d6d0aef",
+      "name": "Inpaint-Qwen-2512",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "137929e4-5c05-4304-80d4-5d785d45fd3f",
+        "4c486765-a4c1-4e94-acc2-bbac0e405b6a"
+      ],
+      "hash": "48a662a9cd913c336f0f2862d1ca964b6bd16ba02b478e675cb7b7e179d45bc1"
+    },
+    {
+      "id": "7a4ca951-f4d5-4956-b9b5-d65cee77f862",
+      "name": "Z-Image-Turbo-Upscale",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "b853eb7c-0a0e-48a6-985e-e32b2f8848f5"
+      ],
+      "hash": "4ccd0b709b8b96137e559c46e6b9225e506017a94e983dcc1587201861b73f9b"
+    },
+    {
+      "id": "7ce1fe25-8896-4aa3-921b-7f3bd3a5934d",
+      "name": "5. Director-LTX2-3-V2-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "5b4be843b2272ce23798f8a94f32958fae4ff4f5a015533c9246130e9c7f80a1"
+    },
+    {
+      "id": "81d7bc1b-a937-4052-8f2a-062d6108711b",
+      "name": "4.Krea2-Turbo-Image Edit by IntoTheLatent",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "e79c079a-2fd7-4fe7-8086-23731092555d"
+      ],
+      "hash": "6dc6e075df4babe6a4a08dcce7e82e1d40377b9426ec58f519bfbad43123874b"
+    },
+    {
+      "id": "84cdc695-fe5f-4750-b1ac-df1966f16ac4",
+      "name": "Qwen-Image-To-Layers-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "725ffdfb-22b6-436f-905a-ce678bda287d"
+      ],
+      "hash": "4c71cc76c489f763e9a15b005787a84bd4c6c1e56f124a4972ab8dc5af568bbe"
+    },
+    {
+      "id": "858c0909-c1b9-4a27-8268-e9e32392f1aa",
+      "name": "Qwen2-1- 2. Image-edit by IntoTheLatent",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "c56c7ff7-3ca0-4420-bc72-a1ac6f537824"
+      ],
+      "hash": "43d93bcb28b14f9c6ef5ef8cfecceccb0e8eb5266a80c236fedfbca9d95e8590"
+    },
+    {
+      "id": "86627cff-f0be-421a-bd67-f514470d4f80",
+      "name": "2.Krea2-Turbo-Upscale Only by IntoTheLatent",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "e79c079a-2fd7-4fe7-8086-23731092555d"
+      ],
+      "hash": "b8ce6c7de11f8b24c00757163cf87142a84354823b1b2ba11e50ddf6d595a1ea"
+    },
+    {
+      "id": "8e03ae41-0bdd-4338-a478-fd97fb4c48db",
+      "name": "1.Krea2-Turbo-Text2Image\u002BUpscale by IntoTheLatent",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "e79c079a-2fd7-4fe7-8086-23731092555d"
+      ],
+      "hash": "39b26a5b58934f831dd792ff257b37905f884b182d2b117be6568a86b46ebebf"
+    },
+    {
+      "id": "93be39fb-57e7-4d40-95b3-c20d490d4b51",
+      "name": "Qwen-Text-To-Layers-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "725ffdfb-22b6-436f-905a-ce678bda287d"
+      ],
+      "hash": "371e516c62cb40065bf6b6ab32e375f79f368b68461a555bd13df6e4cc8b83ab"
+    },
+    {
+      "id": "94f9d7d8-f3e5-4330-8f57-57683cc1c7c7",
+      "name": "Image-Edit-Flux-2-Klein-4B\u002B9B-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "f07ee6e0-742f-47a5-9828-b48d2601ccf3"
+      ],
+      "hash": "c39c0538cb7255705bc1872707692dad6aa8280709d6eeabf67a8cc1aa0f6bd7"
+    },
+    {
+      "id": "96a64e5f-a6fa-4cbe-8f46-157255df006a",
+      "name": "Ernie-Image-Turbo Upscale by AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "08a686b2-42c4-4aeb-bd59-0321455d06e1"
+      ],
+      "hash": "0f2ad6c98d4bbbf839e11eaad2ff2009a491410cc14e3ab76d3394edbbd4fe5b"
+    },
+    {
+      "id": "96f0b0e0-91f0-45c5-aedf-cd0d198dadc0",
+      "name": "Minimax-H3-Image-2Video-GGUF",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "a229c02e-2586-47df-8be2-b342defc78ec"
+      ],
+      "hash": "e9930c99d941228c0954a5f9ed6e3b516c02ad6a3ba75283d00b6743b7cbb3bf"
+    },
+    {
+      "id": "a4a7ffd9-88a5-4206-948a-f24c5e8a44c6",
+      "name": "Qwen-3VL-autocaption",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "701da214-2b25-44b4-a904-e4b036621564"
+      ],
+      "hash": "975ad7c57b39b29e732d5d9f3254c29a4ccbc38971df757f06829356cdc05db6"
+    },
+    {
+      "id": "b13ede2f-e2f5-44dd-94a0-87020e1a6395",
+      "name": "Text2Video-LTX2-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "be99376d-c213-4375-94d0-2a9a4a4dc92c"
+      ],
+      "hash": "9d0dd7d499c5ddfa8e1bb2c1df9f1e39ef18fb4d903ecd4437fe17810c457435"
+    },
+    {
+      "id": "b42ea117-0c0a-40fd-b916-170660713b75",
+      "name": "Minimax-H3-Text-2Video-GGUF",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "a229c02e-2586-47df-8be2-b342defc78ec"
+      ],
+      "hash": "ffe59db8a8e08e079ed9d9bbc6752baf162cdd96aef584aceccc67b3a2cc4847"
+    },
+    {
+      "id": "bb78bdbe-0641-4ab8-baef-888c3d2812d5",
+      "name": "Flux-klein-9b-Anime-To-Real-by AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "f07ee6e0-742f-47a5-9828-b48d2601ccf3"
+      ],
+      "hash": "7570e7a5118e11621a55fda323ad5ea58bfffa698f829ac2efa6c577acf6a0c8"
+    },
+    {
+      "id": "bcca98b3-3b32-44df-b225-044b640638c4",
+      "name": "Ernie-Image-Turbo by AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "08a686b2-42c4-4aeb-bd59-0321455d06e1"
+      ],
+      "hash": "7695043f9f94a7a02dbd6e408453bbd20ec1652c0d3d50c759769d1e5afdc6ad"
+    },
+    {
+      "id": "c85d1989-a1ba-4e0e-a331-8899bac0b3a5",
+      "name": "Ideogram-text2Image-by-AI-Knowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "6bc68a3f-2e93-4866-9827-25d666d4249a"
+      ],
+      "hash": "f690e552ee99979fc1770113a3df8cfd0cef4fafa404cda61b078162bae28f34"
+    },
+    {
+      "id": "ceb60d99-c8f3-4f10-8f19-6b572a55e9ce",
+      "name": "WAN 2.2 T2V by AI Knowledege2Go-GGUF",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "0d7a24d9-80ae-443b-9ff3-497cd54f5b7b"
+      ],
+      "hash": "ba751119d304aa3c26afa80e60903af3a21efbe40529f5c245bba99caa6a1217"
+    },
+    {
+      "id": "d5ed74da-9edd-44d2-ab2f-a1d20991f63d",
+      "name": "2. Image2Video-LTX2-3-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "713496d3-6bf4-405f-97c5-1f4d4c22c11a",
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "5bf3fe1aa7503d92cde84acf6ad1765056d825ba728fbf4b2074b634da46b11a"
+    },
+    {
+      "id": "d91ce49b-f07c-4e44-9107-9565f14702cd",
+      "name": "Extend Video - WAN 2.2 I2V by AI Knowledege2Go-GGUF",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "0d7a24d9-80ae-443b-9ff3-497cd54f5b7b"
+      ],
+      "hash": "f380c921c58b62f73d7a09b927ccf1a1c2d194c4a9918e17e215d879d8b2f8f6"
+    },
+    {
+      "id": "dca8b461-2116-4c4f-9532-b8df15182d8a",
+      "name": "Text\u002BAudio2Video-LTX2-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 0,
+      "workloads": [
+        "be99376d-c213-4375-94d0-2a9a4a4dc92c"
+      ],
+      "hash": "1635535499f7f10c53256a3a1b40f25642aff7952e1afbd8a9e07fdbc59034d9"
+    },
+    {
+      "id": "e3242702-c5e3-46a1-aad9-78f05d67b74f",
+      "name": "Qwen-2512-Text2Image-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "725ffdfb-22b6-436f-905a-ce678bda287d"
+      ],
+      "hash": "a90307d4ed73153ccfe17b38fa98c491ac59829aec570f89014ca7e1a3e3e3b3"
+    },
+    {
+      "id": "ec65ce05-29b9-48a2-93ae-6d93535f29fd",
+      "name": "Qwen_image_edit_2511-ControlNet-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "3b463f60-a862-4135-ac0f-0ab18d8e3eb8",
+        "725ffdfb-22b6-436f-905a-ce678bda287d"
+      ],
+      "hash": "971b18468528a73be738c0e2ac40ea8aede3696465a0177fd686f9bf9f0ebdb9"
+    },
+    {
+      "id": "f1e4e47d-1457-42df-963e-28633f66331d",
+      "name": "4. Image\u002BAudio2Video-LTX2-3-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "713496d3-6bf4-405f-97c5-1f4d4c22c11a",
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "874f79347c4038cb730d53b0b43395065bdb5a123d1b2ce793a30699e61928df"
+    },
+    {
+      "id": "f41a8fcb-c6d0-4983-b8c1-0bd970e4d567",
+      "name": "3.Krea2-Turbo-Batch-Text2Image\u002BUpscale by IntoTheLatent",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "e79c079a-2fd7-4fe7-8086-23731092555d"
+      ],
+      "hash": "2c23c78b88730c55dda9c3a64df9abc470cd75a363334342a6a33dfe0421d13f"
+    },
+    {
+      "id": "f9bf2611-1e3a-4fae-9966-146f5b9ea8e8",
+      "name": "1. Text2Video-LTX2-3-By AIKnowledge2Go",
+      "version": 1,
+      "subVersion": 1,
+      "workloads": [
+        "713496d3-6bf4-405f-97c5-1f4d4c22c11a",
+        "e358f5aa-5204-4c5f-a1ed-266265c1f413"
+      ],
+      "hash": "47b4949506adf1935db7659398406bc4be75d734cc2d6c40e294cf7a296230fb"
+    }
+  ]
+}

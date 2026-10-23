@@ -1,6 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 
@@ -31,28 +29,20 @@ public static class PerceptualHasher
     {
         ArgumentNullException.ThrowIfNull(filePath);
 
-        using var image = Image.Load<L8>(filePath);
-
         // Resize to 32×32 grayscale
-        image.Mutate(x => x.Resize(new ResizeOptions
-        {
-            Size = new Size(ResizeSize, ResizeSize),
-            Mode = ResizeMode.Stretch
-        }));
+        using var rgba = SkiaPixels.DecodeRgba(filePath);
+        using var small = SkiaPixels.ResizeTo(rgba, ResizeSize, ResizeSize);
+        var gray = SkiaPixels.ToGray8(small);
 
         // Extract pixel values as doubles
         double[,] pixels = new double[ResizeSize, ResizeSize];
-        image.ProcessPixelRows(accessor =>
+        for (int y = 0; y < ResizeSize; y++)
         {
-            for (int y = 0; y < ResizeSize; y++)
+            for (int x = 0; x < ResizeSize; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < ResizeSize; x++)
-                {
-                    pixels[y, x] = row[x].PackedValue;
-                }
+                pixels[y, x] = gray[y * ResizeSize + x];
             }
-        });
+        }
 
         // Apply 2D DCT
         double[,] dct = ComputeDct2D(pixels);

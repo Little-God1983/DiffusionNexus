@@ -3,6 +3,8 @@ using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.Domain.Entities;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace DiffusionNexus.Tests.DataAccess.Recovery;
 
@@ -58,6 +60,16 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         ctx.Database.Migrate();
     }
 
+    // One migration behind the AddModelSyncStateAndThumbnailAttempts migration these tests target
+    // for the "pending migrations" scenario below (mirrors SyncSchemaMigrationTests.PreviousMigration).
+    private const string PreviousMigration = "20260816161430_AddInstallerPackageIsAppManaged";
+
+    private void MigrateTo(string target)
+    {
+        using var ctx = NewContext();
+        ctx.GetService<IMigrator>().Migrate(target);
+    }
+
     private HashSet<string> Columns(string table)
     {
         var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -93,6 +105,27 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
+    }
+
+    private string? Scalar(string sql)
+    {
+        using var conn = new SqliteConnection(ConnString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>Reads the single foreign key of <paramref name="table"/> as (referenced table, ON DELETE action).</summary>
+    private (string Table, string OnDelete) ForeignKey(string table)
+    {
+        using var conn = new SqliteConnection(ConnString);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA foreign_key_list('{table}');";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read(), $"{table} has no foreign key");
+        return (reader["table"].ToString()!, reader["on_delete"].ToString()!);
     }
 
     private string? JournalMode()
@@ -170,6 +203,27 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         Assert.Contains(logger.Warnings, w => w.Contains("TotalVersionCount"));
     }
 
+    /// <summary>
+    /// #647: AddModelUserNsfwRating stamped as applied without its ALTERs running would fail every
+    /// LoRA query on "no such column". The self-heal re-adds both columns.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingUserNsfwRatingColumns()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE Models DROP COLUMN UserNsfwRating;");
+        Exec("ALTER TABLE Models DROP COLUMN OriginalNsfwRating;");
+        Assert.DoesNotContain("UserNsfwRating", Columns("Models"));
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+
+        Assert.Contains("UserNsfwRating", Columns("Models"));
+        Assert.Contains("OriginalNsfwRating", Columns("Models"));
+        Assert.Empty(logger.Errors);
+        using (var ctx = NewContext()) Assert.Empty(ctx.Models.ToList());
+    }
+
     [Fact]
     public void CheckAndRepairSchema_ReAddsMissingAppSettingsColumn()
     {
@@ -195,6 +249,237 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
 
         Assert.True(beforeModels.SetEquals(Columns("Models")));
         Assert.True(beforeAppSettings.SetEquals(Columns("AppSettings")));
+    }
+
+    // ---- Scenario 2b: sync-schema self-heal (#521 WP1) ---------------------
+
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingModelImagesThumbnailColumns()
+    {
+        MigrateFresh();
+        // Simulate AddModelSyncStateAndThumbnailAttempts stamped as applied without its ALTERs running.
+        Exec("ALTER TABLE ModelImages DROP COLUMN ThumbnailAttemptedAt;");
+        Exec("ALTER TABLE ModelImages DROP COLUMN ThumbnailFailure;");
+        var corrupted = Columns("ModelImages");
+        Assert.DoesNotContain("ThumbnailAttemptedAt", corrupted);
+        Assert.DoesNotContain("ThumbnailFailure", corrupted);
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        var repaired = Columns("ModelImages");
+        Assert.Contains("ThumbnailAttemptedAt", repaired);
+        Assert.Contains("ThumbnailFailure", repaired);
+        Assert.Contains(logger.Warnings, w => w.Contains("ThumbnailAttemptedAt"));
+        Assert.Empty(logger.Errors);
+    }
+
+    /// <summary>
+    /// #631: AddNsfwRating stamped as applied without its ALTER running (the recovery path a
+    /// rollback-and-upgrade takes) would leave every LoRA query failing on "no such column". The
+    /// self-heal re-adds it, unrated.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingNsfwRatingColumn()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE ModelImages DROP COLUMN NsfwRating;");
+        Assert.DoesNotContain("NsfwRating", Columns("ModelImages"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        Assert.Contains("NsfwRating", Columns("ModelImages"));
+        Assert.Empty(logger.Errors);
+        // The repaired column must be readable through EF.
+        using (var ctx = NewContext()) Assert.Empty(ctx.ModelImages.ToList());
+    }
+
+    /// <summary>
+    /// The four Plan E settings columns each have a self-heal entry (#521 WP6). Dropping them all
+    /// and repairing pins the SQL inside those entries — a typo'd column name or type would leave
+    /// the app crashing on "no such column" with the repair silently missing it.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingSyncSettingsColumns()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncNotIdentifiedRetryDays;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncErrorRetryDays;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN SyncThumbnailConcurrency;");
+        Exec("ALTER TABLE AppSettings DROP COLUMN LastLibrarySyncAt;");
+        Assert.DoesNotContain("SyncThumbnailConcurrency", Columns("AppSettings"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        var repaired = Columns("AppSettings");
+        Assert.Contains("SyncNotIdentifiedRetryDays", repaired);
+        Assert.Contains("SyncErrorRetryDays", repaired);
+        Assert.Contains("SyncThumbnailConcurrency", repaired);
+        Assert.Contains("LastLibrarySyncAt", repaired);
+        Assert.Empty(logger.Errors);
+    }
+
+    [Fact]
+    public void CheckAndRepairSchema_RecreatesDroppedModelSyncStatesTable_WithCascadeToModels()
+    {
+        MigrateFresh();
+        var expectedColumns = Columns("ModelSyncStates");
+        Assert.NotEmpty(expectedColumns);
+
+        Exec("DROP TABLE ModelSyncStates;");
+        Assert.Empty(Columns("ModelSyncStates"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        // Every column the migration creates is back.
+        Assert.True(expectedColumns.SetEquals(Columns("ModelSyncStates")));
+        Assert.Empty(logger.Errors);
+
+        // …and so is the cascading FK, so deleting a model still takes its state row with it.
+        var (referencedTable, onDelete) = ForeignKey("ModelSyncStates");
+        Assert.Equal("Models", referencedTable);
+        Assert.Equal("CASCADE", onDelete);
+
+        using (var ctx = NewContext())
+        {
+            ctx.Models.Add(new Model { Name = "cascade-probe", SyncState = new ModelSyncState() });
+            ctx.SaveChanges();
+        }
+        using (var ctx = NewContext())
+        {
+            ctx.Models.Remove(ctx.Models.Single());
+            ctx.SaveChanges();
+        }
+        using (var ctx = NewContext())
+        {
+            Assert.Empty(ctx.ModelSyncStates);
+        }
+    }
+
+    [Fact]
+    public void CheckAndRepairSchema_UppercasesLowercaseModelFileHashes()
+    {
+        MigrateFresh();
+        Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+             "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             "VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', 'C:\\l\\a.safetensors', 1);");
+
+        // A second file that is already uppercase must be left byte-identical.
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             "VALUES (2, 1, 'b.safetensors', 1, 'Model', 0, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', 'FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210', 'C:\\l\\b.safetensors', 1);");
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        Assert.Equal(
+            "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
+            Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+        Assert.Equal(
+            "FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210",
+            Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 2;"));
+        Assert.Empty(logger.Errors);
+
+        // Idempotent: a second pass finds nothing left to normalize.
+        var second = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(second).CheckAndRepairSchema(ctx);
+        Assert.DoesNotContain(second.Warnings, w => w.Contains("HashSHA256"));
+    }
+
+    /// <summary>
+    /// R12. The repair used to issue the UPDATE unconditionally: a write transaction and a full
+    /// pass over ModelFiles on every launch, to change nothing. A read-only EXISTS probe now goes
+    /// first and stops at the first offending row — on a healthy database there is none.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_AlreadyUppercaseHashes_ProbesButDoesNotWrite()
+    {
+        MigrateFresh();
+        SeedOneModelFile(hash: "FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210");
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+
+        Assert.Contains(logger.Infos, i => i.Contains("already normalized"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("Normalized 0"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("value(s) to uppercase"));
+        Assert.Empty(logger.Errors);
+    }
+
+    /// <summary>
+    /// R12. Even the probe is a scan, so it is only paid for on a start that applied or stamped
+    /// migrations — the only kind of start on which a migration body can have been skipped.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_WithoutMigrationsThisStart_DoesNotTouchHashCasing()
+    {
+        MigrateFresh();
+        const string lower = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        SeedOneModelFile(hash: lower);
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext())
+            new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx, migrationsTouchedThisStart: false);
+
+        Assert.Equal(lower, Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+        Assert.DoesNotContain(logger.Infos, i => i.Contains("HashSHA256"));
+
+        // …and the very next start that does touch migrations still fixes it.
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+        Assert.Equal(lower.ToUpperInvariant(), Scalar("SELECT HashSHA256 FROM ModelFiles WHERE Id = 1;"));
+    }
+
+    /// <summary>
+    /// #631: when AddNsfwRating is stamped as applied without its body running (a rollback and
+    /// re-upgrade, or any failed migration), its "fetch the images again" step never ran. Recovery
+    /// redoes it on starts that touched migrations — for models whose Civitai pictures are still
+    /// unrated only — and leaves other launches and rated models alone.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReopensTheImagesStep_ForModelsWithUnratedCivitaiImages()
+    {
+        MigrateFresh();
+        const string stamp = "2026-10-01T00:00:00+00:00";
+        Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+             "VALUES (1, 'unrated', 'LORA', 'Available', 'CivitaiApi', 0, 0, 0, 'None', 0, 0, '" + stamp + "', 0, 0), " +
+             "(2, 'rated', 'LORA', 'Available', 'CivitaiApi', 0, 0, 0, 'None', 0, 0, '" + stamp + "', 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 'Unknown', 0, '" + stamp + "', 0, 0, 0, 0, 0, 0), (2, 2, 'v1', 'Unknown', 0, '" + stamp + "', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelImages (Id, ModelVersionId, Url, IsNsfw, NsfwLevel, NsfwRating, Width, Height, SortOrder, IsLocalCacheValid, LikeCount, HeartCount, CommentCount) " +
+             "VALUES (1, 1, 'https://img/u.jpeg', 0, 'None', 0, 0, 0, 0, 0, 0, 0, 0), (2, 2, 'https://img/pg.jpeg', 0, 'None', 1, 0, 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelSyncStates (ModelId, MetadataOutcome, MetadataAttempts, ImagesCheckedAt, UpdatedAt) " +
+             "VALUES (1, 'Matched', 1, '" + stamp + "', '" + stamp + "'), (2, 'Matched', 1, '" + stamp + "', '" + stamp + "');");
+
+        var logger = new CapturingRecoveryLogger();
+        using (var ctx = NewContext())
+            new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx, migrationsTouchedThisStart: false);
+        Assert.Equal(stamp, Scalar("SELECT ImagesCheckedAt FROM ModelSyncStates WHERE ModelId = 1;"));
+
+        using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
+        Assert.Null(Scalar("SELECT ImagesCheckedAt FROM ModelSyncStates WHERE ModelId = 1;"));
+        Assert.Equal(stamp, Scalar("SELECT ImagesCheckedAt FROM ModelSyncStates WHERE ModelId = 2;"));
+        Assert.Empty(logger.Errors);
+    }
+
+    /// <summary>Seeds the Models → ModelVersions → ModelFiles chain with one file carrying <paramref name="hash"/>.</summary>
+    private void SeedOneModelFile(string hash)
+    {
+        Exec("INSERT INTO Models (Id, Name, Type, Mode, Source, IsNsfw, IsPoi, AllowNoCredit, AllowCommercialUse, AllowDerivatives, AllowDifferentLicense, CreatedAt, IsUserEdited, TotalVersionCount) " +
+             "VALUES (1, 'legacy', 'LORA', 'Available', 'LocalFile', 0, 0, 0, 'None', 0, 0, '2026-01-01T00:00:00+00:00', 0, 0);");
+        Exec("INSERT INTO ModelVersions (Id, ModelId, Name, BaseModel, EarlyAccessDays, CreatedAt, IsUserEdited, DownloadCount, RatingCount, Rating, ThumbsUpCount, ThumbsDownCount) " +
+             "VALUES (1, 1, 'v1', 'Unknown', 0, '2026-01-01T00:00:00+00:00', 0, 0, 0, 0, 0, 0);");
+        Exec("INSERT INTO ModelFiles (Id, ModelVersionId, FileName, SizeKB, FileType, IsPrimary, Format, Precision, SizeType, PickleScanResult, VirusScanResult, HashSHA256, LocalPath, IsLocalFileValid) " +
+             $"VALUES (1, 1, 'a.safetensors', 1, 'Model', 1, 'SafeTensor', 'Unknown', 'Unknown', 'Pending', 'Pending', '{hash}', 'C:\\l\\a.safetensors', 1);");
     }
 
     // ---- Scenario 3: pending migrations but schema already correct ---------
@@ -384,6 +669,19 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         }
     }
 
+    // ---- Scenario 7: automatic pre-migration backup (#521 S2) --------------
+
+    [Fact]
+    public void InitializeAndRepair_PendingMigrations_CreatesPreMigrationBackupNextToTheDatabase()
+    {
+        MigrateTo(PreviousMigration);
+
+        var svc = new DatabaseRecoveryService();
+        using (var ctx = NewContext()) svc.InitializeAndRepair(ctx);
+
+        Assert.Single(Directory.GetFiles(_dir, "*.pre-*.db"));
+    }
+
     // ---- Extra coverage: first-run + combined corruption -------------------
 
     [Fact]
@@ -400,6 +698,9 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
         var models = Columns("Models");
         Assert.Contains("Name", models);
         Assert.Contains("TotalVersionCount", models);
+
+        // No prior database existed, so there is nothing to back up.
+        Assert.Empty(Directory.GetFiles(_dir, "*.pre-*.db"));
     }
 
     [Fact]

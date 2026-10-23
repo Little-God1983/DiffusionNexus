@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Inference.Captioning;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -14,11 +15,23 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     public CaptioningModelManager.DownloadDestination Destination { get; }
     public string Path => Destination.Path;
     public string Label => Destination.Label;
-    public long FreeBytes => Destination.FreeBytes;
+    public long FreeBytes => Destination.Space.FreeBytes;
 
-    /// <summary>"123.4 GB free" / "unknown" for paths we couldn't probe.</summary>
-    public string FreeBytesLabel =>
-        FreeBytes <= 0 ? "free space unknown" : $"{ToReadable(FreeBytes)} free";
+    /// <summary>
+    /// True when this destination has no volume behind it — a dead drive letter or an unplugged
+    /// disk. It used to be indistinguishable from an unprobeable network share (both reported 0
+    /// free bytes), so the dialog happily confirmed a multi-gigabyte download into a drive that
+    /// was gone (issue #581).
+    /// </summary>
+    public bool IsUnreachable => Destination.Space.Kind == FreeSpaceKind.Unreachable;
+
+    /// <summary>"123.4 GB free" / "unknown" for a share that won't say / "not reachable".</summary>
+    public string FreeBytesLabel => Destination.Space.Kind switch
+    {
+        FreeSpaceKind.Unreachable => "not reachable",
+        FreeSpaceKind.Unknown => "free space unknown",
+        _ => $"{ToReadable(FreeBytes)} free",
+    };
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SpaceCheckLabel))]
@@ -26,18 +39,38 @@ public sealed partial class DestinationOptionViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(HasEnoughSpace))]
     private long _requiredBytes;
 
-    public bool HasEnoughSpace => FreeBytes <= 0 || FreeBytes >= RequiredBytes;
+    /// <summary>
+    /// The manager's own answer, not a second one: it demands
+    /// <see cref="CaptioningModelManager.FreeSpaceMarginBytes"/> of headroom on top of the file,
+    /// and this dialog used to compare the bare size — so 8.1 GB free with an 8.0 GB model
+    /// showed green, and the download refused after the user had committed.
+    /// Unknown fails open (refusing a perfectly good network share because it will not report its
+    /// size is the worse error); Unreachable does not, because there is nothing to write to.
+    /// </summary>
+    public bool HasEnoughSpace => CaptioningModelManager.HasRoomFor(Destination.Space, RequiredBytes);
 
-    public string SpaceCheckLabel => RequiredBytes <= 0
-        ? string.Empty
-        : HasEnoughSpace
-            ? $"OK — need {ToReadable(RequiredBytes)}"
-            : $"NOT ENOUGH SPACE — need {ToReadable(RequiredBytes)}";
+    /// <summary>
+    /// What the download will actually demand: the file plus the preflight's headroom. Naming
+    /// the bare file size made the refusal read as a contradiction — "8.1 GB free" beside
+    /// "NOT ENOUGH SPACE — need 8.0 GB" — which sends the user looking for a bug in the dialog.
+    /// </summary>
+    public long RequiredWithHeadroom =>
+        RequiredBytes <= 0 ? 0 : RequiredBytes + CaptioningModelManager.FreeSpaceMarginBytes;
+
+    public string SpaceCheckLabel => IsUnreachable
+        ? "NOT REACHABLE — pick another destination"
+        : RequiredBytes <= 0
+            ? string.Empty
+            : HasEnoughSpace
+                ? $"OK — need {ToReadable(RequiredWithHeadroom)}"
+                : $"NOT ENOUGH SPACE — need {ToReadable(RequiredWithHeadroom)}";
 
     /// <summary>Bound directly by the XAML — avoids needing a value converter.</summary>
-    public string SpaceCheckColor => RequiredBytes <= 0
-        ? "#999999"
-        : HasEnoughSpace ? "#4CAF50" : "#F44336";
+    public string SpaceCheckColor => IsUnreachable
+        ? "#F44336"
+        : RequiredBytes <= 0
+            ? "#999999"
+            : HasEnoughSpace ? "#4CAF50" : "#F44336";
 
     public DestinationOptionViewModel(CaptioningModelManager.DownloadDestination destination)
     {
@@ -118,10 +151,16 @@ public partial class CaptioningDownloadOptionsViewModel : ViewModelBase
         }
     }
 
-    public string InsufficientSpaceWarning =>
-        SelectedDestination is { HasEnoughSpace: false }
-            ? $"⚠ The selected location has only {FormatBytes(SelectedDestination.FreeBytes)} free — not enough for this download."
-            : string.Empty;
+    public string InsufficientSpaceWarning => SelectedDestination switch
+    {
+        { IsUnreachable: true } d => $"⚠ {d.Path} cannot be reached — the drive or folder is not available.",
+        // Names the same figure the download will refuse on, for the same reason SpaceCheckLabel
+        // does: "only 8.1 GB free — not enough" reads as nonsense next to an 8.0 GB model.
+        { HasEnoughSpace: false } d =>
+            $"⚠ The selected location has only {FormatBytes(d.FreeBytes)} free — this download needs " +
+            $"{FormatBytes(d.RequiredWithHeadroom)} (the model plus working headroom).",
+        _ => string.Empty,
+    };
 
     /// <summary>
     /// OK to confirm only when a destination is picked and it has enough

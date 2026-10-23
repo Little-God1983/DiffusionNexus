@@ -1,0 +1,174 @@
+{
+  "9": {
+    "inputs": {
+      "samples": [
+        "37",
+        0
+      ],
+      "vae": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "17": {
+    "inputs": {
+      "text": "Photorealistic 8k cinematic masterpiece of Jinx and matte black lipstick,wearing masterfully detailed dark gunmetal and deep crimson medieval armor with gold filigree and realistic battle wear, sword on her back.\nThree-quarter view, slightly low heroic angle\nStanding in the ruins of an ancient cathedral.\nDramatic god rays, cold blue stained-glass light, floating dust.\nHand on the sword hilt, piercing stare straight into camera.",
+      "clip": [
+        "55",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "21": {
+    "inputs": {
+      "filename_prefix": "2026-08-16/Krea-Turbo",
+      "images": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "35": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "55",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "36": {
+    "inputs": {
+      "width": [
+        "65",
+        0
+      ],
+      "height": [
+        "65",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "37": {
+    "inputs": {
+      "seed": 637067905137781,
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "55",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "35",
+        0
+      ],
+      "latent_image": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "55": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": "Jinx_Arcane_Season_1_LoRA_Z_Image_Turbo.safetensors",
+        "strength": 1
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "62",
+        0
+      ],
+      "clip": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "57": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "59": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "62": {
+    "inputs": {
+      "gguf_name": "krea2_turbo-Q8_0.gguf"
+    },
+    "class_type": "LoaderGGUF",
+    "_meta": {
+      "title": "GGUF Loader"
+    }
+  },
+  "65": {
+    "inputs": {
+      "profile": "default",
+      "resolution_mode": "megapixel",
+      "aspect_ratio": "1:1 (Square)",
+      "megapixels": 1,
+      "width": 1000,
+      "height": 1000,
+      "snap_multiple": 8,
+      "orientation": "landscape"
+    },
+    "class_type": "AI2GoResolutionSelector",
+    "_meta": {
+      "title": "AI2Go Resolution Selector"
+    }
+  }
+}

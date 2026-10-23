@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
 using FluentAssertions;
 using Xunit;
@@ -16,7 +17,7 @@ public class FeatureRegistryTests
     [InlineData(Feature.Captioning,         "701DA214-2B25-44B4-A904-E4B036621564")]
     [InlineData(Feature.Inpainting,         "4C486765-A4C1-4E94-ACC2-BBAC0E405B6A")]
     [InlineData(Feature.BatchUpscale,       "B853EB7C-0A0E-48A6-985E-E32B2F8848F5")]
-    [InlineData(Feature.BatchUpscaleVision, "B853EB7C-0A0E-48A6-985E-E32B2F8848F5")]
+    [InlineData(Feature.BatchUpscaleVision, "FE2E7606-AC36-470E-A7C5-7F8CC23ECC98")]
     [InlineData(Feature.Outpaint,           "137929E4-5C05-4304-80D4-5D785D45FD3F")]
     [InlineData(Feature.OutpaintVision,     "137929E4-5C05-4304-80D4-5D785D45FD3F")]
     public void EachFeature_BindsToExpectedSdkWorkload(Feature feature, string expectedGuid)
@@ -28,5 +29,12 @@ public class FeatureRegistryTests
             .Should().Be(Guid.Parse(expectedGuid),
                 $"feature '{feature}' is supposed to be backed by SDK workload {expectedGuid}; "
                 + "a Guid.Empty here means the static initializer order is wrong again.");
+    }
+
+    // #608: Batch Upscale runs both its workflows through the client the Settings server dropdown picks.
+    [Fact]
+    public void BatchUpscale_FollowsTheSettingsServer()
+    {
+        FeatureBackendRouter.ServerModeFeatures.Should().Contain([Feature.BatchUpscale, Feature.BatchUpscaleVision]);
     }
 }

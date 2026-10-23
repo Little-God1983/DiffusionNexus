@@ -10,6 +10,11 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// </summary>
 public class LayerStack : IDisposable
 {
+    /// <summary>Longest side a merged layer may produce.</summary>
+    public const int MaxLayerSide = 16384;
+    /// <summary>Largest pixel count a merged layer may produce (256 M).</summary>
+    public const long MaxLayerArea = 268_435_456L;
+
     private readonly ObservableCollection<Layer> _layers;
     private Layer? _activeLayer;
     private int _width;
@@ -118,11 +123,12 @@ public class LayerStack : IDisposable
     /// </summary>
     /// <param name="bitmap">Source bitmap.</param>
     /// <param name="name">Optional layer name.</param>
+    /// <param name="offset">Canvas offset for the layer.</param>
     /// <returns>The newly created layer.</returns>
-    public Layer AddLayerFromBitmap(SKBitmap bitmap, string? name = null)
+    public Layer AddLayerFromBitmap(SKBitmap bitmap, string? name = null, SKPointI offset = default)
     {
         var layerName = name ?? $"Layer {_layers.Count + 1}";
-        var layer = new Layer(bitmap, layerName);
+        var layer = new Layer(bitmap, layerName, offset);
         layer.ContentChanged += OnLayerContentChanged;
 
         // Keep inpaint mask as the topmost layer
@@ -262,22 +268,31 @@ public class LayerStack : IDisposable
         var belowLayer = _layers[index - 1];
         if (belowLayer.Bitmap == null || layer.Bitmap == null) return false;
 
-        // Draw the top layer onto the bottom layer
-        using var canvas = belowLayer.CreateCanvas();
-        if (canvas == null) return false;
+        var union = SKRectI.Union(belowLayer.Bounds, layer.Bounds);
+        if (union.Width > MaxLayerSide || union.Height > MaxLayerSide || (long)union.Width * union.Height > MaxLayerArea)
+            return false;
 
-        using var paint = new SKPaint
+        var merged = new SKBitmap(union.Width, union.Height, SKColorType.Rgba8888, SKAlphaType.Premul);
+        if (merged.IsEmpty || merged.Width != union.Width || merged.Height != union.Height)
         {
-            Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
-            BlendMode = layer.BlendMode.ToSKBlendMode()
-        };
-
-        if (layer.IsVisible)
-        {
-            canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+            merged.Dispose();
+            return false;
         }
-
-        belowLayer.NotifyContentChanged();
+        merged.Erase(SKColors.Transparent);
+        using (var canvas = new SKCanvas(merged))
+        {
+            canvas.DrawBitmap(belowLayer.Bitmap, belowLayer.OffsetX - union.Left, belowLayer.OffsetY - union.Top);
+            if (layer.IsVisible)
+            {
+                using var paint = new SKPaint
+                {
+                    Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                    BlendMode = layer.BlendMode.ToSKBlendMode()
+                };
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX - union.Left, layer.OffsetY - union.Top, paint);
+            }
+        }
+        belowLayer.AdoptBitmap(merged, new SKPointI(union.Left, union.Top));
 
         // Remove the merged layer
         layer.ContentChanged -= OnLayerContentChanged;
@@ -336,31 +351,71 @@ public class LayerStack : IDisposable
     /// <summary>
     /// Flattens all visible layers into a single bitmap.
     /// </summary>
+    /// <param name="replacement">
+    /// Draws one layer from other pixels, such as a pending Move/Transform rasterized the way its
+    /// commit will, without changing the layer.
+    /// </param>
     /// <returns>A new bitmap with all layers composited.</returns>
-    public SKBitmap? Flatten()
+    public SKBitmap? Flatten(LayerBitmapOverride? replacement = null)
     {
         if (_layers.Count == 0) return null;
 
         var result = new SKBitmap(_width, _height, SKColorType.Rgba8888, SKAlphaType.Premul);
         using var canvas = new SKCanvas(result);
         canvas.Clear(SKColors.Transparent);
+        canvas.ClipRect(new SKRect(0, 0, _width, _height));
 
         // Draw layers from bottom to top (skip inpaint mask layers)
         foreach (var layer in _layers)
         {
-            if (!layer.IsVisible || layer.Bitmap == null || layer.IsInpaintMask) continue;
+            if (!IsFlattened(layer)) continue;
 
             using var paint = new SKPaint
             {
-                Color = SKColors.White.WithAlpha((byte)(layer.Opacity * 255)),
+                Color = SKColors.White.WithAlpha(FlattenAlpha(layer)),
                 BlendMode = layer.BlendMode.ToSKBlendMode()
             };
 
-            canvas.DrawBitmap(layer.Bitmap, 0, 0, paint);
+            if (replacement is { } r && ReferenceEquals(r.Layer, layer))
+                canvas.DrawBitmap(r.Bitmap, r.Offset.X, r.Offset.Y, paint);
+            else
+                canvas.DrawBitmap(layer.Bitmap, layer.OffsetX, layer.OffsetY, paint);
         }
 
         return result;
     }
+
+    /// <summary>
+    /// Whether one layer on its own makes <see cref="Flatten"/>'s result fully opaque: flattened,
+    /// at full opacity, and covering the whole canvas with opaque pixels. Every blend mode keeps
+    /// the result alpha at Sa + Da(1 - Sa), so no other layer can let transparency through. This
+    /// scans one layer and allocates nothing; false means "flatten to find out".
+    /// </summary>
+    /// <param name="except">A layer not to rely on, such as one whose pixels a pending transform will replace.</param>
+    public bool HasOpaqueCoveringLayer(Layer? except = null)
+    {
+        foreach (var layer in _layers)
+        {
+            if (!IsFlattened(layer) || ReferenceEquals(layer, except)) continue;
+            if (FlattenAlpha(layer) != byte.MaxValue) continue;
+
+            var bounds = layer.Bounds;
+            if (bounds.Left > 0 || bounds.Top > 0 || bounds.Right < _width || bounds.Bottom < _height) continue;
+
+            // Scans the whole bitmap, overhang included: a transparent pixel off the canvas only
+            // costs the fast answer.
+            if (!BitmapTransparency.HasTransparentPixels(layer.Bitmap!)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Whether <see cref="Flatten"/> draws <paramref name="layer"/>.</summary>
+    private static bool IsFlattened(Layer layer)
+        => layer.IsVisible && layer.Bitmap is not null && !layer.IsInpaintMask;
+
+    /// <summary>The alpha <see cref="Flatten"/> draws <paramref name="layer"/> with.</summary>
+    private static byte FlattenAlpha(Layer layer) => (byte)(layer.Opacity * 255);
 
     /// <summary>
     /// Clears all layers and creates a new background layer.
@@ -378,35 +433,36 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
-    /// Resizes all layers to new dimensions.
-    /// </summary>
-    /// <param name="newWidth">New width in pixels.</param>
-    /// <param name="newHeight">New height in pixels.</param>
-    public void Resize(int newWidth, int newHeight)
-    {
-        _width = newWidth;
-        _height = newHeight;
-
-        foreach (var layer in _layers)
-        {
-            layer.Resize(newWidth, newHeight);
-        }
-
-        ContentChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>
     /// Resizes the layer stack canvas and offsets all existing layer content.
     /// </summary>
     public void ResizeCanvas(int newWidth, int newHeight, int offsetX, int offsetY)
     {
+        // Two phases: allocate every replacement first, swap only once all of them exist.
+        // Resizing layer by layer would leave the stack mixed when a later allocation fails
+        // (the compositor scales by the stack size, so grown layers would render cropped),
+        // and there is no undo to escape that. A failure here must be a no-op.
+        var resized = new List<(Layer Layer, SKBitmap Bitmap, SKPointI Offset)>(_layers.Count);
+        try
+        {
+            foreach (var layer in _layers)
+            {
+                if (layer.Bitmap is null) continue;
+                var bitmap = layer.CreateResizedBitmap(newWidth, newHeight, offsetX, offsetY, out var off);
+                resized.Add((layer, bitmap, off));
+            }
+        }
+        catch
+        {
+            foreach (var (_, bitmap, _) in resized)
+                bitmap.Dispose();
+            throw;
+        }
+
+        foreach (var (layer, bitmap, offset) in resized)
+            layer.AdoptBitmap(bitmap, offset);
+
         _width = newWidth;
         _height = newHeight;
-
-        foreach (var layer in _layers)
-        {
-            layer.ResizeCanvas(newWidth, newHeight, offsetX, offsetY);
-        }
 
         ContentChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -431,31 +487,21 @@ public class LayerStack : IDisposable
     }
 
     /// <summary>
-    /// Applies a transformation function to all layers.
-    /// Used for rotate/flip operations that affect all layers.
+    /// Applies a whole-image transform to every layer. <paramref name="transform"/> returns the
+    /// transformed bitmap and the layer's new offset (see <see cref="LayerOffsetRemap"/>); the
+    /// stack takes the new canvas size from the caller, never from a layer.
     /// </summary>
-    /// <param name="transform">Function that takes a layer and returns a transformed bitmap.</param>
-    public void TransformAll(Func<Layer, SKBitmap?> transform)
+    public void TransformAll(Func<Layer, (SKBitmap Bitmap, SKPointI Offset)?> transform, int newWidth, int newHeight)
     {
-        SKBitmap? firstResult = null;
-        
         foreach (var layer in _layers)
         {
-            var transformed = transform(layer);
-            if (transformed != null)
-            {
-                firstResult ??= transformed;
-                layer.ReplaceBitmap(transformed);
-            }
+            var result = transform(layer);
+            if (result is { } r)
+                layer.AdoptBitmap(r.Bitmap, r.Offset);
         }
 
-        // Update stack dimensions from first transformed layer
-        if (firstResult != null)
-        {
-            _width = firstResult.Width;
-            _height = firstResult.Height;
-        }
-
+        _width = newWidth;
+        _height = newHeight;
         ContentChanged?.Invoke(this, EventArgs.Empty);
     }
 

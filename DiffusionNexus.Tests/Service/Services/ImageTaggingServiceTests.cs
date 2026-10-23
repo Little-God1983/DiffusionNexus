@@ -1,28 +1,31 @@
 using DiffusionNexus.Service.Services;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Memory;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace DiffusionNexus.Tests.Service.Services;
 
 public sealed class ImageTaggingServiceTests
 {
-    private static readonly Rgba32 Red = new(255, 0, 0, 255);
+    private static readonly SKColor Red = new(255, 0, 0, 255);
 
-    private static Image<Rgba32> SolidRed(int width, int height) => new(width, height, Red);
+    private static SKBitmap SolidRed(int width, int height)
+    {
+        var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        bitmap.Erase(Red);
+        return bitmap;
+    }
 
-    private static bool IsRed(Rgba32 p) => p.R > 200 && p.G < 64 && p.B < 64;
+    private static bool IsRed(SKColor p) => p.Red > 200 && p.Green < 64 && p.Blue < 64;
 
-    private static bool IsWhite(Rgba32 p) => p.R > 200 && p.G > 200 && p.B > 200;
+    private static bool IsWhite(SKColor p) => p.Red > 200 && p.Green > 200 && p.Blue > 200;
 
     /// <summary>Counts how many rows of the given column hold image content rather than padding.</summary>
-    private static int RedRowsInColumn(Image<Rgba32> image, int x)
+    private static int RedRowsInColumn(SKBitmap image, int x)
     {
         var count = 0;
         for (var y = 0; y < image.Height; y++)
-            if (IsRed(image[x, y])) count++;
+            if (IsRed(image.GetPixel(x, y))) count++;
         return count;
     }
     [Fact]
@@ -120,10 +123,10 @@ public sealed class ImageTaggingServiceTests
 
         result.Width.Should().Be(32);
         result.Height.Should().Be(32);
-        IsRed(result[16, 16]).Should().BeTrue("the image content is centered");
-        IsWhite(result[16, 0]).Should().BeTrue("the top band is white padding");
-        IsWhite(result[16, 31]).Should().BeTrue("the bottom band is white padding");
-        IsWhite(result[0, 0]).Should().BeTrue();
+        IsRed(result.GetPixel(16, 16)).Should().BeTrue("the image content is centered");
+        IsWhite(result.GetPixel(16, 0)).Should().BeTrue("the top band is white padding");
+        IsWhite(result.GetPixel(16, 31)).Should().BeTrue("the bottom band is white padding");
+        IsWhite(result.GetPixel(0, 0)).Should().BeTrue();
         RedRowsInColumn(result, 16).Should().Be(16, "aspect ratio is preserved: 50/100 * 32 = 16 rows of content");
     }
 
@@ -137,8 +140,8 @@ public sealed class ImageTaggingServiceTests
         result.Width.Should().Be(32);
         result.Height.Should().Be(32);
         RedRowsInColumn(result, 16).Should().Be(32, "a square source needs no padding at all");
-        IsRed(result[0, 0]).Should().BeTrue();
-        IsRed(result[31, 31]).Should().BeTrue();
+        IsRed(result.GetPixel(0, 0)).Should().BeTrue();
+        IsRed(result.GetPixel(31, 31)).Should().BeTrue();
     }
 
     [Fact]
@@ -157,23 +160,24 @@ public sealed class ImageTaggingServiceTests
     }
 
     [Fact]
-    public void ResizeAndPadToSquare_StaysWithinASmallMemoryBudget_ForLargeSources()
+    public void ResizeAndPadToSquare_HandlesLargeSources_WithoutBuildingASquareIntermediate()
     {
         // This is the actual point of resize-then-pad. The old ordering built
         // a max(width, height)² intermediate first: for this 4000x64 source
         // that is a 4000x4000 RGBA buffer (~61 MB), per image, in a loop over
         // a whole gallery — and this app produces multi-thousand-pixel images
-        // from its own batch upscaler. Capping the allocator at 16 MB passes
-        // only if that square is never built.
-        var budgeted = Configuration.Default.Clone();
-        budgeted.MemoryAllocator = MemoryAllocator.Create(new MemoryAllocatorOptions { AllocationLimitMegabytes = 16 });
-        using var source = new Image<Rgba32>(budgeted, 4000, 64, Red); // ~1 MB
+        // from its own batch upscaler. ImageSharp let the test cap its
+        // allocator at 16 MB; SkiaSharp allocates natively with no budget
+        // hook, so this now only pins the observable result for a wide source
+        // (content centred, one row high) — the ordering lives in the code.
+        using var source = SolidRed(4000, 64); // ~1 MB
 
         var act = () => ImageTaggingService.ResizeAndPadToSquare(source, 32);
 
-        using var result = act.Should().NotThrow(
-            "padding to a 4000x4000 square before resizing would blow the 16 MB budget").Which;
+        using var result = act.Should().NotThrow().Which;
         result.Width.Should().Be(32);
         result.Height.Should().Be(32);
+        RedRowsInColumn(result, 16).Should().Be(1, "64/4000 * 32 rounds to 1 row of content");
+        IsWhite(result.GetPixel(16, 0)).Should().BeTrue();
     }
 }

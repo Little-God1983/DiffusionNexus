@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using DiffusionNexus.Domain.Autocropper;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Tests.Helpers;
 using FluentAssertions;
 using Xunit;
 
@@ -552,6 +553,153 @@ public class ImageCropperServiceTests : IDisposable
         
         // Verify file WAS copied
         File.Exists(Path.Combine(targetFolder, "perfect.png")).Should().BeTrue();
+    }
+
+    #endregion
+
+    #region Formats Skia cannot encode (#638)
+
+    [Fact]
+    public async Task WhenCroppingABmpIntoATargetFolderThenTheOutputIsAReadableSquareBmp()
+    {
+        var sourceFolder = Path.Combine(_testDirectory, "BmpSource");
+        var targetFolder = Path.Combine(_testDirectory, "BmpTarget");
+        Directory.CreateDirectory(sourceFolder);
+        WriteBmp(Path.Combine(sourceFolder, "wide.bmp"), 160, 80);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        var output = Path.Combine(targetFolder, "wide.bmp");
+        using var codec = SkiaSharp.SKCodec.Create(output);
+        codec.Should().NotBeNull("the cropped BMP must be a real image, not an empty file");
+        codec!.EncodedFormat.Should().Be(SkiaSharp.SKEncodedImageFormat.Bmp);
+        codec.Info.Width.Should().Be(codec.Info.Height);
+    }
+
+    [Fact]
+    public async Task WhenCroppingABmpInOverwriteModeThenTheSourceBecomesTheCroppedBmp()
+    {
+        var folder = Path.Combine(_testDirectory, "BmpOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.bmp");
+        WriteBmp(path, 160, 80);
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(path);
+        codec.Should().NotBeNull("overwrite mode must not replace the source with an empty file");
+        codec!.Info.Width.Should().Be(codec.Info.Height);
+        Directory.GetFiles(folder).Should().ContainSingle("no temporary file may be left behind");
+    }
+
+    [Fact]
+    public async Task WhenCroppingAGifInOverwriteModeThenTheSourceIsKeptAndCountedAsFailed()
+    {
+        // Skia cannot write GIF. The old code still deleted the source and moved an empty
+        // temporary file into its place.
+        var folder = Path.Combine(_testDirectory, "GifOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.gif");
+        var gif = TestImageFiles.UncompressedGif(8, 4);
+        File.WriteAllBytes(path, gif);
+        using (var check = SkiaSharp.SKCodec.Create(path)) check.Should().NotBeNull("the fixture must decode");
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        result.SuccessCount.Should().Be(0);
+        File.ReadAllBytes(path).Should().Equal(gif);
+        Directory.GetFiles(folder).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task WhenCroppingAnAnimatedWebpInOverwriteModeThenTheSourceIsKeptAndCountedAsFailed()
+    {
+        // Skia decodes only the first frame, so writing the crop back would replace the
+        // animation with a still.
+        var folder = Path.Combine(_testDirectory, "AnimatedWebpOverwrite");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+        using (var check = SkiaSharp.SKCodec.Create(path)) check!.FrameCount.Should().Be(2, "the fixture must be animated");
+
+        var result = await _service.ProcessImagesAsync(folder, null, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        result.SuccessCount.Should().Be(0);
+        File.ReadAllBytes(path).Should().Equal(webp);
+        Directory.GetFiles(folder).Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task WhenTheTargetFolderIsTheSourceFolderThenAnAnimatedWebpIsKept()
+    {
+        // Not overwrite mode by name, but the output still lands on the source file.
+        var folder = Path.Combine(_testDirectory, "AnimatedWebpSameFolder");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+
+        var result = await _service.ProcessImagesAsync(folder, folder + Path.DirectorySeparatorChar, [Ratio1x1]);
+
+        result.FailedCount.Should().Be(1);
+        File.ReadAllBytes(path).Should().Equal(webp);
+    }
+
+    [Fact]
+    public async Task WhenCroppingAnAnimatedWebpIntoATargetFolderThenTheOutputIsACroppedStill()
+    {
+        // The original stays as it is, so a still of the first frame is a fine result here
+        // (single-image mode crops through a temporary target folder too).
+        var sourceFolder = Path.Combine(_testDirectory, "AnimatedWebpSource");
+        var targetFolder = Path.Combine(_testDirectory, "AnimatedWebpTarget");
+        Directory.CreateDirectory(sourceFolder);
+        var path = Path.Combine(sourceFolder, "wide.webp");
+        var webp = TestImageFiles.AnimatedWebp(16, 8);
+        File.WriteAllBytes(path, webp);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(Path.Combine(targetFolder, "wide.webp"));
+        codec!.FrameCount.Should().BeLessThan(2, "the output is a still (Skia counts 0 frames for one)");
+        codec.Info.Width.Should().Be(codec.Info.Height);
+        File.ReadAllBytes(path).Should().Equal(webp);
+    }
+
+    [Fact]
+    public async Task WhenCroppingAJpegWithExifOrientationThenTheOutputIsShownInTheBucketItWasCroppedTo()
+    {
+        // The crop is chosen on the stored, unrotated pixels. Carrying Orientation=6 over would
+        // show the 4:3 result as 3:4.
+        var sourceFolder = Path.Combine(_testDirectory, "OrientedSource");
+        var targetFolder = Path.Combine(_testDirectory, "OrientedTarget");
+        Directory.CreateDirectory(sourceFolder);
+        var path = Path.Combine(sourceFolder, "phone.jpg");
+        using (var bitmap = new SkiaSharp.SKBitmap(200, 100))
+        {
+            bitmap.Erase(SkiaSharp.SKColors.SteelBlue);
+            using var data = bitmap.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+            File.WriteAllBytes(path, TestImageFiles.InsertExifOrientation(data.ToArray(), orientation: 6));
+        }
+        using (var check = SkiaSharp.SKCodec.Create(path)) check!.EncodedOrigin.Should().Be(SkiaSharp.SKEncodedOrigin.RightTop);
+
+        var result = await _service.ProcessImagesAsync(sourceFolder, targetFolder, [Ratio1x1]);
+
+        result.SuccessCount.Should().Be(1);
+        using var codec = SkiaSharp.SKCodec.Create(Path.Combine(targetFolder, "phone.jpg"));
+        codec!.EncodedOrigin.Should().Be(SkiaSharp.SKEncodedOrigin.TopLeft);
+    }
+
+    private static void WriteBmp(string path, int width, int height)
+    {
+        using var bitmap = new SkiaSharp.SKBitmap(width, height);
+        using (var canvas = new SkiaSharp.SKCanvas(bitmap)) canvas.Clear(SkiaSharp.SKColors.SteelBlue);
+        DiffusionNexus.Service.Services.Imaging.ImageFileWriter.Write(bitmap, path);
     }
 
     #endregion

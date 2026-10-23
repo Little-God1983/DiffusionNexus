@@ -218,7 +218,27 @@ public sealed class DownloadCoordinator : IDownloadCoordinator, IDisposable
     ///   • 1 active → name + percent for that one download
     ///   • 2+ active → "N Downloads in progress" + averaged percent.
     /// </summary>
+    /// <summary>
+    /// Guarded the same way <see cref="RaiseStateChanged"/> is: <see cref="_activityLog"/> is an
+    /// external dependency called from inside <see cref="EnqueueAsync"/>'s try block, so a throw
+    /// from it used to be indistinguishable from the download work itself failing — the task got
+    /// marked Failed without <c>downloadAction</c> ever running, which <c>CivitaiModelDownloader</c>
+    /// then reports as Cancelled (spec §4.4 D3 gotcha). Swallow and log instead of restructuring
+    /// the three call sites inside <see cref="EnqueueAsync"/>.
+    /// </summary>
     private void UpdateActivityLog()
+    {
+        try
+        {
+            UpdateActivityLogCore();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DownloadCoordinator UpdateActivityLog threw");
+        }
+    }
+
+    private void UpdateActivityLogCore()
     {
         if (_activityLog is null) return;
 

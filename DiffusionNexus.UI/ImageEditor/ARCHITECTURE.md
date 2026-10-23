@@ -6,6 +6,12 @@ The Image Editor is a layer-based bitmap editor embedded as a tab in the Diffusi
 It combines manual editing tools (crop, draw, shapes) with AI-powered operations
 (background removal, inpainting, upscaling).
 
+Layers have their own bounds: `Layer.OffsetX/OffsetY` place a layer in canvas pixels and its
+bitmap may be any size. The compositor draws at the offset and clips to the canvas; Crop clips
+layers, Canvas Extend grows them to the union with the canvas, Merge Down unions both layers,
+rotate/flip remap offsets (`LayerOffsetRemap`). Content dragged past the canvas edge by the
+Move / Transform tool therefore survives. The inpaint mask layer is always canvas-sized at (0, 0).
+
 ## Architecture
 
 `ImageEditorCore` is the pixel-operation engine. It delegates coordination to
@@ -114,6 +120,46 @@ View ? EditorCore.SaveImage(path)
      ? delegates file I/O to DocumentService.Save()
 ```
 
+A JPEG save (Export as JPEG, or Export / Save As / Save of a .jpg) first asks
+`EditorCore.HasTransparency()` whether the flattened image has non-opaque pixels. If so,
+`ImageEditorViewModel` raises `JpegTransparencyPromptRequested` (Fill with white / black /
+Cancel) and passes the chosen `TransparencyFill` through `SaveImageFunc(path, fill)` to
+`SaveImage(..., fillColor)`, which draws the image over that colour before encoding. Left
+alone, the JPEG encoder turns transparent areas black (#584). The question is about what gets
+saved, not where, so Export as JPEG and Export ask it before their folder picker. Save as New
+asks after its dialog, where Layered TIFF (which keeps transparency) can still be picked, and Save
+after its overwrite confirmation. The check commits nothing (it runs before the user decides to
+save). An open Move/Transform is rasterized by the same code
+its commit uses (`RasterizeLayerTransform`) and drawn in place of the layer, or left out when
+the commit would be refused, so the check sees exactly what the save writes. One opaque layer
+over the whole canvas answers without a flatten (`LayerStack.HasOpaqueCoveringLayer`).
+Hand-offs to other tools (Upscale, Add To..., Send To...) ask nothing and go through
+`ImageEditorViewModel.PrepareHandOff()` (#586):
+
+- **The original file** while the canvas is exactly the file at `CurrentImagePath`, so a JPEG
+  is not compressed again and the metadata and name survive. The core tracks which file that is
+  (`ImageEditorCore.MatchedFilePath`): set by a load and by Reset, cleared by any edit, by Clear,
+  by a load from bytes or of a layered TIFF, and set again by a Save over the original with no
+  transparency fill, in a format the extension names (a save to `.tif` writes PNG bytes, so no
+  match). The view model compares it with its own `CurrentImagePath` (`MatchesOriginalFile`),
+  because a failed load leaves the core on the previous image. The dirty flag cannot answer this:
+  Export and Save as New clear it while the canvas still differs from the loaded file. At
+  hand-off `GetUnchangedFilePath()` also requires no pending tool work
+  (`HasPendingOperations`, kept in step with `CommitPendingOperations`) and the file unchanged on
+  disk (size and write time, read before the decode).
+- **A temp copy** otherwise (`ExportHandOffCopy()`), in the original's format, except a JPEG with
+  transparency goes out as PNG.
+- **The video file** in video mode, and **nothing** (with a status message) when the canvas
+  belongs to another file because this one failed to load.
+
+`ImageHandOff.IsCopy` says which one it is; only a copy may be deleted afterwards. Add To... marks
+the original `ImageActionPaths.KeepInPlace`, so Move copies it rather than taking it from under
+the editor. Adding it to its own folder conflicts with itself: Rename makes a copy beside it,
+Override counts it as already there (`DatasetImportResult.AlreadyPresent`) instead of copying the
+file onto itself. Send To -> Batch Metadata Distiller is listed while `MatchesOriginalFile`, and
+refused at click time (`ImageActionsViewModel.WorkflowUnavailableReason`) when the hand-off would
+still be a copy, before anything commits the tool's work.
+
 ### Zoom In
 ```
 ViewModel ? _services.Viewport.ZoomIn()
@@ -122,6 +168,30 @@ ViewModel ? _services.Viewport.ZoomIn()
 ImageEditorControl ? EditorCore.ZoomIn()
                    ? delegates to ViewportManager.ZoomIn()
                    ? same ViewportManager instance ? single source of truth
+```
+
+### Canvas Extend
+```
+User → Extend toggle → CanvasExtendViewModel.IsPanelOpen = true
+     → View sets ImageEditorControl.IsCanvasExtendToolActive → CanvasExtendTool.IsActive
+     → handle drag / image drag (moves the image inside the frame) / SetTargetSize / SetAspectRatio / SetAnchor
+       → RegionChanged → View → ViewModel.UpdateResolution + UpdateAnchor (grid cell, none when dragged)
+     → RenderWithZoom fit includes the frame + FitMargin while any extension tool is active
+     → Apply (button / Enter) → ImageEditorCore.ApplyCanvasExtend()
+     → LayerManager.ResizeCanvas + working bitmap grown, transparent new pixels → ImageChanged
+```
+
+### Move / Transform
+```
+User → Move toggle → LayerTransformViewModel.IsPanelOpen = true
+     → View sets ImageEditorControl.IsLayerTransformToolActive → LayerTransformTool.IsActive, core ArmLayerTransform()
+     → drag body / corner / edge / rotate handle, arrows, panel fields → tool state (translation, scale, rotation, flips)
+       → TransformChanged → View → ViewModel.UpdateFromTool (X/Y/W/H/rotation)
+     → RenderWithZoom passes LayerRenderOverride(layer, tool.Matrix) to the compositor (live preview);
+       the tool draws the off-canvas part at 50 % plus handles
+     → Apply (button / Enter) → ImageEditorCore.ApplyLayerTransform()
+     → one resample into a bitmap sized to the transformed bounds → Layer.AdoptBitmap(bitmap, offset) → ImageChanged
+     → Escape resets (tool stays open); switching tool or layer commits first
 ```
 
 ---
@@ -137,13 +207,22 @@ ImageEditorControl ? EditorCore.ZoomIn()
 | `ImageEditorCore.ColorAdjustments.cs` | Color balance + brightness/contrast (partial) |
 | `ImageEditorCore.BackgroundOps.cs` | Background removal + fill (partial) |
 | `ImageEditorCore.Inpainting.cs` | Inpaint mask, stroke, base capture, feathering (partial) |
+| `ImageEditorCore.LayerTransform.cs` | Arm / eligibility / `ApplyLayerTransform` rasterization with size guard (partial) |
 | `Layer.cs` | Single layer: bitmap, opacity, visibility, blend mode |
 | `LayerStack.cs` | Ordered collection of layers |
 | `LayerCompositor.cs` | Composites layers to canvas |
+| `LayerOffsetRemap.cs` | Where a layer's offset lands after a whole-image rotate/flip |
+| `TransparencyCheckerboard.cs` | See-through checkerboard painted under the image in `RenderWithZoom` so transparent pixels stay visible |
 | `CropTool.cs` | Crop region management and rendering |
+| `CanvasExtensionTool.cs` | Abstract base for tools that grow the canvas outward: extension state, outward-only drag math, aspect/target-size presets, `ShrinkAttempted` |
+| `OutpaintTool.cs` | Outpaint frame (arrow handles, AI severity tint) on top of `CanvasExtensionTool` |
+| `CanvasExtendTool.cs` | Canvas Extend frame (round handles on the frame, checkerboard preview of the transparent new area) |
 | `DrawingTool.cs` | Freehand drawing tool |
 | `ShapeTool.cs` | Shape tool (rectangle, ellipse, arrow, etc.) |
+| `LayerTransformTool.cs` | Move / Transform tool: Shape-style handles on the active layer, canvas-space matrix, commit-on-deactivate |
 | `TiffExporter.cs` | Multi-page TIFF save/load |
+| `BitmapTransparency.cs` | Detects non-opaque pixels (what a JPEG cannot store) |
+| `TransparencyFill.cs` | White/black fill a JPEG save puts behind transparent areas; `TransparencyFillPrompt` (dialog text, button order, answer mapping) |
 
 ### `ImageEditor/Services/` � Service Layer
 
@@ -166,3 +245,13 @@ ImageEditorControl ? EditorCore.ZoomIn()
 | `LayerManagerTests.cs` | Layer CRUD, flatten, merge, mode toggle |
 | `ToolManagerTests.cs` | Activation, deactivation, mutual exclusion, callbacks |
 | `ViewportManagerTests.cs` | Zoom, pan, fit mode, clamping |
+| `LayerBoundsTests.cs` | Layer offset/size bounds math |
+| `LayerCompositorOffsetTests.cs` | Compositing with offset, out-of-canvas, and clipped layers |
+| `LayerStackOffsetTests.cs` | Layer stack offset propagation through flatten/merge |
+| `TiffExporterOffsetTests.cs` | Multi-page TIFF save/load round-trips layer offsets |
+| `LayerTransformToolTests.cs` | Handle hit testing, drag math, matrix composition, commit-on-deactivate |
+| `ImageEditorCoreLayerTransformTests.cs` | Arm/eligibility guards and `ApplyLayerTransform` rasterization |
+| `ImageEditorCoreOffsetLayerTests.cs` | ApplyStroke / ApplyShape land in layer-local pixels on an offset layer; painting outside the layer draws nothing |
+| `ImageEditorCoreTransparencyTests.cs` | `HasTransparency` checks the flattened result and sees a pending transform as its commit will; `SaveImage` fill colour replaces the encoder's black |
+| `LayerStackOpaqueCoverTests.cs` | `HasOpaqueCoveringLayer`: when one layer alone makes the flattened image opaque |
+| `LayerTransformViewModelTests.cs` | Panel state, UpdateFromTool, command wiring |

@@ -2,8 +2,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
 using FluentAssertions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using DiffusionNexus.Service.Services.Imaging;
 
 namespace DiffusionNexus.Tests.DatasetQuality;
 
@@ -120,49 +119,41 @@ public class NoiseEstimatorTests : IDisposable
     private string CreateCleanImage(string fileName, int width, int height)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
-
         // Smooth gradient — low noise
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    byte val = (byte)((x * 255) / Math.Max(width - 1, 1));
-                    row[x] = new L8(val);
-                }
+                byte val = (byte)((x * 255) / Math.Max(width - 1, 1));
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 
     private string CreateNoisyImage(string fileName, int width, int height, double noiseSigma)
     {
         string path = Path.Combine(_tempDir, fileName);
-        using var image = new Image<L8>(width, height);
         var rng = new Random(42);
-
-        image.ProcessPixelRows(accessor =>
+        var rgba = new byte[width * height * 4];
+        for (int y = 0; y < height; y++)
         {
-            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < width; x++)
-                {
-                    // Base gradient + Gaussian noise
-                    double baseVal = (x * 255.0) / Math.Max(width - 1, 1);
-                    double noise = GaussianNoise(rng, noiseSigma);
-                    byte val = (byte)Math.Clamp((int)(baseVal + noise), 0, 255);
-                    row[x] = new L8(val);
-                }
+                // Base gradient + Gaussian noise
+                double baseVal = (x * 255.0) / Math.Max(width - 1, 1);
+                double noise = GaussianNoise(rng, noiseSigma);
+                byte val = (byte)Math.Clamp((int)(baseVal + noise), 0, 255);
+                int p = (y * width + x) * 4;
+                rgba[p] = val; rgba[p + 1] = val; rgba[p + 2] = val; rgba[p + 3] = 255;
             }
-        });
-
-        image.SaveAsPng(path);
+        }
+        using var bmp = SkiaPixels.FromRgbaBytes(rgba, width, height);
+        SkiaPixels.SavePng(bmp, path);
         return path;
     }
 

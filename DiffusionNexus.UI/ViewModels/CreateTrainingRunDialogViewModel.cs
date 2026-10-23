@@ -1,8 +1,8 @@
-using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.UI.Utilities;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -80,9 +80,9 @@ public partial class CreateTrainingRunDialogViewModel : ObservableObject
 
     /// <summary>
     /// Base model labels sourced from the Civitai catalog. Populated
-    /// asynchronously; the ComboBox stays usable while the live fetch runs.
+    /// asynchronously; the picker stays usable while the live fetch runs.
     /// </summary>
-    public ObservableCollection<string> AvailableBaseModels { get; } = [];
+    public BatchObservableCollection<string> AvailableBaseModels { get; } = [];
 
     /// <summary>Civitai categories for the dropdown (Unknown excluded).</summary>
     public IReadOnlyList<CivitaiCategory> AvailableCategories { get; } =
@@ -153,14 +153,8 @@ public partial class CreateTrainingRunDialogViewModel : ObservableObject
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            AvailableBaseModels.Clear();
-            foreach (var label in labels)
-            {
-                AvailableBaseModels.Add(label);
-            }
-        });
+        // One Reset instead of Clear + N Adds for the subscribed picker.
+        await Dispatcher.UIThread.InvokeAsync(() => AvailableBaseModels.ReplaceAll(labels));
     }
 }
 

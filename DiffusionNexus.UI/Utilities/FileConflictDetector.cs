@@ -21,17 +21,24 @@ public static class FileConflictDetector
     /// <param name="droppedFiles">List of full paths of files being added.</param>
     /// <param name="existingFileNames">Set of filenames already in the destination folder.</param>
     /// <param name="destinationFolder">The full path to the destination folder (used to construct paths).</param>
+    /// <param name="archiveOrigins">
+    /// Optional map from a dropped file's path to the archive it was extracted from, so the conflict
+    /// row can show the ZIP instead of the temporary extraction path.
+    /// </param>
     /// <returns>Result containing conflicts and non-conflicting files.</returns>
     public static FileConflictDetectionResult DetectConflicts(
         IEnumerable<string> droppedFiles,
         HashSet<string> existingFileNames,
-        string destinationFolder)
+        string destinationFolder,
+        IReadOnlyDictionary<string, ArchiveOrigin>? archiveOrigins = null)
     {
         var result = new FileConflictDetectionResult();
 
         // 1. Filter and group dropped files by base name (without extension)
+        // Group and key with the same comparer: an ordinal GroupBy would yield separate "Cat"
+        // and "cat" groups that the case-insensitive dictionary then rejects as duplicate keys.
         var filesByBaseName = droppedFiles
-            .GroupBy(f => Path.GetFileNameWithoutExtension(f))
+            .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var group in filesByBaseName)
@@ -61,7 +68,10 @@ public static class FileConflictDetector
                     
                     // We need to create a conflict item even if the specific file doesn't exist 
                     // (so it can follow the rename of its partner).
-                    var newItem = CreateConflictItem(filePath, existingPath);
+                    ArchiveOrigin? origin = null;
+                    archiveOrigins?.TryGetValue(filePath, out origin);
+
+                    var newItem = CreateConflictItem(filePath, existingPath, origin);
                     result.Conflicts.Add(newItem);
                 }
             }
@@ -75,7 +85,7 @@ public static class FileConflictDetector
         return result;
     }
 
-    private static FileConflictItem CreateConflictItem(string sourcePath, string existingPath)
+    private static FileConflictItem CreateConflictItem(string sourcePath, string existingPath, ArchiveOrigin? origin)
     {
         long newSize = 0;
         DateTime newCreationTime = DateTime.MinValue;
@@ -115,8 +125,10 @@ public static class FileConflictDetector
             NewFileSize = newSize,
             ExistingCreationDate = existingDate,
             NewCreationDate = newCreationTime,
-            IsImage = MediaFileExtensions.IsImageFile(sourcePath)
-            // Note: Does not set PairedCaptionPath logic here as we are treating them as individual items 
+            IsImage = MediaFileExtensions.IsImageFile(sourcePath),
+            SourceArchivePath = origin?.ArchivePath,
+            SourceArchiveEntryName = origin?.EntryName
+            // Note: Does not set PairedCaptionPath logic here as we are treating them as individual items
             // that will be synced by the ViewModel logic.
         };
     }

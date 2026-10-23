@@ -14,4 +14,6 @@ public static class ToolIds
     public const string Text = "Text";
     public const string Inpainting = "Inpainting";
     public const string Outpainting = "Outpainting";
+    public const string CanvasExtend = "CanvasExtend";
+    public const string LayerTransform = "LayerTransform";
 }

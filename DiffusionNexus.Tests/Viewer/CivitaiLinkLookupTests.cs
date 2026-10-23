@@ -1,0 +1,354 @@
+using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
+using FluentAssertions;
+using Moq;
+
+namespace DiffusionNexus.Tests.Viewer;
+
+/// <summary>
+/// Issue #630: a pasted link or ID resolves to the models shown as browser cards. A bare number
+/// is looked up as a model ID and as a version ID — "if it can be two things it should yield two
+/// things".
+/// </summary>
+public sealed class CivitaiLinkLookupTests
+{
+    private readonly Mock<ICivitaiClient> _client = new();
+
+    private static CivitaiModel Model(int id, params int[] versionIds) => new()
+    {
+        Id = id,
+        Name = $"Model {id}",
+        ModelVersions = versionIds.Select(v => new CivitaiModelVersion { Id = v, ModelId = id, Name = $"v{v}" }).ToList(),
+    };
+
+    private void HasModel(CivitaiModel model) =>
+        _client.Setup(c => c.GetModelAsync(model.Id, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(model);
+
+    private void HasVersion(int versionId, int modelId) =>
+        _client.Setup(c => c.GetModelVersionAsync(versionId, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModelVersion { Id = versionId, ModelId = modelId, Name = $"v{versionId}" });
+
+    private Task<CivitaiLinkLookupResult> Resolve(string text)
+    {
+        CivitaiLinkQuery.TryParse(text, out var query).Should().BeTrue();
+        return new CivitaiLinkLookup(_client.Object, null).ResolveAsync(query!, null, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task BareNumber_ThatIsBothAModelAndAVersion_YieldsTwoCards()
+    {
+        HasModel(Model(500, 501, 502));
+        HasVersion(500, modelId: 77);
+        HasModel(Model(77, 600, 500, 400));
+
+        var result = await Resolve("500");
+
+        result.Message.Should().BeNull();
+        result.Matches.Should().HaveCount(2);
+        result.Matches[0].Model.Id.Should().Be(500);
+        result.Matches[0].VersionId.Should().BeNull("a model match pre-ticks the latest version");
+        result.Matches[0].MatchLabel.Should().Be("Model ID 500");
+        result.Matches[1].Model.Id.Should().Be(77);
+        result.Matches[1].VersionId.Should().Be(500);
+        result.Matches[1].MatchLabel.Should().Be("Version ID 500");
+    }
+
+    [Fact]
+    public async Task BareNumber_ThatIsOnlyAVersion_YieldsThatVersionsModel()
+    {
+        HasVersion(3175491, modelId: 2815542);
+        HasModel(Model(2815542, 3175491, 3000000));
+
+        var result = await Resolve("3175491");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].Model.Id.Should().Be(2815542);
+        result.Matches[0].VersionId.Should().Be(3175491);
+    }
+
+    [Fact]
+    public async Task BareNumber_ThatIsAVersionOfTheModelItNames_YieldsOneCard()
+    {
+        HasModel(Model(42, 43, 42));
+        HasVersion(42, modelId: 42);
+
+        var result = await Resolve("42");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task BareNumber_ThatIsNothing_SaysSo()
+    {
+        var result = await Resolve("123");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Be("Civitai has no model and no version with ID 123.");
+    }
+
+    [Fact]
+    public async Task VersionLink_FetchesTheModelOnce_AndPreticksTheLinkedVersion()
+    {
+        HasModel(Model(2815542, 3200000, 3175491));
+
+        var result = await Resolve("https://civitai.red/models/2815542/x?modelVersionId=3175491");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(3175491);
+        _client.Verify(c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never, "the model id in the link already names the model");
+    }
+
+    [Fact]
+    public async Task VersionLink_WhoseVersionTheModelNoLongerLists_FallsBackToTheLatest()
+    {
+        HasModel(Model(10, 11, 12));
+
+        var result = await Resolve("https://civitai.com/models/10?modelVersionId=999");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Review finding: the version endpoint knows a version the model listing does not (unpublished,
+    /// hidden). The card must not claim "Version ID N" while the latest is what gets ticked.
+    /// </summary>
+    [Fact]
+    public async Task VersionTheModelDoesNotList_IsNotClaimed_AndTheUserIsTold()
+    {
+        HasVersion(456, modelId: 77);
+        HasModel(Model(77, 600, 500));
+
+        var result = await Resolve("https://civitai.com/models?modelVersionId=456");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().BeNull();
+        result.Matches[0].MatchLabel.Should().NotContain("Version ID 456");
+        result.Message.Should().Contain("456").And.Contain("latest");
+    }
+
+    [Fact]
+    public async Task ModelLinkWithAVersionTheModelDoesNotList_TellsTheUser()
+    {
+        HasModel(Model(10, 11, 12));
+
+        var result = await Resolve("https://civitai.com/models/10?modelVersionId=999");
+
+        result.Message.Should().Contain("999").And.Contain("latest");
+    }
+
+    /// <summary>
+    /// Review finding: a bare id runs two requests; one failing (429 / 5xx) must not throw away the
+    /// card the other one found.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_OneRequestFailing_StillShowsWhatTheOtherFound()
+    {
+        HasModel(Model(2815542, 3175491));
+        _client.Setup(c => c.GetModelVersionAsync(2815542, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests));
+
+        var result = await Resolve("2815542");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].Model.Id.Should().Be(2815542);
+        result.Message.Should().Contain("version");
+    }
+
+    [Fact]
+    public async Task BareNumber_BothRequestsFailing_Throws()
+    {
+        _client.Setup(c => c.GetModelAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("down"));
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("down"));
+
+        var act = () => Resolve("5");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    /// <summary>
+    /// Review round 2: with no card, a lone "could not check whether 5 is also a version" note read as
+    /// if a model had been found. The status must say the model half came back empty.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_NoModel_AndTheVersionCheckFailing_SaysBoth()
+    {
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var result = await Resolve("5");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("no model with ID 5").And.Contain("version");
+        result.Message.Should().NotContain("also");
+    }
+
+    /// <summary>Review round 2: an archived match must not swallow the note that the other check failed.</summary>
+    [Fact]
+    public async Task BareNumber_ArchivedModel_KeepsTheFailedVersionCheckNote()
+    {
+        HasModel(Model(5, 6) with { Mode = CivitaiModelMode.Archived });
+        _client.Setup(c => c.GetModelVersionAsync(5, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        var result = await Resolve("5");
+
+        result.Message.Should().Contain("no longer available").And.Contain("version ID");
+    }
+
+    /// <summary>
+    /// Review round 3: the version GET succeeded; only loading its model failed. The note must not
+    /// claim the version-ID check failed.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_VersionFoundButItsModelFailing_BlamesTheModelFetch()
+    {
+        HasVersion(456, modelId: 123);
+        _client.Setup(c => c.GetModelAsync(123, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("service unavailable"));
+
+        var result = await Resolve("456");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("Version 456 belongs to model 123").And.Contain("could not be loaded");
+        result.Message.Should().NotContain("is a version ID");
+    }
+
+    /// <summary>Review round 3: an archived match beside a live one must still be mentioned.</summary>
+    [Fact]
+    public async Task BareNumber_ArchivedModelBesideALiveVersionMatch_IsMentioned()
+    {
+        HasModel(Model(123, 124) with { Mode = CivitaiModelMode.Archived });
+        HasVersion(123, modelId: 999);
+        HasModel(Model(999, 123));
+
+        var result = await Resolve("123");
+
+        result.Matches.Should().ContainSingle().Which.Model.Id.Should().Be(999);
+        result.Message.Should().Contain("Model 123").And.Contain("no longer available");
+    }
+
+    /// <summary>
+    /// Review round 4: version N belongs to model N, the model half loaded it, only the version
+    /// half's second load of the same model failed. Still one card, version N ticked, no false note.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_SameModel_SecondLoadFailing_StillMergesIntoOneCard()
+    {
+        var calls = 0;
+        _client.Setup(c => c.GetModelAsync(42, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++calls == 1
+                ? Task.FromResult<CivitaiModel?>(Model(42, 43, 42))
+                : Task.FromException<CivitaiModel?>(new HttpRequestException("rate limited")));
+        HasVersion(42, modelId: 42);
+
+        var result = await Resolve("42");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(42);
+        result.Matches[0].MatchLabel.Should().Be("Model + version ID 42");
+        result.Message.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Review round 5, the mirror of the test above: the model half failed, but the version half
+    /// loaded that same model. Still one merged card, and no "could not check whether 42 is a model
+    /// ID" note under a card that is model 42.
+    /// </summary>
+    [Fact]
+    public async Task BareNumber_SameModel_ModelHalfFailing_StillMergesIntoOneCard()
+    {
+        var calls = 0;
+        _client.Setup(c => c.GetModelAsync(42, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++calls == 1
+                ? Task.FromException<CivitaiModel?>(new HttpRequestException("rate limited"))
+                : Task.FromResult<CivitaiModel?>(Model(42, 43, 42)));
+        HasVersion(42, modelId: 42);
+
+        var result = await Resolve("42");
+
+        result.Matches.Should().ContainSingle();
+        result.Matches[0].VersionId.Should().Be(42);
+        result.Matches[0].MatchLabel.Should().Be("Model + version ID 42");
+        result.Message.Should().BeNull();
+    }
+
+    /// <summary>Review round 4: notes written for a match that is then dropped must not reach the status line.</summary>
+    [Fact]
+    public async Task BareNumber_DroppedMatch_LeavesNoNoteAboutItsPretick()
+    {
+        HasModel(Model(7, 8));
+        HasVersion(7, modelId: 99);
+        HasModel(Model(99) with { Name = "Empty model" }); // live, but no published versions
+
+        var result = await Resolve("7");
+
+        result.Matches.Should().ContainSingle().Which.Model.Id.Should().Be(7);
+        result.Message.Should().NotContain("ticked instead");
+    }
+
+    /// <summary>Review round 4: both matches unavailable — both are named.</summary>
+    [Fact]
+    public async Task BareNumber_BothMatchesUnavailable_NamesBoth()
+    {
+        HasModel(Model(7, 8) with { Mode = CivitaiModelMode.Archived });
+        HasVersion(7, modelId: 99);
+        HasModel(Model(99, 7) with { Mode = CivitaiModelMode.TakenDown });
+
+        var result = await Resolve("7");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("Model 7").And.Contain("Model 99");
+    }
+
+    /// <summary>Review round 4: a live model with no published versions is not "archived or taken down".</summary>
+    [Fact]
+    public async Task LiveModelWithoutVersions_SaysSo()
+    {
+        HasModel(Model(10));
+
+        var result = await Resolve("https://civitai.com/models/10");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("no published versions").And.NotContain("archived");
+    }
+
+    /// <summary>Review finding: the version was found; the empty result is its model's fault, not the version's.</summary>
+    [Fact]
+    public async Task VersionWhoseModelIsGone_BlamesTheModel()
+    {
+        HasVersion(456, modelId: 77);
+
+        var result = await Resolve("https://civitai.com/models?modelVersionId=456");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("model 77");
+    }
+
+    [Fact]
+    public async Task ArchivedModel_IsNotShown_AndSaysWhy()
+    {
+        HasModel(Model(10, 11) with { Mode = CivitaiModelMode.Archived });
+
+        var result = await Resolve("https://civitai.com/models/10");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("no longer available");
+    }
+
+    [Fact]
+    public async Task LinkToAnImagePage_SaysItIsNotAModelLink_WithoutCallingCivitai()
+    {
+        var result = await Resolve("https://civitai.com/images/123");
+
+        result.Matches.Should().BeEmpty();
+        result.Message.Should().Contain("does not point at a model");
+        _client.VerifyNoOtherCalls();
+    }
+}

@@ -5,6 +5,8 @@ using DiffusionNexus.UI.ImageEditor.Services;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
@@ -20,6 +22,9 @@ public partial class ImageEditorViewModel : ObservableObject
     private string? _currentImagePath;
     private string? _imageFileName;
     private bool _hasImage;
+    private bool _hasUnsavedChanges;
+    private bool _matchesOriginalFile;
+    private ImageEditorCore? _fileMatchSource;
     private string? _statusMessage;
     private int _imageWidth;
     private int _imageHeight;
@@ -58,16 +63,17 @@ public partial class ImageEditorViewModel : ObservableObject
     public bool IsImageMode => !_isVideoMode;
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image to a file path.
-    /// Returns true if the save succeeded.
+    /// Callback provided by the View to save the current editor image to a file path, in the
+    /// format its extension names, putting the given fill behind transparent areas (null: encode
+    /// as is). Returns true if the save succeeded.
     /// </summary>
-    public Func<string, bool>? SaveImageFunc { get; set; }
+    public Func<string, TransparencyFill?, bool>? SaveImageFunc { get; set; }
 
     /// <summary>
-    /// Callback provided by the View to save the current editor image as JPEG (no metadata).
-    /// Returns true if the save succeeded.
+    /// Callback provided by the View: whether the image as it would be saved has any pixel that
+    /// is not fully opaque, which a JPEG cannot store.
     /// </summary>
-    public Func<string, bool>? SaveJpegFunc { get; set; }
+    public Func<bool>? HasTransparencyFunc { get; set; }
 
     /// <summary>
     /// Callback provided by the View to save a layered TIFF to a file path.
@@ -105,6 +111,12 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Sub-ViewModel for outpainting tool.</summary>
     public OutpaintingViewModel Outpainting { get; }
 
+    /// <summary>Sub-ViewModel for the Canvas Extend tool.</summary>
+    public CanvasExtendViewModel CanvasExtend { get; }
+
+    /// <summary>Sub-ViewModel for the Move / Transform tool.</summary>
+    public LayerTransformViewModel LayerTransform { get; }
+
     /// <summary>Sub-ViewModel for image rating.</summary>
     public RatingViewModel Rating { get; }
 
@@ -123,6 +135,7 @@ public partial class ImageEditorViewModel : ObservableObject
                 HasImage = !string.IsNullOrEmpty(value);
                 ImageFileName = HasImage ? Path.GetFileName(value) : null;
                 LayerPanel.CurrentImagePath = value;
+                RefreshFileMatch();
                 NotifyCommandsCanExecuteChanged();
             }
         }
@@ -144,6 +157,29 @@ public partial class ImageEditorViewModel : ObservableObject
             if (SetProperty(ref _hasImage, value))
                 NotifyCommandsCanExecuteChanged();
         }
+    }
+
+    /// <summary>
+    /// Mirror of <see cref="ImageEditor.ImageEditorCore.IsDirty"/>, pushed by the view wiring.
+    /// Consulted by the Image Edit tab before anything replaces the canvas.
+    /// </summary>
+    public bool HasUnsavedChanges
+    {
+        get => _hasUnsavedChanges;
+        set => SetProperty(ref _hasUnsavedChanges, value);
+    }
+
+    /// <summary>
+    /// Whether the canvas is the file at <see cref="CurrentImagePath"/>
+    /// (<see cref="ImageEditor.ImageEditorCore.MatchedFilePath"/>, kept current by
+    /// <see cref="TrackFileMatch"/>), so a hand-off gives other tools that file rather than a
+    /// re-encoded copy (#586). Pending tool work and changes on disk are checked only at hand-off:
+    /// see <see cref="WouldHandOverOriginal"/>.
+    /// </summary>
+    public bool MatchesOriginalFile
+    {
+        get => _matchesOriginalFile;
+        private set => SetProperty(ref _matchesOriginalFile, value);
     }
 
     /// <summary>Status message to display.</summary>
@@ -280,7 +316,7 @@ public partial class ImageEditorViewModel : ObservableObject
 
     #region Commands
 
-    public IRelayCommand ClearImageCommand { get; }
+    public IAsyncRelayCommand ClearImageCommand { get; }
     public IRelayCommand ResetImageCommand { get; }
     public IRelayCommand ToggleCropToolCommand { get; }
     public IRelayCommand ApplyCropCommand { get; }
@@ -330,6 +366,13 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? SwitchCropAspectRatioRequested;
     public event Func<Task<SaveAsResult>>? SaveAsDialogRequested;
     public event Func<Task<bool>>? SaveOverwriteConfirmRequested;
+
+    /// <summary>
+    /// Asked before a user-initiated save writes a JPEG of an image with transparent areas: what
+    /// should fill them. Return null to cancel the save. Without a handler, the save goes ahead
+    /// unfilled.
+    /// </summary>
+    public event Func<Task<TransparencyFill?>>? JpegTransparencyPromptRequested;
     public event EventHandler? ZoomInRequested;
     public event EventHandler? ZoomOutRequested;
     public event EventHandler? ZoomToFitRequested;
@@ -340,6 +383,26 @@ public partial class ImageEditorViewModel : ObservableObject
     public event EventHandler? FlipHorizontalRequested;
     public event EventHandler? FlipVerticalRequested;
     public event EventHandler<string>? ImageSaved;
+
+    /// <summary>
+    /// Raised after a user-initiated Save / Save As / Export succeeded. The view answers it with
+    /// <see cref="ImageEditor.ImageEditorCore.MarkClean"/>, and after a save over the original with
+    /// <see cref="ImageEditor.ImageEditorCore.MarkSavedOverFile"/>. Temp exports (Send To…, outpaint
+    /// input) go through <see cref="SaveImageFunc"/> too and must not raise this.
+    /// </summary>
+    public event EventHandler<CanvasSavedEventArgs>? CanvasSaved;
+
+    /// <summary>
+    /// Asked before <see cref="ClearImageCommand"/> discards the canvas; return false to keep it.
+    /// The Image Edit tab wires this to its unsaved-changes prompt.
+    /// </summary>
+    public event Func<Task<bool>>? ClearConfirmRequested;
+
+    /// <summary>
+    /// Asks the view to decode each file and add it to the canvas as its own layer, in order.
+    /// Raised by the drop "Add as Layer" choice and the thumbnail context menu.
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? AddLayersFromFilesRequested;
 
     #endregion
 
@@ -356,7 +419,7 @@ public partial class ImageEditorViewModel : ObservableObject
     public ImageEditorViewModel(
         IDatasetEventAggregator? eventAggregator = null,
         IBackgroundRemovalService? backgroundRemovalService = null,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? comfyUiClientProvider = null,
         EditorServices? services = null,
         IFeatureReadinessService? readinessService = null,
         Domain.Services.UnifiedLogging.IUnifiedLogger? unifiedLogger = null,
@@ -367,14 +430,18 @@ public partial class ImageEditorViewModel : ObservableObject
         _services = services ?? EditorServiceFactory.Create();
 
         // Initialize sub-ViewModels
-        LayerPanel = new LayerPanelViewModel(() => HasImage);
+        LayerPanel = new LayerPanelViewModel(
+            () => HasImage,
+            message => _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor", message));
         ColorTools = new ColorToolsViewModel(() => HasImage, DeactivateOtherTools);
         DrawingTools = new DrawingToolsViewModel(() => HasImage, DeactivateOtherTools);
         TextTools = new TextToolViewModel(() => HasImage, DeactivateOtherTools);
         BackgroundRemoval = new BackgroundRemovalViewModel(() => HasImage, DeactivateOtherTools, backgroundRemovalService, downloadCoordinator);
         BackgroundFill = new BackgroundFillViewModel(() => HasImage, DeactivateOtherTools);
-        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiService, eventAggregator, readinessService);
-        Outpainting = new OutpaintingViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, comfyUiService, readinessService, unifiedLogger);
+        Inpainting = new InpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiClientProvider, eventAggregator, readinessService, unifiedLogger);
+        Outpainting = new OutpaintingViewModel(() => HasImage, DeactivateOtherTools, comfyUiClientProvider, readinessService, unifiedLogger, eventAggregator);
+        CanvasExtend = new CanvasExtendViewModel(() => HasImage, () => ImageWidth, () => ImageHeight, DeactivateOtherTools, unifiedLogger);
+        LayerTransform = new LayerTransformViewModel(() => HasImage, DeactivateOtherTools, unifiedLogger);
         Rating = new RatingViewModel(() => HasImage, eventAggregator);
 
         WireSubViewModelEvents();
@@ -388,7 +455,7 @@ public partial class ImageEditorViewModel : ObservableObject
         _services.Tools.ActiveToolChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
 
         // Core commands
-        ClearImageCommand = new RelayCommand(ExecuteClearImage, () => HasImage);
+        ClearImageCommand = new AsyncRelayCommand(ExecuteClearImageAsync, () => HasImage);
         ResetImageCommand = new RelayCommand(ExecuteResetImage, () => HasImage);
         ToggleCropToolCommand = new RelayCommand(ExecuteToggleCropTool, () => HasImage && !ColorTools.IsColorBalancePanelOpen);
         ApplyCropCommand = new RelayCommand(ExecuteApplyCrop, () => HasImage && IsCropToolActive);
@@ -477,6 +544,27 @@ public partial class ImageEditorViewModel : ObservableObject
             else _services.Tools.Deactivate(args.ToolId);
         };
 
+        CanvasExtend.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        CanvasExtend.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        CanvasExtend.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+        // "Open Crop" from the shrink hint: same path as the Crop toolbar toggle.
+        CanvasExtend.OpenCropRequested += (_, _) =>
+        {
+            if (!IsCropToolActive) ExecuteToggleCropTool();
+        };
+
+        LayerTransform.ToolStateChanged += (_, _) => NotifyToolCommandsCanExecuteChanged();
+        LayerTransform.StatusMessageChanged += (_, msg) => StatusMessage = msg;
+        LayerTransform.ToolToggled += (_, args) =>
+        {
+            if (args.IsActive) _services.Tools.Activate(args.ToolId);
+            else _services.Tools.Deactivate(args.ToolId);
+        };
+
         Rating.StatusMessageChanged += (_, msg) => StatusMessage = msg;
     }
 
@@ -512,6 +600,11 @@ public partial class ImageEditorViewModel : ObservableObject
 
         if (exceptToolId != ToolIds.Outpainting)
             Outpainting.ClosePanel();
+
+        if (exceptToolId != ToolIds.CanvasExtend)
+            CanvasExtend.ClosePanel();
+
+        if (exceptToolId != ToolIds.LayerTransform) LayerTransform.ClosePanel();
     }
 
     /// <summary>Closes all active tools and resets their state.</summary>
@@ -531,6 +624,8 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.ClosePanel();
         Inpainting.ClosePanel();
         Outpainting.ClosePanel();
+        CanvasExtend.ClosePanel();
+        LayerTransform.ClosePanel();
     }
 
     private void NotifyToolCommandsCanExecuteChanged()
@@ -552,6 +647,8 @@ public partial class ImageEditorViewModel : ObservableObject
         BackgroundFill.RefreshCommandStates();
         Inpainting.RefreshCommandStates();
         Outpainting.RefreshCommandStates();
+        CanvasExtend.RefreshCommandStates();
+        LayerTransform.RefreshCommandStates();
     }
 
     private void NotifyCommandsCanExecuteChanged()
@@ -607,6 +704,75 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Mirrors <see cref="ImageEditorCore.IsDirty"/> into <see cref="HasUnsavedChanges"/> until the
+    /// returned handle is disposed. Pushes the current state immediately, so re-wiring after a tab
+    /// switch cannot lose an edited canvas. This link is what every discard prompt depends on.
+    /// </summary>
+    public IDisposable TrackUnsavedChanges(ImageEditorCore core)
+    {
+        ArgumentNullException.ThrowIfNull(core);
+        EventHandler onDirtyChanged = (_, _) => HasUnsavedChanges = core.IsDirty;
+        core.IsDirtyChanged += onDirtyChanged;
+        HasUnsavedChanges = core.IsDirty;
+        return new Unsubscriber(() => core.IsDirtyChanged -= onDirtyChanged);
+    }
+
+    /// <summary>
+    /// Follows <paramref name="core"/>'s <see cref="ImageEditorCore.MatchedFilePath"/> into
+    /// <see cref="MatchesOriginalFile"/> and lets <see cref="PrepareHandOff"/> ask it for the
+    /// unchanged file, until the returned handle is disposed. Pushes the current state immediately,
+    /// like <see cref="TrackUnsavedChanges"/>.
+    /// </summary>
+    public IDisposable TrackFileMatch(ImageEditorCore core)
+    {
+        ArgumentNullException.ThrowIfNull(core);
+        EventHandler onMatchChanged = (_, _) => RefreshFileMatch();
+        core.MatchesFileChanged += onMatchChanged;
+        _fileMatchSource = core;
+        RefreshFileMatch();
+        return new Unsubscriber(() =>
+        {
+            core.MatchesFileChanged -= onMatchChanged;
+            if (ReferenceEquals(_fileMatchSource, core)) _fileMatchSource = null;
+            RefreshFileMatch();
+        });
+    }
+
+    /// <summary>
+    /// Compared with <see cref="CurrentImagePath"/>, not taken from the core alone: a failed load of
+    /// another image leaves the core on the previous file while this view model shows the new path.
+    /// </summary>
+    private void RefreshFileMatch()
+        => MatchesOriginalFile = FilePaths.AreSame(_fileMatchSource?.MatchedFilePath, CurrentImagePath);
+
+    /// <summary>
+    /// Whether a hand-off right now would give other tools <see cref="CurrentImagePath"/> itself:
+    /// <see cref="MatchesOriginalFile"/>, nothing pending in a tool, and the file unchanged on disk.
+    /// Cheap and side-effect free, unlike <see cref="PrepareHandOff"/>, whose copy commits pending work.
+    /// </summary>
+    public bool WouldHandOverOriginal()
+        => FilePaths.AreSame(_fileMatchSource?.GetUnchangedFilePath(), CurrentImagePath);
+
+    private void OnCanvasSaved(string? savedOverPath = null)
+    {
+        HasUnsavedChanges = false;
+        CanvasSaved?.Invoke(this, new CanvasSavedEventArgs(savedOverPath));
+    }
+
+    private sealed class Unsubscriber(Action unsubscribe) : IDisposable
+    {
+        private Action? _unsubscribe = unsubscribe;
+        public void Dispose() => Interlocked.Exchange(ref _unsubscribe, null)?.Invoke();
+    }
+
+    /// <summary>Requests one new layer per file on top of the current canvas.</summary>
+    public void RequestAddLayersFromFiles(IReadOnlyList<string> imagePaths)
+    {
+        if (imagePaths is null || imagePaths.Count == 0 || !HasImage) return;
+        AddLayersFromFilesRequested?.Invoke(this, imagePaths);
+    }
+
     /// <summary>Updates the image dimensions displayed in the ViewModel.</summary>
     public void UpdateDimensions(int width, int height)
     {
@@ -653,6 +819,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Called when Save As New completes successfully.</summary>
     public void OnSaveAsNewCompleted(string newPath, ImageRatingStatus rating)
     {
+        OnCanvasSaved();
         FileLogger.LogEntry($"newPath={newPath}, rating={rating}");
 
         try
@@ -681,8 +848,13 @@ public partial class ImageEditorViewModel : ObservableObject
     }
 
     /// <summary>Called when Save Overwrite completes successfully.</summary>
-    public void OnSaveOverwriteCompleted()
+    /// <param name="transparencyFilled">
+    /// True when transparent areas were filled for a JPEG: the file then differs from the canvas,
+    /// which keeps its transparency, so a hand-off still needs a copy.
+    /// </param>
+    public void OnSaveOverwriteCompleted(bool transparencyFilled = false)
     {
+        OnCanvasSaved(transparencyFilled ? null : CurrentImagePath);
         FileLogger.LogEntry($"CurrentImagePath={CurrentImagePath ?? "(null)"}");
 
         try
@@ -715,6 +887,7 @@ public partial class ImageEditorViewModel : ObservableObject
     /// <summary>Called when export completes successfully.</summary>
     public void OnExportCompleted(string exportPath)
     {
+        OnCanvasSaved();
         FileLogger.LogEntry($"exportPath={exportPath}");
         StatusMessage = $"Exported to: {Path.GetFileName(exportPath)}";
         FileLogger.LogExit();
@@ -742,6 +915,20 @@ public partial class ImageEditorViewModel : ObservableObject
     #endregion
 
     #region Command Implementations
+
+    private async Task ExecuteClearImageAsync()
+    {
+        if (ClearConfirmRequested is not null && !await ClearConfirmRequested.Invoke())
+            return;
+
+        ExecuteClearImage();
+    }
+
+    /// <summary>
+    /// Clears the canvas with no discard prompt. For callers that have no choice, e.g. the open
+    /// file was deleted from disk; the toolbar Clear button goes through <see cref="ClearImageCommand"/>.
+    /// </summary>
+    public void ClearImageWithoutPrompt() => ExecuteClearImage();
 
     private void ExecuteClearImage()
     {
@@ -824,6 +1011,12 @@ public partial class ImageEditorViewModel : ObservableObject
         var newPath = ResolveSavePath(result);
         if (newPath is null) return;
 
+        if (result.Destination != SaveAsDestination.LayeredTiff && DescribeUnwritableFormat(newPath) is { } unwritable)
+        {
+            StatusMessage = unwritable;
+            return;
+        }
+
         if (File.Exists(newPath))
         {
             var extension = result.Destination == SaveAsDestination.LayeredTiff
@@ -847,20 +1040,22 @@ public partial class ImageEditorViewModel : ObservableObject
             }
             else
             {
-                saved = SaveImageFunc(newPath);
+                var written = await WriteImageAsync(newPath);
+                if (written is null) return;
+                saved = written.Value.Saved;
             }
 
             if (saved)
             {
                 if (result.Destination != SaveAsDestination.LayeredTiff)
                 {
-                    SaveRatingToFile(newPath, result.Rating);
+                    ImageRatingStore.Shared.Set(newPath, result.Rating);
                 }
                 OnSaveAsNewCompleted(newPath, result.Rating);
             }
             else
             {
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(newPath);
             }
         }
         catch (Exception ex)
@@ -870,9 +1065,43 @@ public partial class ImageEditorViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// The status line after a save or export that returned false: why the format cannot be
+    /// written (<see cref="DescribeUnwritableFormat"/>), otherwise <paramref name="otherwise"/>.
+    /// </summary>
+    internal static string DescribeSaveFailure(string path, string otherwise = "Failed to save image.")
+        => DescribeUnwritableFormat(path) ?? otherwise;
+
+    /// <summary>
+    /// Why the canvas cannot be saved under <paramref name="path"/>'s extension, or null. Save, Save
+    /// As New beside the original and Export keep the original's extension, and GIF, which the
+    /// editor opens, has no encoder. (A TIFF is written as a layered TIFF by the editor core.)
+    /// </summary>
+    internal static string? DescribeUnwritableFormat(string path)
+        => string.Equals(Path.GetExtension(path), ".gif", StringComparison.OrdinalIgnoreCase)
+            ? "Can't save GIF files: there is no GIF encoder. Use Save / Export > Export as PNG instead."
+            : null;
+
+    /// <summary>
+    /// Why Save cannot write over <paramref name="path"/>, or null. Asked before the confirmation, so
+    /// nobody confirms a save that cannot happen: the format cannot be written, or an animation
+    /// would be replaced by the one frame the editor shows.
+    /// </summary>
+    internal static string? DescribeOverwriteRefusal(string path)
+        => DescribeUnwritableFormat(path)
+            ?? (SkiaPixels.IsAnimated(path)
+                ? $"Can't save over {Path.GetFileName(path)}: it is animated, and saving would keep only the first frame. Use Save / Export > Export as PNG instead."
+                : null);
+
     private async Task ExecuteSaveOverwriteAsync()
     {
         if (SaveImageFunc is null) return;
+
+        if (CurrentImagePath is not null && DescribeOverwriteRefusal(CurrentImagePath) is { } refusal)
+        {
+            StatusMessage = refusal;
+            return;
+        }
 
         if (SaveOverwriteConfirmRequested is not null)
         {
@@ -882,10 +1111,13 @@ public partial class ImageEditorViewModel : ObservableObject
 
         try
         {
-            if (SaveImageFunc(CurrentImagePath!))
-                OnSaveOverwriteCompleted();
+            var written = await WriteImageAsync(CurrentImagePath!);
+            if (written is null) return;
+
+            if (written.Value.Saved)
+                OnSaveOverwriteCompleted(written.Value.Filled);
             else
-                StatusMessage = "Failed to save image.";
+                StatusMessage = DescribeSaveFailure(CurrentImagePath!);
         }
         catch (Exception ex)
         {
@@ -898,19 +1130,35 @@ public partial class ImageEditorViewModel : ObservableObject
     {
         if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
 
+        // The export keeps the original's format: when that cannot be written, say so before the picker.
+        if (DescribeUnwritableFormat(CurrentImagePath) is { } unwritable)
+        {
+            StatusMessage = unwritable;
+            return;
+        }
+
         var extension = Path.GetExtension(CurrentImagePath);
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export{extension}";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
         try
         {
-            if (SaveImageFunc(exportPath))
+            // The export keeps the original's format (EnsureExtension below), so a JPEG original
+            // is known to become a JPEG before the picker opens.
+            var (cancelled, fill) = IsJpegTarget(CurrentImagePath)
+                ? await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}")
+                : default;
+            if (cancelled) return;
+
+            var exportPath = await ShowSaveFileDialogFunc("Export Image", suggestedName, $"*{extension}");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, extension);
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
-                StatusMessage = "Failed to export image.";
+                StatusMessage = DescribeSaveFailure(exportPath, "Failed to export image.");
         }
         catch (Exception ex)
         {
@@ -928,9 +1176,11 @@ public partial class ImageEditorViewModel : ObservableObject
         var exportPath = await ShowSaveFileDialogFunc("Export as PNG", suggestedName, "*.png");
         if (string.IsNullOrEmpty(exportPath)) return;
 
+        exportPath = EnsureExtension(exportPath, ".png");
+
         try
         {
-            if (SaveImageFunc(exportPath))
+            if (SaveImageFunc(exportPath, null))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export PNG.";
@@ -943,17 +1193,22 @@ public partial class ImageEditorViewModel : ObservableObject
 
     private async Task ExecuteExportAsJpegAsync()
     {
-        if (CurrentImagePath is null || SaveJpegFunc is null || ShowSaveFileDialogFunc is null) return;
+        if (CurrentImagePath is null || SaveImageFunc is null || ShowSaveFileDialogFunc is null) return;
 
         var fileName = Path.GetFileNameWithoutExtension(CurrentImagePath);
         var suggestedName = $"{fileName}_export.jpg";
 
-        var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
-        if (string.IsNullOrEmpty(exportPath)) return;
-
         try
         {
-            if (SaveJpegFunc(exportPath))
+            var (cancelled, fill) = await AskJpegFillAsync($"JPEG export of {Path.GetFileName(CurrentImagePath)}");
+            if (cancelled) return;
+
+            var exportPath = await ShowSaveFileDialogFunc("Export as JPEG", suggestedName, "*.jpg");
+            if (string.IsNullOrEmpty(exportPath)) return;
+
+            exportPath = EnsureExtension(exportPath, ".jpg", ".jpeg");
+
+            if (SaveImageFunc(exportPath, fill))
                 OnExportCompleted(exportPath);
             else
                 StatusMessage = "Failed to export JPEG.";
@@ -974,6 +1229,8 @@ public partial class ImageEditorViewModel : ObservableObject
         var exportPath = await ShowSaveFileDialogFunc("Export as Layered TIFF", suggestedName, "*.tif");
         if (string.IsNullOrEmpty(exportPath)) return;
 
+        exportPath = EnsureExtension(exportPath, ".tif", ".tiff");
+
         try
         {
             if (SaveLayeredTiffFunc(exportPath))
@@ -985,6 +1242,176 @@ public partial class ImageEditorViewModel : ObservableObject
         {
             StatusMessage = $"Error exporting layered TIFF: {ex.Message}";
         }
+    }
+
+    /// <summary>
+    /// Writes the flattened image to <paramref name="path"/> for Save or Save as New, asking first
+    /// what should fill transparent areas when the file is a JPEG (<see cref="AskJpegFillAsync"/>).
+    /// Their own dialog comes first: Save as New's is where Layered TIFF, which keeps transparency,
+    /// can still be picked, so the format is only known once it closes.
+    /// </summary>
+    /// <param name="path">The file to write; its extension decides the format.</param>
+    /// <returns>
+    /// Whether the write succeeded and whether transparent areas were filled, or null when the user
+    /// cancelled at the prompt.
+    /// </returns>
+    private async Task<(bool Saved, bool Filled)?> WriteImageAsync(string path)
+    {
+        if (SaveImageFunc is null) return (false, false);
+
+        var (cancelled, fill) = IsJpegTarget(path)
+            ? await AskJpegFillAsync($"JPEG save of {Path.GetFileName(path)}")
+            : default;
+        if (cancelled) return null;
+
+        return (SaveImageFunc(path, fill), fill is not null);
+    }
+
+    /// <summary>
+    /// Before a JPEG is written: JPEG cannot store transparency and its encoder turns transparent
+    /// areas black (#584), so when the image has any, asks what should fill them. Exports ask this
+    /// before their folder picker, since it is about what gets saved, not where.
+    /// </summary>
+    /// <param name="write">What is being written, for the log ("JPEG export of photo.jpg").</param>
+    /// <returns>
+    /// Cancelled when the user cancelled; otherwise the chosen fill, or null when nothing needs
+    /// filling or nobody answers the prompt.
+    /// </returns>
+    private async Task<(bool Cancelled, TransparencyFill? Fill)> AskJpegFillAsync(string write)
+    {
+        // The cheap check first: the transparency check may flatten the whole canvas.
+        if (JpegTransparencyPromptRequested is null || HasTransparencyFunc?.Invoke() != true)
+            return (false, null);
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: the image has transparent areas, asking what fills them");
+
+        var fill = await JpegTransparencyPromptRequested.Invoke();
+        if (fill is null)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"{write} cancelled at the transparency prompt");
+            return (true, null);
+        }
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"{write}: filling transparent areas with {fill}");
+        return (false, fill);
+    }
+
+    /// <summary>
+    /// Picks the file another tool (Upscale, Add To…, Send To…) receives for the canvas. While the
+    /// canvas is the file at <see cref="CurrentImagePath"/>, that file itself: a copy would compress
+    /// a JPEG again, drop the original's metadata and arrive under a generated name (#586).
+    /// Otherwise a temp copy of the canvas (<see cref="ExportHandOffCopy"/>), so the destination
+    /// gets the edits; when that copy cannot be written, the file on disk as before. A video is
+    /// handed over as its file: the canvas is not where it is shown. Nothing is handed over when the
+    /// canvas belongs to another file (this one failed to load), since a copy would give out the
+    /// previous image under this one's name.
+    /// </summary>
+    /// <param name="purpose">A short tag for a temp copy's file name, such as "upscale".</param>
+    /// <returns>
+    /// The file to hand over, or null when no image is loaded or the canvas is not this image
+    /// (<see cref="StatusMessage"/> then says why).
+    /// </returns>
+    public ImageHandOff? PrepareHandOff(string purpose)
+    {
+        if (string.IsNullOrEmpty(CurrentImagePath)) return null;
+
+        var name = Path.GetFileName(CurrentImagePath);
+        if (IsVideoMode)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over the video {name} itself ({purpose})");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        if (_fileMatchSource is { } core && !FilePaths.AreSame(core.CurrentImagePath, CurrentImagePath))
+        {
+            StatusMessage = $"{name} is not loaded in the editor, so there is nothing to hand over.";
+            _unifiedLogger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Not handing anything over ({purpose}): the canvas holds {core.CurrentImagePath ?? "no file"}, not {name}, which did not load");
+            return null;
+        }
+
+        if (WouldHandOverOriginal())
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {name} itself ({purpose}): the canvas is unchanged since it was loaded or saved");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        var reason = MatchesOriginalFile
+            ? "a tool has uncommitted work or the file changed on disk"
+            : "the canvas has edits the file does not";
+        var copy = ExportHandOffCopy(purpose);
+        if (copy is null)
+        {
+            _unifiedLogger?.Warn(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Could not write a copy of the canvas ({purpose}); handing over {name} as it is on disk");
+            return new ImageHandOff(CurrentImagePath, IsCopy: false);
+        }
+
+        _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+            $"Handing over a copy of the canvas ({purpose}) instead of {name}: {reason}");
+        return new ImageHandOff(copy, IsCopy: true);
+    }
+
+    /// <summary>
+    /// Writes the canvas to a temp file for another tool, so the destination gets the edits rather
+    /// than the file on disk. The copy keeps the original's format, unless that is JPEG and the
+    /// canvas has transparency, which a JPEG would turn black, or a format the app cannot write
+    /// (GIF): then it is a PNG. Nobody is asked, since the copy is a hand-off, not the user's file (#584).
+    /// </summary>
+    /// <param name="purpose">A short tag for the temp file name, such as "upscale".</param>
+    /// <returns>The temp file, or null when there is nothing to export or the export failed.</returns>
+    private string? ExportHandOffCopy(string purpose)
+    {
+        if (CurrentImagePath is null || SaveImageFunc is null) return null;
+
+        var extension = Path.GetExtension(CurrentImagePath);
+        if (IsJpegTarget(CurrentImagePath) && HasTransparencyFunc?.Invoke() == true)
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: the canvas has transparent areas a JPEG would turn black");
+            extension = ".png";
+        }
+        else if (!ImageFileWriter.CanWrite(CurrentImagePath))
+        {
+            _unifiedLogger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditor",
+                $"Handing over {Path.GetFileName(CurrentImagePath)} as PNG: its format cannot be written");
+            extension = ".png";
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{purpose}_{Guid.NewGuid()}{extension}");
+        return SaveImageFunc(tempPath, null) ? tempPath : null;
+    }
+
+    /// <summary>Whether <paramref name="path"/> is encoded as JPEG, by the same rule the encoder uses.</summary>
+    private bool IsJpegTarget(string path)
+        => _services.Document.GetFormatFromExtension(path) == SKEncodedImageFormat.Jpeg;
+
+    /// <summary>
+    /// Ensures an export path carries an extension matching the format the command exports.
+    /// The save picker sets no default extension, so it returns exactly what the user typed —
+    /// clearing the suggested ".jpg" would otherwise produce an extensionless file that neither
+    /// Windows nor the gallery recognises.
+    /// </summary>
+    /// <param name="path">The path the user chose.</param>
+    /// <param name="accepted">
+    /// Extensions that already match the format, most-preferred first. The first is appended when
+    /// none match. Appended rather than swapped so names that merely contain a dot
+    /// ("render v1.2") are not truncated.
+    /// </param>
+    private static string EnsureExtension(string path, params string[] accepted)
+    {
+        foreach (var extension in accepted)
+        {
+            if (path.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+                return path;
+        }
+
+        return path + accepted[0];
     }
 
     /// <summary>Resolves the full save path from a SaveAsResult, creating directories as needed.</summary>
@@ -1054,27 +1481,6 @@ public partial class ImageEditorViewModel : ObservableObject
         return Path.Combine(datasetFolderPath, result.FileName + extension);
     }
 
-    /// <summary>Saves the rating to a .rating file next to the image.</summary>
-    private static void SaveRatingToFile(string imagePath, ImageRatingStatus rating)
-    {
-        try
-        {
-            var ratingFilePath = Path.ChangeExtension(imagePath, ".rating");
-
-            if (rating == ImageRatingStatus.Unrated)
-            {
-                if (File.Exists(ratingFilePath))
-                    File.Delete(ratingFilePath);
-            }
-            else
-            {
-                File.WriteAllText(ratingFilePath, rating.ToString());
-            }
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
-    }
-
     private void ExecuteZoomIn() { _services.Viewport.ZoomIn(); ZoomInRequested?.Invoke(this, EventArgs.Empty); }
     private void ExecuteZoomOut() { _services.Viewport.ZoomOut(); ZoomOutRequested?.Invoke(this, EventArgs.Empty); }
     private void ExecuteZoomToFit() { _services.Viewport.ZoomToFit(); ZoomToFitRequested?.Invoke(this, EventArgs.Empty); }
@@ -1098,27 +1504,34 @@ public partial class ImageEditorViewModel : ObservableObject
             new NavigateToCaptioningEventArgs { ImagePaths = [path] }));
 
     /// <summary>
-    /// Exports the current edited image to a temp file (so the destination receives the edits,
-    /// not the original on disk) and hands the resulting path to <paramref name="publish"/>.
-    /// Falls back to the on-disk path when no export function is wired or the export fails.
+    /// Hands <paramref name="publish"/> the file <see cref="PrepareHandOff"/> picks: the original
+    /// while the canvas is unchanged, otherwise a temp copy with the edits.
     /// </summary>
     private void SendCurrentImageTo(string suffix, Action<string> publish)
     {
-        if (string.IsNullOrEmpty(CurrentImagePath)) return;
-
-        var pathToSend = CurrentImagePath;
-        if (SaveImageFunc is not null)
-        {
-            var ext = Path.GetExtension(CurrentImagePath);
-            var tempPath = Path.Combine(Path.GetTempPath(), $"DiffusionNexus_{suffix}_{Guid.NewGuid()}{ext}");
-            if (SaveImageFunc(tempPath))
-                pathToSend = tempPath;
-        }
-
-        publish(pathToSend);
+        if (PrepareHandOff(suffix) is { } handOff)
+            publish(handOff.Path);
     }
 
     #endregion
+}
+
+/// <summary>The file a hand-off gives another tool for the editor's canvas.</summary>
+/// <param name="Path">The file to give the tool.</param>
+/// <param name="IsCopy">
+/// True for a temp copy the caller may delete once the tool is done with it; false for the user's
+/// own file, which must never be deleted.
+/// </param>
+public sealed record ImageHandOff(string Path, bool IsCopy);
+
+/// <summary>Arguments of <see cref="ImageEditorViewModel.CanvasSaved"/>.</summary>
+/// <param name="SavedOverPath">
+/// The loaded file when the save wrote the canvas over it exactly (no transparency fill), so the
+/// canvas equals that file again; otherwise null.
+/// </param>
+public sealed class CanvasSavedEventArgs(string? savedOverPath) : EventArgs
+{
+    public string? SavedOverPath { get; } = savedOverPath;
 }
 
 /// <summary>Event arguments for the "Generate and Compare" inpainting result.</summary>

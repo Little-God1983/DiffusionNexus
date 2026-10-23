@@ -3,7 +3,7 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services.ConfigurationChecker.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
@@ -24,8 +24,8 @@ namespace DiffusionNexus.UI.Services.ConfigurationChecker;
 /// </para>
 ///
 /// <para>
-/// Implemented as a singleton that resolves scoped dependencies (<see cref="IUnitOfWork"/>,
-/// <see cref="IConfigurationRepository"/>) per call via <see cref="IServiceProvider"/>.
+/// Implemented as a singleton that resolves its dependencies (the scoped <see cref="IUnitOfWork"/>,
+/// the singleton <see cref="ICatalog"/>) per call via <see cref="IServiceProvider"/>.
 /// </para>
 /// </summary>
 public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationChecker
@@ -82,18 +82,18 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
             using var scope = _serviceProvider.CreateScope();
             var sp = scope.ServiceProvider;
 
-            var configurationRepository = sp.GetRequiredService<IConfigurationRepository>();
-            var configuration = await configurationRepository.GetByIdAsync(workloadId, cancellationToken);
+            var catalog = sp.GetRequiredService<ICatalog>();
+            var configuration = await catalog.GetWorkloadAsync(workloadId, cancellationToken);
 
             if (configuration is null)
             {
-                LogWarn($"Workload {workloadId} not found in SDK database");
+                LogWarn($"Workload {workloadId} not found in the workload catalog");
                 return new WorkloadCheckSummary
                 {
                     WorkloadId = workloadId,
                     WorkloadName = workloadId.ToString(),
                     IsFullyInstalled = false,
-                    MissingItems = [$"Workload {workloadId} is not in the Installer SDK database."],
+                    MissingItems = [$"Workload {workloadId} is not in the workload catalog."],
                 };
             }
 
@@ -117,6 +117,7 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
             // installed for the user's purposes.
             var nodeInstalled = new Dictionary<Guid, (bool installed, string name)>();
             var modelInstalled = new Dictionary<Guid, (bool installed, string name)>();
+            var modelPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             LogInfo(
                 $"Workload '{configuration.Name}': checking against {comfyInstallPaths.Count} ComfyUI install(s): " +
@@ -156,6 +157,8 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
 
                 foreach (var model in result.ModelResults)
                 {
+                    if (model.IsInstalled && !string.IsNullOrEmpty(model.FoundAtPath))
+                        modelPaths.TryAdd(model.Name, model.FoundAtPath);
                     LogDebug(
                         $"  model '{model.Name}' installed={model.IsInstalled} " +
                         $"placeholder={model.IsPlaceholder} " +
@@ -190,7 +193,8 @@ public sealed class WorkloadInstallationCheckerAdapter : IWorkloadInstallationCh
                 WorkloadName = configuration.Name,
                 IsFullyInstalled = isFullyInstalled,
                 MissingItems = missingItems,
-                CheckedAgainstPath = string.Join(" | ", comfyInstallPaths)
+                CheckedAgainstPath = string.Join(" | ", comfyInstallPaths),
+                ModelPaths = modelPaths
             };
         }
         catch (OperationCanceledException)

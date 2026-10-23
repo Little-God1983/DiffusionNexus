@@ -5,8 +5,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Engine;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using DiffusionNexus.Civitai;
@@ -16,18 +18,22 @@ namespace DiffusionNexus.UI.ViewModels;
 /// <summary>
 /// ViewModel for the application settings view.
 /// </summary>
-public partial class SettingsViewModel : BusyViewModelBase
+public partial class SettingsViewModel : BusyViewModelBase, IModuleActivationAware
 {
     private readonly IAppSettingsService _settingsService;
     private readonly ISecureStorage _secureStorage;
     private readonly IDatasetBackupService? _backupService;
     private readonly IBackupScheduler? _backupScheduler;
     private readonly IDatasetEventAggregator? _eventAggregator;
+    private readonly IEngineRootResolver? _engineRootResolver;
+    private readonly IManagedComfyUiEngine? _engine;
+    private readonly Func<string?, bool> _looksInstalled;
     private readonly IActivityLogService? _activityLogService;
     private readonly ISettingsExportService? _exportService;
     private readonly ICivitaiBaseModelCatalog? _baseModelCatalog;
     private readonly IUiScheduler _uiScheduler;
     private bool _isSaving;
+    private int _engineStatusGeneration;
 
     #region Observable Properties
 
@@ -87,6 +93,45 @@ public partial class SettingsViewModel : BusyViewModelBase
     /// </summary>
     public IReadOnlyList<int> AvailableLoraUpdateCheckStalenessDays { get; } =
         new[] { 0, 1, 3, 7, 14, 30 };
+
+    /// <summary>
+    /// Days before the bulk metadata sync re-checks a model whose identity attempt
+    /// found nothing. Mirrors <see cref="AppSettings.SyncNotIdentifiedRetryDays"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncNotIdentifiedRetryDays = 30;
+
+    /// <summary>
+    /// Days before the bulk metadata sync retries a model whose last attempt errored.
+    /// Mirrors <see cref="AppSettings.SyncErrorRetryDays"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncErrorRetryDays = 1;
+
+    /// <summary>
+    /// How many thumbnail CDN downloads the bulk metadata sync runs in parallel.
+    /// Mirrors <see cref="AppSettings.SyncThumbnailConcurrency"/>.
+    /// </summary>
+    [ObservableProperty]
+    private int _syncThumbnailConcurrency = 4;
+
+    /// <summary>Selectable windows (days) before a not-identified model is re-checked.</summary>
+    public IReadOnlyList<int> AvailableSyncNotIdentifiedRetryDays { get; } = new[] { 7, 14, 30, 60, 90 };
+
+    /// <summary>Selectable windows (days) before an errored attempt is retried.</summary>
+    public IReadOnlyList<int> AvailableSyncErrorRetryDays { get; } = new[] { 1, 3, 7 };
+
+    /// <summary>Parallel thumbnail downloads during a bulk sync.</summary>
+    public IReadOnlyList<int> AvailableSyncThumbnailConcurrency { get; } = new[] { 1, 2, 4, 6, 8 };
+
+    /// <summary>
+    /// The <see cref="AppSettings.LastLibrarySyncAt"/> value read at load time. Not
+    /// user-editable on this page (Task 5's flow stamps it directly via
+    /// <c>UpdateLastLibrarySyncAtAsync</c>), but the save command still builds a
+    /// detached <c>AppSettings</c> snapshot — without carrying this through, every
+    /// settings save would silently null the stamp back out.
+    /// </summary>
+    private DateTimeOffset? _loadedLastLibrarySyncAt;
 
     /// <summary>
     /// Default source folder for LoRA Sort.
@@ -172,6 +217,10 @@ public partial class SettingsViewModel : BusyViewModelBase
     [ObservableProperty]
     private bool _isComfyUiServerOnline;
 
+    /// <summary>Bound to the ComfyUI Server expander; set by navigation from the editor's "change" link.</summary>
+    [ObservableProperty]
+    private bool _isComfyUiServerExpanded;
+
     /// <summary>
     /// Whether a ComfyUI connection test is in progress.
     /// </summary>
@@ -256,8 +305,15 @@ public partial class SettingsViewModel : BusyViewModelBase
         ISettingsExportService? exportService = null,
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
         IBackupScheduler? backupScheduler = null,
-        IUiScheduler? uiScheduler = null)
+        IUiScheduler? uiScheduler = null,
+        IEngineRootResolver? engineRootResolver = null,
+        IManagedComfyUiEngine? engine = null,
+        Func<string?, bool>? looksInstalled = null,
+        Services.Catalog.ICatalogUpdateCoordinator? catalogUpdates = null)
     {
+        _engineRootResolver = engineRootResolver;
+        _engine = engine;
+        _looksInstalled = looksInstalled ?? ManagedEngineLocator.LooksInstalled;
         _settingsService = settingsService;
         _secureStorage = secureStorage;
         _backupService = backupService;
@@ -267,19 +323,26 @@ public partial class SettingsViewModel : BusyViewModelBase
         _exportService = exportService;
         _baseModelCatalog = baseModelCatalog;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        if (catalogUpdates is not null) Catalog = new CatalogSettingsViewModel(catalogUpdates, _uiScheduler);
 
         // Subscribe to settings changes from other components (e.g., Installer Manager adding galleries)
         if (_eventAggregator is not null)
         {
             _eventAggregator.SettingsSaved += OnExternalSettingsSaved;
+            // The Engine was installed or features were installed into it: refresh its status line.
+            _eventAggregator.EngineChanged += (_, _) => _uiScheduler.Post(() => _ = RefreshEngineStatusAsync());
         }
     }
+
+    /// <summary>Settings → Catalog (#618). Null in the designer and in tests that do not pass a coordinator.</summary>
+    public CatalogSettingsViewModel? Catalog { get; }
 
     /// <summary>
     /// Design-time constructor.
     /// </summary>
     public SettingsViewModel()
     {
+        _looksInstalled = ManagedEngineLocator.LooksInstalled;
         _settingsService = null!;
         _secureStorage = null!;
         _backupService = null;
@@ -320,12 +383,19 @@ public partial class SettingsViewModel : BusyViewModelBase
 
             // Map settings to view model
             ComfyUiServerUrl = settings.ComfyUiServerUrl;
+            ComfyUiServerMode = settings.ComfyUiServerMode;
+            _storedServerMode = settings.ComfyUiServerMode;
+            OnPropertyChanged(nameof(SelectedServerModeOption));
             ShowNsfw = settings.ShowNsfw;
             GenerateVideoThumbnails = settings.GenerateVideoThumbnails;
             ShowVideoPreview = settings.ShowVideoPreview;
             UseForgeStylePrompts = settings.UseForgeStylePrompts;
             MergeLoraSources = settings.MergeLoraSources;
             LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
+            SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
+            SyncErrorRetryDays = settings.SyncErrorRetryDays;
+            SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency;
+            _loadedLastLibrarySyncAt = settings.LastLibrarySyncAt;
             LoraSortSourcePath = settings.LoraSortSourcePath;
             LoraSortTargetPath = settings.LoraSortTargetPath;
             DatasetStoragePath = settings.DatasetStoragePath;
@@ -406,8 +476,14 @@ public partial class SettingsViewModel : BusyViewModelBase
             StatusMessage = null;
         }, "Loading settings...");
 
-        // Check ComfyUI server connectivity in the background
-        _ = TestComfyUiConnectionAsync();
+        // Not awaited, like the connection test below: every module's startup waits on this load.
+        // The refresh catches its own errors.
+        EngineStatusRefresh = RefreshEngineStatusAsync();
+
+        // Check ComfyUI server connectivity in the background — only the custom URL; in Engine
+        // mode the stored URL is stale and pinging it would show a meaningless status.
+        if (IsCustomUrlMode)
+            _ = TestComfyUiConnectionAsync();
 
         // Compute the ⚠ folder-presence badges off-thread; never gates startup.
         _ = RefreshFolderPresenceAsync();
@@ -419,6 +495,18 @@ public partial class SettingsViewModel : BusyViewModelBase
     private async Task ReloadCollectionsAsync()
     {
         var settings = await _settingsService.GetSettingsAsync();
+
+        // Another part of the app may have saved the Server (the Engine install's question, #612).
+        // Take it, or the next Save here would write the old one back; but not over a choice made in
+        // the dropdown and not saved yet, and without counting it as an unsaved change.
+        if (ComfyUiServerMode == _storedServerMode && ComfyUiServerMode != settings.ComfyUiServerMode)
+        {
+            var hadChanges = HasChanges;
+            ComfyUiServerMode = settings.ComfyUiServerMode;
+            OnPropertyChanged(nameof(SelectedServerModeOption));
+            HasChanges = hadChanges;
+        }
+        _storedServerMode = settings.ComfyUiServerMode;
 
         // Reload LoRA sources — also unhook FavoriteSelected so we don't leak
         // subscriptions on every reload.
@@ -604,8 +692,14 @@ public partial class SettingsViewModel : BusyViewModelBase
             {
                 Serilog.Log.Error(ex, "Failed to reload settings after external change");
             }
+
+            // e.g. the Engine was just installed: the status line must not keep saying "Not installed".
+            await RefreshEngineStatusAsync();
         });
     }
+
+    /// <summary>Settings was navigated to: the Engine may have been installed or started meanwhile.</summary>
+    public void OnModuleActivated() => _ = RefreshEngineStatusAsync();
 
     /// <summary>
     /// Saves settings to the database.
@@ -633,12 +727,17 @@ public partial class SettingsViewModel : BusyViewModelBase
                     ? null
                     : _secureStorage.Encrypt(HuggingfaceApiKey),
                 ComfyUiServerUrl = ComfyUiServerUrl,
+                ComfyUiServerMode = ComfyUiServerMode,
                 ShowNsfw = ShowNsfw,
                 GenerateVideoThumbnails = GenerateVideoThumbnails,
                 ShowVideoPreview = ShowVideoPreview,
                 UseForgeStylePrompts = UseForgeStylePrompts,
                 MergeLoraSources = MergeLoraSources,
                 LoraUpdateCheckStalenessDays = LoraUpdateCheckStalenessDays,
+                SyncNotIdentifiedRetryDays = SyncNotIdentifiedRetryDays,
+                SyncErrorRetryDays = SyncErrorRetryDays,
+                SyncThumbnailConcurrency = SyncThumbnailConcurrency,
+                LastLibrarySyncAt = _loadedLastLibrarySyncAt,
                 LoraSortSourcePath = LoraSortSourcePath,
                 LoraSortTargetPath = LoraSortTargetPath,
                 DatasetStoragePath = DatasetStoragePath,
@@ -1444,6 +1543,9 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnUseForgeStylePromptsChanged(bool value) => HasChanges = true;
     partial void OnMergeLoraSourcesChanged(bool value) => HasChanges = true;
     partial void OnLoraUpdateCheckStalenessDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncNotIdentifiedRetryDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncErrorRetryDaysChanged(int value) => HasChanges = true;
+    partial void OnSyncThumbnailConcurrencyChanged(int value) => HasChanges = true;
     partial void OnLoraSortSourcePathChanged(string? value) => HasChanges = true;
     partial void OnLoraSortTargetPathChanged(string? value) => HasChanges = true;
     partial void OnDatasetStoragePathChanged(string? value)
@@ -1489,10 +1591,99 @@ public partial class SettingsViewModel : BusyViewModelBase
     partial void OnMaxBackupsChanged(int value) => HasChanges = true;
     partial void OnComfyUiServerUrlChanged(string value) => HasChanges = true;
 
+    /// <summary>One entry of the ComfyUI Server dropdown.</summary>
+    public sealed record ServerModeOption(ComfyUiServerMode Mode, string DisplayName);
+
+    /// <summary>Dropdown entries, in display order.</summary>
+    public IReadOnlyList<ServerModeOption> ServerModeOptions { get; } =
+    [
+        new(ComfyUiServerMode.Engine, "Diffusion Nexus Engine"),
+        new(ComfyUiServerMode.CustomUrl, "Custom URL"),
+    ];
+
+    /// <summary>Which ComfyUI runs Inpaint, Outpaint (also with Vision) and Batch Upscale.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsCustomUrlMode))]
+    [NotifyCanExecuteChangedFor(nameof(TestComfyUiConnectionCommand))]
+    private ComfyUiServerMode _comfyUiServerMode = ComfyUiServerMode.Engine;
+
+    // The Server as last read from or saved to the database.
+    private ComfyUiServerMode _storedServerMode = ComfyUiServerMode.Engine;
+
+    /// <summary>The URL row and Test Connection are only active for a custom URL.</summary>
+    public bool IsCustomUrlMode => ComfyUiServerMode == ComfyUiServerMode.CustomUrl;
+
+    /// <summary>Bound to the dropdown.</summary>
+    public ServerModeOption? SelectedServerModeOption
+    {
+        get => ServerModeOptions.FirstOrDefault(o => o.Mode == ComfyUiServerMode);
+        set
+        {
+            if (value is not null && value.Mode != ComfyUiServerMode)
+            {
+                ComfyUiServerMode = value.Mode;
+                OnPropertyChanged();
+                // The Engine may have been installed or started since the page was loaded.
+                _ = RefreshEngineStatusAsync();
+
+                // Load skips the connection test in Engine mode, so the dot shown now would stay
+                // "offline". Same fire-and-forget test load runs in Custom URL mode.
+                if (IsCustomUrlMode)
+                    _ = TestComfyUiConnectionAsync();
+            }
+        }
+    }
+
+    /// <summary>One line under the Engine option: installed / not installed / running.</summary>
+    [ObservableProperty]
+    private string _engineStatusText = string.Empty;
+
+    partial void OnComfyUiServerModeChanged(ComfyUiServerMode value) => HasChanges = true;
+
+    [RelayCommand]
+    private void OpenEngineFeatures() =>
+        _eventAggregator?.PublishNavigateToEngineFeatures(new NavigateToEngineFeaturesEventArgs());
+
+    /// <summary>The Engine-status refresh the last load started; a test seam, since load does not wait on it.</summary>
+    internal Task EngineStatusRefresh { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Refreshes <see cref="EngineStatusText"/>; internal for tests.</summary>
+    internal async Task RefreshEngineStatusAsync()
+    {
+        // Load, module activation, the dropdown, SettingsSaved and EngineChanged all start one, and
+        // they overlap: only the latest may write the line, or an older lookup can win.
+        var generation = ++_engineStatusGeneration;
+
+        if (_engineRootResolver is null)
+        {
+            EngineStatusText = string.Empty;
+            return;
+        }
+
+        try
+        {
+            var root = await _engineRootResolver.ResolveAsync();
+            if (generation != _engineStatusGeneration)
+                return;
+
+            EngineStatusText = !_looksInstalled(root)
+                ? "Not installed — install it in the Installation Manager"
+                : _engine?.BaseUrl is not null
+                    ? "Installed · running"
+                    : "Installed · not running (starts on first use)";
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not determine the Diffusion Nexus Engine status for Settings");
+            if (generation == _engineStatusGeneration)
+                EngineStatusText = string.Empty;
+        }
+    }
+
     /// <summary>
     /// Tests whether the ComfyUI server is reachable at the configured URL.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsCustomUrlMode))]
     private async Task TestComfyUiConnectionAsync()
     {
         IsTestingComfyUiConnection = true;
@@ -1604,6 +1795,18 @@ public partial class SettingsViewModel : BusyViewModelBase
                 await _exportService.ImportAsync(filePath);
                 await LoadAsync();
                 StatusMessage = $"Settings imported from {Path.GetFileName(filePath)}.";
+
+                // The import rewrote the Server mode and URL among the rest: let open readiness lines
+                // re-check, as a save does. Guarded so this view model does not reload a second time.
+                _isSaving = true;
+                try
+                {
+                    _eventAggregator?.PublishSettingsSaved(new SettingsSavedEventArgs());
+                }
+                finally
+                {
+                    _isSaving = false;
+                }
             }, "Importing settings...");
         }
         catch (Exception ex)

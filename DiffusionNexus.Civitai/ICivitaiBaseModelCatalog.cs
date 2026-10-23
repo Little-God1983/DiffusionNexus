@@ -55,6 +55,14 @@ public enum CivitaiBaseModelCatalogEventKind
     FetchFailed,
     UsedDiskCache,
     UsedBundledFallback,
+
+    /// <summary>
+    /// One candidate URL answered successfully but contained nothing parseable, so the
+    /// catalog moved on to the next source. Upstream moved or reshaped that file — the
+    /// remaining sources are older and will serve an increasingly stale list, so this is
+    /// a warning even when the overall refresh goes on to succeed.
+    /// </summary>
+    SourceYieldedNoModels,
 }
 
 /// <summary>

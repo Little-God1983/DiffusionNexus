@@ -202,7 +202,7 @@
                                 Width="400"
                                 Margin="0,0,16,16"
                                 ClipToBounds="True">
-                            <Grid RowDefinitions="Auto,Auto,Auto">
+                            <Grid RowDefinitions="Auto,Auto,Auto,Auto">
                                 <!-- Top: image + info -->
                                 <Grid Grid.Row="0" ColumnDefinitions="140,*" Margin="12,12,12,8">
                                     <!-- Installer logo -->
@@ -232,16 +232,32 @@
                                                 <Button.Flyout>
                                                     <MenuFlyout Placement="BottomEdgeAlignedRight">
                                                         <MenuItem Header="Settings"
-                                                                  Command="{Binding OpenSettingsCommand}"/>
+                                                                  Command="{Binding OpenSettingsCommand}"
+                                                                  ToolTip.Tip="{Binding SettingsTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Open Folder"
-                                                                  Command="{Binding OpenFolderCommand}"/>
+                                                                  Command="{Binding OpenFolderCommand}"
+                                                                  ToolTip.Tip="{Binding OpenFolderTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Make Default"
-                                                                  Command="{Binding MakeDefaultCommand}"/>
+                                                                  Command="{Binding MakeDefaultCommand}"
+                                                                  ToolTip.Tip="{Binding MakeDefaultTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <Separator/>
                                                         <MenuItem Header="Remove"
-                                                                  Command="{Binding RemoveCommand}"/>
+                                                                  Command="{Binding RemoveCommand}"
+                                                                  IsVisible="{Binding ShowRemoveMenuItem}"
+                                                                  ToolTip.Tip="{Binding RemoveTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"/>
                                                         <MenuItem Header="Delete from Disk"
                                                                   Command="{Binding DeleteFromDiskCommand}"
+                                                                  IsVisible="{Binding ShowDeleteFromDiskMenuItem}"
+                                                                  ToolTip.Tip="{Binding DeleteFromDiskTooltip}"
+                                                                  ToolTip.ShowOnDisabled="True"
+                                                                  Foreground="#DC3545"/>
+                                                        <MenuItem Header="Uninstall Engine…"
+                                                                  Command="{Binding UninstallEngineCommand}"
+                                                                  IsVisible="{Binding ShowEngineUninstallMenuItem}"
                                                                   Foreground="#DC3545"/>
                                                     </MenuFlyout>
                                                 </Button.Flyout>
@@ -250,10 +266,10 @@
 
                                         <!-- Installation Path -->
                                         <TextBlock Grid.Row="1"
-                                                   Text="{Binding InstallationPath}"
+                                                   Text="{Binding PathDisplay}"
                                                    FontSize="11" Opacity="0.4"
                                                    TextTrimming="CharacterEllipsis"
-                                                   ToolTip.Tip="{Binding InstallationPath}"
+                                                   ToolTip.Tip="{Binding PathDisplay}"
                                                    Margin="0,2,0,4"/>
 
                                         <!-- Version -->
@@ -280,7 +296,8 @@
                                                        IsVisible="{Binding IsDefault}"/>
                                             <Button Classes="icon-btn"
                                                     Command="{Binding OpenSettingsCommand}"
-                                                    ToolTip.Tip="Settings">
+                                                    ToolTip.Tip="{Binding SettingsTooltip}"
+                                                    ToolTip.ShowOnDisabled="True">
                                                 <TextBlock Text="&#x2699;" FontSize="16"/>
                                             </Button>
                                         </StackPanel>
@@ -331,21 +348,23 @@
                                                IsVisible="{Binding UpdateStatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                                 </StackPanel>
 
-                                <!-- Not Found banner (when folder deleted from disk) -->
+                                <!-- Not Found banner (when folder deleted from disk). Its own row: sharing
+                                     the actions row put its red background behind the Engine tile's
+                                     Install button and install progress (#609). -->
                                 <Border Grid.Row="2"
                                         Background="#44DC3545"
                                         Padding="12,8"
-                                        IsVisible="{Binding IsMissing}">
+                                        IsVisible="{Binding ShowMissingBanner}">
                                     <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
                                         <TextBlock Text="&#x26A0;" FontSize="14" Foreground="#DC3545" VerticalAlignment="Center"/>
-                                        <TextBlock Text="Installation folder not found" FontSize="13" Foreground="#DC3545" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding MissingBannerText}" FontSize="13" Foreground="#DC3545" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Border>
 
                                 <!-- Launch + Workloads (when not running). Core cards
                                      hide Launch and show only Workloads; ComfyUI cards
                                      show both; other installer types show only Launch. -->
-                                <StackPanel Grid.Row="2"
+                                <StackPanel Grid.Row="3"
                                             Spacing="4"
                                             Margin="12,4,12,4"
                                             IsVisible="{Binding ShowActionsPanel}">
@@ -365,10 +384,50 @@
                                             <TextBlock Text="Workloads" FontSize="14" VerticalAlignment="Center"/>
                                         </StackPanel>
                                     </Button>
+
+                                    <!-- Diffusion Nexus Engine tile actions -->
+                                    <StackPanel Orientation="Vertical" Spacing="6"
+                                                IsVisible="{Binding IsEngine}">
+                                        <Button Classes="launch-btn"
+                                                Command="{Binding InstallEngineCommand}"
+                                                IsVisible="{Binding ShowEngineInstallButton}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#x1F680;" FontSize="14" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Install" FontSize="14" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Classes="workloads-btn"
+                                                Command="{Binding ShowWorkloadsCommand}"
+                                                IsVisible="{Binding ShowEngineWorkloadsButton}">
+                                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#x1F9F0;" FontSize="14" VerticalAlignment="Center"/>
+                                                <TextBlock Text="Features" FontSize="14" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <TextBlock Text="{Binding EngineStatusMessage}"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   MaxLines="2"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding EngineStatusMessage}"
+                                                   IsVisible="{Binding ShowEngineStatusMessage}"/>
+                                        <!-- One line of the latest install output: a long step still looks alive. -->
+                                        <TextBlock Text="{Binding EngineActivity}"
+                                                   FontSize="10"
+                                                   Opacity="0.6"
+                                                   MaxLines="1"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   ToolTip.Tip="{Binding EngineActivity}"
+                                                   IsVisible="{Binding EngineActivity, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                        <ProgressBar Minimum="0" Maximum="100"
+                                                     Value="{Binding EngineProgressPercent}"
+                                                     Height="4"
+                                                     IsVisible="{Binding IsEngineInstalling}"/>
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <!-- Console + Open Web UI (when running) -->
-                                <StackPanel Grid.Row="2" Spacing="4" Margin="12,4,12,4"
+                                <StackPanel Grid.Row="3" Spacing="4" Margin="12,4,12,4"
                                             IsVisible="{Binding ShowRunningControls}">
                                     <Button Classes="console-btn" Command="{Binding ShowConsoleCommand}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">

@@ -1,0 +1,57 @@
+{
+  "1": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "upscale_method": "area",
+      "largest_size": 1280,
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ImageScaleToMaxDimension",
+    "_meta": {
+      "title": "Image for the description (1280 px)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model_preset": "None",
+      "system_preset": "None",
+      "user_prompt": "Describe the image in about 100 detailed words. Write one paragraph of plain prose, no lists and no headings.",
+      "seed": 1,
+      "unload_all_models": false,
+      "mode": "direct_clean",
+      "image": [
+        "2",
+        0
+      ],
+      "config_override": "",
+      "bypass": false
+    },
+    "class_type": "SimpleQwenVLggufV2",
+    "_meta": {
+      "title": "Qwen3-VL (GGUF)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "ShowText|pysssss",
+    "_meta": {
+      "title": "Show Text"
+    }
+  }
+}

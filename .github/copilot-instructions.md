@@ -7,17 +7,16 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 ## General Guidelines
 - Consult also the Claude.md for instructions if exists.
 - When a bug is found, always check if a unit test can be created to cover/reproduce it before fixing. Ensure that the unit test effectively captures the bug scenario.
-- When a refactoring task is issued then mark the method/function/class you are refactoring as obsolete and to be removed later to avoid code duplication/dead code.
 - Before any Database Entity classes, IEntityTypeConfigurations or the database migrations are modified execute the publish.ps1 script to make sure there is a last backup of the app with a working database.
 - When A Keyboard Shortcut is Added make sure its documented in a file called DiffusionNexus.UI\\Doc\\Shortcuts.md
 - When fixing a failing Unit test, check thoroughly if its the unit test that is in need of fixing or if its the code that has an actual bug.
-- Every time new UI elements are added or UI is built from the ground up, always look first for reusable components in the project before creating new ones.
+- Every time new UI elements are added or UI is built from the ground up, always look first for reusable components in the project before creating new ones. The catalog of reusable controls, base classes, dialogs, converters and helpers is `DiffusionNexus.UI\REUSABLES.md` — check it before writing a new control, and add a row to it in the same commit whenever you create a new reusable piece.
 
 ## Database Management
-- There are TWO separate databases in the DiffusionNexus project:
-  - **diffusion_nexus.db** — belongs to the Installer SDK (from the NuGet package `DiffusionNexus.Installer.SDK.Database`). Runtime location: `C:\Users\Little God\AppData\Local\diffusion_nexus.db` (directly in %LocalAppData%, NOT in a subfolder). Contains workload configurations from the SDK.
-  - **Diffusion_Nexus-core.db** — belongs to the DiffusionNexus application itself (managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project). Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, etc.).
-- Do NOT mix these up.
+- The app has ONE database and reads ONE JSON catalog. Do NOT mix them up:
+  - **Diffusion_Nexus-core.db** — belongs to the DiffusionNexus application itself (managed by `DiffusionNexusCoreDbContext` in the `DiffusionNexus.DataAccess` project). Stored at `%LocalAppData%/DiffusionNexus/Data/`. Contains app-specific data (models, settings, installed packages, etc.).
+  - **Installer SDK workload catalog** — JSON, not a database (Installer SDK 2.x, package `DiffusionNexus.Installer.SDK.Catalog`). Installed catalogs live in `%LocalAppData%\ITL-Shared\format-N\catalog-stable|preview\`, shared with the 3.x installer (SDK 2.3.0), read through `ICatalog`. The app has its own channel and "apply automatically" (Settings → Catalog, `AppSettings.CatalogChannel` / `ApplyCatalogUpdatesAutomatically`, owned by `CatalogUpdateCoordinator`); on the first start it copied the installer's channel once. It never writes the installer's `user_settings.json`. A stable seed is embedded in `DiffusionNexus.UI/Assets/Catalog` (refresh with `Scripts/Update-CatalogSeed.ps1`); the startup check announces an update in the Unified Console and applies it only when "apply automatically" is on. Point at a `DiffusionNexus.Catalog` checkout with the env var `DIFFUSIONNEXUS_CATALOG_PATH`.
+- The legacy SDK 1.x database `%LocalAppData%\diffusion_nexus.db` (with its backups and `db_override.txt`) is no longer used by this app, but the Legacy 1.x installer still reads it: never delete it.
 
 ## Code Style
 - Use specific formatting rules
@@ -25,4 +24,4 @@ In this project use the Nuget packages DiffusionNexus.Installer.SDK from its ori
 
 ## Project-Specific Rules
 - The ComfyUI Qwen3\_VQA custom node stores its models in ComfyUI's models/prompt\_generator folder, not in the HuggingFace cache.
-- While the main goal is Windows, create a comment TODO: Linux Implementation for Task X in the code. Also, make sure it is open to extension for the Linux implementation.
+- Windows is the only supported platform. Do not add cross-platform hooks, `TODO: Linux Implementation` markers or non-Windows code paths for their own sake.

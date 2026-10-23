@@ -1,5 +1,6 @@
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Inference.Captioning;
 using FluentAssertions;
 
@@ -489,7 +490,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var orphan = Path.Combine(dest, "stale.gguf.download");
         CreateFile(orphan, length: 3);
 
-        var manager = new CaptioningModelManager(_root, httpClient: null, freeSpaceProbe: _ => 1_000);
+        var manager = new CaptioningModelManager(_root, httpClient: null, freeSpaceProbe: _ => FreeSpaceResult.Known(1_000));
 
         var ok = await manager.DownloadModelAsync(CaptioningModelType.Qwen3_VL_8B, dest);
 
@@ -503,7 +504,7 @@ public sealed class CaptioningModelManagerTests : IDisposable
         var statuses = new List<ModelDownloadProgress>();
         using var http = new HttpClient(new ThrowingHandler());
         var manager = new CaptioningModelManager(
-            Path.Combine(_root, "space"), http, freeSpaceProbe: _ => 1_000);
+            Path.Combine(_root, "space"), http, freeSpaceProbe: _ => FreeSpaceResult.Known(1_000));
 
         var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
@@ -518,13 +519,12 @@ public sealed class CaptioningModelManagerTests : IDisposable
     [Fact]
     public async Task DownloadModelAsync_UnknownFreeSpace_StillAttemptsDownload()
     {
-        // -1 = "could not determine free space" (UNC path, odd mount) — the
-        // check must not false-block; the download proceeds and hits the
-        // (deliberately throwing) network handler.
+        // A destination that will not report its size (UNC path, odd mount) — the check must
+        // not false-block; the download proceeds and hits the (deliberately throwing) handler.
         var statuses = new List<ModelDownloadProgress>();
         using var http = new HttpClient(new ThrowingHandler());
         var manager = new CaptioningModelManager(
-            Path.Combine(_root, "space-unknown"), http, freeSpaceProbe: _ => -1);
+            Path.Combine(_root, "space-unknown"), http, freeSpaceProbe: _ => FreeSpaceResult.Unknown);
 
         var ok = await manager.DownloadModelAsync(
             CaptioningModelType.Qwen3_VL_8B,
@@ -535,6 +535,30 @@ public sealed class CaptioningModelManagerTests : IDisposable
         statuses.Should().NotContain(p => p.Status.Contains("disk space", StringComparison.OrdinalIgnoreCase));
         statuses.Should().Contain(p => p.Status.Contains("Download failed"));
     }
+
+    [Fact]
+    public async Task DownloadModelAsync_UnreachableDestination_RefusesWithoutTouchingNetwork()
+    {
+        // Issue #581: this probe used to fail open on EVERY failure, so a destination on an
+        // unplugged drive started a multi-gigabyte pull that could only die mid-stream. An
+        // unreachable volume is not an unknowable one.
+        var statuses = new List<ModelDownloadProgress>();
+        using var http = new HttpClient(new ThrowingHandler());
+        var manager = new CaptioningModelManager(
+            Path.Combine(_root, "space-dead"), http, freeSpaceProbe: _ => FreeSpaceResult.Unreachable);
+
+        var ok = await manager.DownloadModelAsync(
+            CaptioningModelType.Qwen3_VL_8B,
+            progress: new SyncProgress(statuses.Add),
+            cancellationToken: CancellationToken.None);
+
+        ok.Should().BeFalse();
+        statuses.Should().Contain(p => p.Status.Contains("reach", StringComparison.OrdinalIgnoreCase),
+            "the user must learn the destination is gone, not that the download merely failed");
+    }
+
+
+
 
     /// <summary>Fails the test if any HTTP request is actually issued.</summary>
     private sealed class ThrowingHandler : HttpMessageHandler

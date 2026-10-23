@@ -40,6 +40,12 @@ public class ImageEditorControl : Control
     // Outpaint tool state
     private bool _isOutpaintToolActive;
 
+    // Canvas extend tool state
+    private bool _isCanvasExtendToolActive;
+
+    // Layer transform tool state
+    private bool _isLayerTransformToolActive;
+
     // Eyedropper state
     private bool _isEyedropperActive;
 
@@ -232,6 +238,33 @@ public class ImageEditorControl : Control
         {
             _isOutpaintToolActive = value;
             _editorCore.OutpaintTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets whether the canvas extend tool is active.
+    /// </summary>
+    public bool IsCanvasExtendToolActive
+    {
+        get => _isCanvasExtendToolActive;
+        set
+        {
+            _isCanvasExtendToolActive = value;
+            _editorCore.CanvasExtendTool.IsActive = value;
+            InvalidateVisual();
+        }
+    }
+
+    /// <summary>Gets or sets whether the layer Move / Transform tool is active.</summary>
+    public bool IsLayerTransformToolActive
+    {
+        get => _isLayerTransformToolActive;
+        set
+        {
+            _isLayerTransformToolActive = value;
+            _editorCore.LayerTransformTool.IsActive = value;   // false commits a pending transform
+            if (value) _editorCore.ArmLayerTransform();
             InvalidateVisual();
         }
     }
@@ -501,6 +534,12 @@ public class ImageEditorControl : Control
         // Middle mouse button for panning
         if (props.IsMiddleButtonPressed)
         {
+            // Starting a pan gesture is an explicit "leave fit" action, like the wheel:
+            // ViewportManager.Pan is a no-op while fit mode is on. The pan is seeded from
+            // the last rendered position so the image stays put even while an extension
+            // frame has it off-centre. (Only a fit scale outside the viewport's zoom range
+            // still jumps, because the stored zoom is clamped and the fit render is not.)
+            _editorCore.LeaveFitModeKeepingPosition();
             _isPanning = true;
             _lastPanPoint = point;
             e.Handled = true;
@@ -583,6 +622,33 @@ public class ImageEditorControl : Control
         if (_isOutpaintToolActive && props.IsLeftButtonPressed)
         {
             if (_editorCore.OutpaintTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
+        // Canvas extend tool takes priority when active
+        if (_isCanvasExtendToolActive && props.IsLeftButtonPressed)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerPressed(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                Focus();
+                return;
+            }
+        }
+
+        // Layer transform tool takes priority when active
+        if (_isLayerTransformToolActive && props.IsLeftButtonPressed)
+        {
+            var tool = _editorCore.LayerTransformTool;
+            tool.ConstrainProportionsOverride = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            tool.SnapRotation = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (tool.OnPointerPressed(skPoint))
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -699,6 +765,30 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Canvas extend tool pointer tracking
+        if (_isCanvasExtendToolActive)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        if (_isLayerTransformToolActive)
+        {
+            var tool = _editorCore.LayerTransformTool;
+            tool.ConstrainProportionsOverride = e.KeyModifiers.HasFlag(KeyModifiers.Control);
+            tool.SnapRotation = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            if (tool.OnPointerMoved(skPoint))
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
         if (_editorCore.CropTool.OnPointerMoved(skPoint))
         {
             e.Handled = true;
@@ -785,6 +875,27 @@ public class ImageEditorControl : Control
         if (_isOutpaintToolActive)
         {
             if (_editorCore.OutpaintTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        // Canvas extend tool release
+        if (_isCanvasExtendToolActive)
+        {
+            if (_editorCore.CanvasExtendTool.OnPointerReleased())
+            {
+                e.Handled = true;
+                InvalidateVisual();
+                return;
+            }
+        }
+
+        if (_isLayerTransformToolActive)
+        {
+            if (_editorCore.LayerTransformTool.OnPointerReleased())
             {
                 e.Handled = true;
                 InvalidateVisual();
@@ -907,6 +1018,39 @@ public class ImageEditorControl : Control
             }
         }
 
+        // Layer transform: Enter applies, Escape resets (tool stays open), arrows nudge (Shift = 10 px)
+        if (_isLayerTransformToolActive && _editorCore.LayerTransformTool.IsArmed)
+        {
+            var step = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? 10 : 1;
+            switch (e.Key)
+            {
+                case Key.Enter: ApplyLayerTransform(); e.Handled = true; return;
+                case Key.Escape: _editorCore.LayerTransformTool.Reset(); InvalidateVisual(); e.Handled = true; return;
+                case Key.Left: _editorCore.LayerTransformTool.Nudge(-step, 0); InvalidateVisual(); e.Handled = true; return;
+                case Key.Right: _editorCore.LayerTransformTool.Nudge(step, 0); InvalidateVisual(); e.Handled = true; return;
+                case Key.Up: _editorCore.LayerTransformTool.Nudge(0, -step); InvalidateVisual(); e.Handled = true; return;
+                case Key.Down: _editorCore.LayerTransformTool.Nudge(0, step); InvalidateVisual(); e.Handled = true; return;
+            }
+        }
+
+        // Canvas extend: Enter applies, Escape resets the extension (tool stays open, like Crop)
+        if (_isCanvasExtendToolActive)
+        {
+            if (e.Key == Key.Enter)
+            {
+                ApplyCanvasExtend();
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Escape)
+            {
+                _editorCore.CanvasExtendTool.Reset();
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+        }
+
         // Apply crop with C or Enter when crop tool is active
         if (_editorCore.CropTool.IsActive && _editorCore.CropTool.HasCropRegion)
         {
@@ -1010,15 +1154,29 @@ public class ImageEditorControl : Control
         // Outpaint tool cursors
         if (_isOutpaintToolActive)
         {
-            var outpaintHandle = _editorCore.OutpaintTool.GetCursorForPoint(point);
-            Cursor = outpaintHandle switch
+            Cursor = CursorForExtensionHandle(_editorCore.OutpaintTool.GetCursorForPoint(point));
+            return;
+        }
+
+        // Canvas extend tool cursors (handles sit on the frame; the frame itself can be dragged)
+        if (_isCanvasExtendToolActive)
+        {
+            var tool = _editorCore.CanvasExtendTool;
+            Cursor = tool.IsMovePoint(point)
+                ? new Cursor(StandardCursorType.SizeAll)
+                : CursorForExtensionHandle(tool.GetCursorForPoint(point));
+            return;
+        }
+
+        if (_isLayerTransformToolActive)
+        {
+            Cursor = _editorCore.LayerTransformTool.GetCursorForPoint(point) switch
             {
-                ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
-                ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
-                ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
-                    or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
-                    => new Cursor(StandardCursorType.SizeAll),
-                _ => Cursor.Default
+                ImageEditor.TransformHandle.None => Cursor.Default,
+                ImageEditor.TransformHandle.Rotate => new Cursor(StandardCursorType.Hand),
+                ImageEditor.TransformHandle.Top or ImageEditor.TransformHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+                ImageEditor.TransformHandle.Left or ImageEditor.TransformHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+                _ => new Cursor(StandardCursorType.SizeAll)
             };
             return;
         }
@@ -1040,6 +1198,20 @@ public class ImageEditorControl : Control
             _ => new Cursor(StandardCursorType.Cross)
         };
     }
+
+    /// <summary>
+    /// Resize cursor for a canvas-extension handle. Shared by the Outpaint and the
+    /// Canvas Extend tools, which use the same handle enum and the same gesture.
+    /// </summary>
+    private static Cursor CursorForExtensionHandle(ImageEditor.OutpaintHandle handle) => handle switch
+    {
+        ImageEditor.OutpaintHandle.Top or ImageEditor.OutpaintHandle.Bottom => new Cursor(StandardCursorType.SizeNorthSouth),
+        ImageEditor.OutpaintHandle.Left or ImageEditor.OutpaintHandle.Right => new Cursor(StandardCursorType.SizeWestEast),
+        ImageEditor.OutpaintHandle.TopLeft or ImageEditor.OutpaintHandle.TopRight
+            or ImageEditor.OutpaintHandle.BottomLeft or ImageEditor.OutpaintHandle.BottomRight
+            => new Cursor(StandardCursorType.SizeAll),
+        _ => Cursor.Default
+    };
 
     public override void Render(DrawingContext context)
     {
@@ -1137,7 +1309,7 @@ public class ImageEditorControl : Control
     {
         var logger = _editorCore.Logger;
 
-        if (IsTiffPath(filePath))
+        if (ImageEditor.TiffExporter.IsTiffPath(filePath))
         {
             logger?.Info(Domain.Services.UnifiedLogging.LogCategory.General, "ImageEditorControl",
                 "Loading TIFF as layers.", filePath);
@@ -1155,15 +1327,6 @@ public class ImageEditorControl : Control
                 $"Failed to load image into the editor: {filePath}");
         }
         return loaded;
-    }
-
-    private static bool IsTiffPath(string? filePath)
-    {
-        if (string.IsNullOrEmpty(filePath))
-            return false;
-        var ext = System.IO.Path.GetExtension(filePath);
-        return string.Equals(ext, ".tif", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(ext, ".tiff", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1226,6 +1389,64 @@ public class ImageEditorControl : Control
         }
         return result;
     }
+
+    /// <summary>
+    /// Event raised when a canvas extension has been applied.
+    /// </summary>
+    public event EventHandler? CanvasExtendApplied;
+
+    /// <summary>
+    /// Event raised when an extension was requested but the core could not apply it
+    /// (for example the new canvas could not be allocated).
+    /// </summary>
+    public event EventHandler? CanvasExtendFailed;
+
+    /// <summary>
+    /// Applies the canvas extend tool's current extension.
+    /// </summary>
+    public bool ApplyCanvasExtend()
+    {
+        var result = _editorCore.ApplyCanvasExtend();
+        if (result)
+        {
+            CanvasExtendApplied?.Invoke(this, EventArgs.Empty);
+        }
+        else if (_editorCore.CanvasExtendTool.HasExtension)
+        {
+            // There was something to apply and it did not happen: a real failure, not the
+            // "nothing to do" false.
+            CanvasExtendFailed?.Invoke(this, EventArgs.Empty);
+        }
+        InvalidateVisual();
+        return result;
+    }
+
+    /// <summary>Raised whenever the layer transform tool's state changes (fields sync).</summary>
+    public event EventHandler? LayerTransformChanged;
+    /// <summary>Raised after a layer transform was rasterized.</summary>
+    public event EventHandler? LayerTransformApplied;
+    /// <summary>Raised when a layer transform was refused; the layer is untouched.</summary>
+    public event EventHandler<ImageEditor.LayerTransformFailure>? LayerTransformFailed;
+    /// <summary>Raised when the tool (re)armed, with the active layer's eligibility.</summary>
+    public event EventHandler<ImageEditor.LayerTransformEligibility>? LayerTransformEligibilityChanged;
+
+    /// <summary>Applies the pending layer transform. False with no event when there is nothing to apply.</summary>
+    public bool ApplyLayerTransform()
+    {
+        var result = _editorCore.ApplyLayerTransform();
+        InvalidateVisual();
+        return result;
+    }
+
+    private void OnLayerTransformChanged(object? sender, EventArgs e)
+    {
+        InvalidateVisual();
+        LayerTransformChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnLayerTransformApplied(object? sender, EventArgs e) => LayerTransformApplied?.Invoke(this, EventArgs.Empty);
+    private void OnLayerTransformFailed(object? sender, ImageEditor.LayerTransformFailure f) => LayerTransformFailed?.Invoke(this, f);
+    private void OnLayerTransformEligibilityChanged(object? sender, ImageEditor.LayerTransformEligibility r) => LayerTransformEligibilityChanged?.Invoke(this, r);
 
     /// <summary>
     /// Activates the crop tool.
@@ -1386,6 +1607,27 @@ public class ImageEditorControl : Control
         InvalidateVisual();
     }
 
+    /// <summary>
+    /// Event raised when the canvas extend region changes.
+    /// </summary>
+    public event EventHandler? CanvasExtendRegionChanged;
+
+    /// <summary>
+    /// Event raised when the canvas extend tool blocked an attempt to shrink the canvas.
+    /// </summary>
+    public event EventHandler? CanvasExtendShrinkAttempted;
+
+    private void OnCanvasExtendRegionChanged(object? sender, EventArgs e)
+    {
+        CanvasExtendRegionChanged?.Invoke(this, EventArgs.Empty);
+        InvalidateVisual();
+    }
+
+    private void OnCanvasExtendShrinkAttempted(object? sender, EventArgs e)
+    {
+        CanvasExtendShrinkAttempted?.Invoke(this, EventArgs.Empty);
+    }
+
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
@@ -1420,6 +1662,13 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.FontSizeChanged += OnTextFontSizeChanged;
         _editorCore.ZoomChanged += OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged += OnOutpaintRegionChanged;
+        _editorCore.CanvasExtendTool.RegionChanged += OnCanvasExtendRegionChanged;
+        _editorCore.CanvasExtendTool.ShrinkAttempted += OnCanvasExtendShrinkAttempted;
+        _editorCore.LayerTransformTool.TransformChanged += OnLayerTransformChanged;
+        _editorCore.LayerTransformTool.ArmedLayerChanged += OnLayerTransformChanged;
+        _editorCore.LayerTransformApplied += OnLayerTransformApplied;
+        _editorCore.LayerTransformFailed += OnLayerTransformFailed;
+        _editorCore.LayerTransformEligibilityChanged += OnLayerTransformEligibilityChanged;
         InvalidateVisual();
     }
 
@@ -1440,6 +1689,13 @@ public class ImageEditorControl : Control
         _editorCore.TextTool.FontSizeChanged -= OnTextFontSizeChanged;
         _editorCore.ZoomChanged -= OnEditorCoreZoomChanged;
         _editorCore.OutpaintTool.RegionChanged -= OnOutpaintRegionChanged;
+        _editorCore.CanvasExtendTool.RegionChanged -= OnCanvasExtendRegionChanged;
+        _editorCore.CanvasExtendTool.ShrinkAttempted -= OnCanvasExtendShrinkAttempted;
+        _editorCore.LayerTransformTool.TransformChanged -= OnLayerTransformChanged;
+        _editorCore.LayerTransformTool.ArmedLayerChanged -= OnLayerTransformChanged;
+        _editorCore.LayerTransformApplied -= OnLayerTransformApplied;
+        _editorCore.LayerTransformFailed -= OnLayerTransformFailed;
+        _editorCore.LayerTransformEligibilityChanged -= OnLayerTransformEligibilityChanged;
     }
 
     /// <summary>

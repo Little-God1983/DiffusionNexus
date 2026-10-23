@@ -6,12 +6,14 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using Microsoft.Extensions.DependencyInjection;
+using SdkLogLevel = DiffusionNexus.Installer.SDK.Models.Enums.LogLevel;
 
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -36,7 +38,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
     private readonly PackageProcessManager _processManager;
     private readonly IDatasetEventAggregator _eventAggregator;
-    private readonly IConfigurationRepository _configurationRepository;
+    private readonly ICatalog _catalog;
     private readonly IConfigurationCheckerService _checkerService;
     private readonly IWorkloadInstallService _installService;
     private readonly IEnumerable<IInstallerUpdateService> _updateServices;
@@ -46,6 +48,28 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private readonly IActivityLogService? _activityLogService;
     private readonly IDownloadCoordinator? _downloadCoordinator;
     private readonly Services.Diffusion.BaseModelFolderRegistrar? _baseModelFolderRegistrar;
+    private readonly Services.Engine.IManagedEngineInstaller? _engineInstaller;
+    private readonly IResourceMonitorService? _resourceMonitor;
+
+    /// <summary>
+    /// Rewrites the engine's <c>extra_model_paths.yaml</c> from the registered Base Model Folders.
+    /// Used right after an engine install, and again before the engine's Workloads dialog runs its
+    /// disk check — that check reads the engine's own configuration, so a stale file would make it
+    /// report models missing that the user does in fact have.
+    /// </summary>
+    private readonly Services.Engine.EngineModelPathsSynchronizer? _engineModelPaths;
+
+    /// <summary>
+    /// The running Diffusion Nexus Engine. ComfyUI loads custom nodes only at process start, so a
+    /// Features install stops a running engine and the next use starts it with the new node packs.
+    /// </summary>
+    private readonly Services.Engine.IManagedComfyUiEngine? _engine;
+
+    // Says an install is running, so the catalog apply waits (#618). Null in tests.
+    private readonly IInstallActivity? _installActivity;
+
+    // Test seam for the Engine's removals (locked or failing files); null uses the real file system.
+    private readonly Services.Engine.IRemovalFileSystem? _removalFileSystem;
 
     /// <summary>
     /// Raised when the unified console panel should be opened (e.g., during an update).
@@ -74,12 +98,41 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// </summary>
     public bool IsEmpty => InstallerCards.Count == 0 && !IsLoading;
 
+    /// <summary>
+    /// Whether the Diffusion Nexus Engine tile is shown: whenever the local-diffusion flag is on.
+    /// No longer tied to the Canvas switch, because the Image Editor's Inpaint and Outpaint
+    /// install into the Engine too.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isEngineTileVisible = Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend;
+
+    /// <summary>
+    /// True for the duration of <see cref="InstallEngineAsync"/>. Guards against two hazards
+    /// flagged in review: (1) <see cref="OnIsEngineTileVisibleChanged"/> reloading the whole
+    /// <see cref="InstallerCards"/> list mid-install, which would detach the live card the
+    /// install's progress callbacks and final <c>IsEngineInstalled = true</c> are writing to —
+    /// the callbacks would then land on an orphaned VM while a freshly-built card shows the
+    /// Install button, one click from a second concurrent SDK install into the same folder; and
+    /// (2) that reload running <see cref="LoadInstallationsAsync"/> concurrently with itself over
+    /// the VM's single shared <c>IUnitOfWork</c> — the same hazard documented in App.axaml.cs as
+    /// the reason startup loading was serialized.
+    /// </summary>
+    private bool _isEngineInstallInFlight;
+
+    partial void OnIsEngineTileVisibleChanged(bool value)
+    {
+        // Skip the reload while an install is running — see _isEngineInstallInFlight's doc.
+        // InstallEngineAsync catches up once it's done, if the switch actually moved meanwhile.
+        if (_isEngineInstallInFlight) return;
+        _ = LoadInstallationsCommand.ExecuteAsync(null);
+    }
+
     public InstallerManagerViewModel(
         IDialogService dialogService,
         IUnitOfWork unitOfWork,
         PackageProcessManager processManager,
         IDatasetEventAggregator eventAggregator,
-        IConfigurationRepository configurationRepository,
+        ICatalog catalog,
         IConfigurationCheckerService checkerService,
         IWorkloadInstallService installService,
         IEnumerable<IInstallerUpdateService> updateServices,
@@ -89,14 +142,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
         IActivityLogService? activityLogService = null,
         IDownloadCoordinator? downloadCoordinator = null,
         Services.Diffusion.BaseModelFolderRegistrar? baseModelFolderRegistrar = null,
-        Func<IUnitOfWork>? unitOfWorkFactory = null)
+        Func<IUnitOfWork>? unitOfWorkFactory = null,
+        Services.Engine.IManagedEngineInstaller? engineInstaller = null,
+        IResourceMonitorService? resourceMonitor = null,
+        Services.Engine.EngineModelPathsSynchronizer? engineModelPaths = null,
+        Services.Engine.IManagedComfyUiEngine? engine = null,
+        IInstallActivity? installActivity = null,
+        Services.Engine.IRemovalFileSystem? removalFileSystem = null)
     {
         _dialogService = dialogService;
         _unitOfWork = unitOfWork;
         _unitOfWorkFactory = unitOfWorkFactory;
         _processManager = processManager;
         _eventAggregator = eventAggregator;
-        _configurationRepository = configurationRepository;
+        _catalog = catalog;
         _checkerService = checkerService;
         _installService = installService;
         _updateServices = updateServices;
@@ -106,6 +165,12 @@ public partial class InstallerManagerViewModel : ViewModelBase
         _activityLogService = activityLogService;
         _downloadCoordinator = downloadCoordinator;
         _baseModelFolderRegistrar = baseModelFolderRegistrar;
+        _engineInstaller = engineInstaller;
+        _resourceMonitor = resourceMonitor;
+        _engineModelPaths = engineModelPaths;
+        _engine = engine;
+        _installActivity = installActivity;
+        _removalFileSystem = removalFileSystem;
 
         InstallerCards.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
@@ -135,7 +200,17 @@ public partial class InstallerManagerViewModel : ViewModelBase
 
             var packages = await _unitOfWork.InstallerPackages.GetAllAsync();
 
-            foreach (var package in packages)
+            // The app-owned engine is an ordinary ComfyUI row flagged IsAppManaged. It is
+            // rendered as the static engine tile and must not also appear as a normal card.
+            // The tile itself is gated behind IsEngineTileVisible — while the switch is off
+            // it is omitted from the list entirely rather than hidden in the view.
+            if (IsEngineTileVisible)
+            {
+                var enginePackage = packages.FirstOrDefault(p => p.IsAppManaged);
+                InstallerCards.Add(CreateEngineCard(enginePackage));
+            }
+
+            foreach (var package in packages.Where(p => !p.IsAppManaged))
             {
                 InstallerCards.Add(CreateCard(package));
             }
@@ -228,16 +303,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
     /// or creates a new one if none exists.
     /// If the matching gallery is already linked to another installer, the FK is updated
     /// to point to this package (an ImageGallery can only belong to one installer).
+    ///
+    /// The match is by folder identity, not by string: stored paths and paths parsed out of
+    /// a startup script disagree about the trailing separator
+    /// (<c>E:\AI\comfy_output\</c> vs <c>E:\AI\comfy_output</c>). Comparing the raw strings
+    /// missed the existing row and added a second one for the same folder, which then
+    /// scanned it twice and left the gallery "linked" to whichever row the caller happened
+    /// to look at.
     /// </summary>
     private async Task LinkOutputFolderAsync(InstallerPackage package, string outputFolderPath)
     {
         var settings = await _unitOfWork.AppSettings.GetSettingsAsync();
         var appSettingsId = settings?.Id ?? 1;
 
-        // Check if a gallery with this path already exists
+        // Check if a gallery for this folder already exists
         var allSettings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
         var existing = allSettings.ImageGalleries
-            .FirstOrDefault(g => string.Equals(g.FolderPath, outputFolderPath, StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(g => FolderPathMatch.AreSame(g.FolderPath, outputFolderPath));
 
         if (existing is not null)
         {
@@ -374,6 +456,42 @@ public partial class InstallerManagerViewModel : ViewModelBase
     private (IUnitOfWork UnitOfWork, bool Owned) RentUnitOfWork() =>
         _unitOfWorkFactory is null ? (_unitOfWork, false) : (_unitOfWorkFactory(), true);
 
+    /// <summary>
+    /// Folders that must survive the removal of <paramref name="excludedPackageId"/> because
+    /// another registered installation still uses them: model roots the others discover (their
+    /// startup backfill would re-add those rows anyway), their own installation trees, and the
+    /// output directories their launch scripts write to.
+    ///
+    /// That last one is the reason this exists at all. Several ComfyUI installations commonly
+    /// share one <c>--output-directory</c> while only one of them holds the gallery row's FK, so
+    /// removing that one would otherwise offer to unregister a folder the others keep filling.
+    /// Both resolvers touch the file system (extra_model_paths.yaml, startup scripts), so the
+    /// whole scan runs off the UI thread.
+    /// </summary>
+    private static async Task<(List<string> ProtectedRoots, List<string> FoldersUsedByOthers, List<string> OwnOutputFolders)>
+        ResolveSurvivingInstallationFoldersAsync(IUnitOfWork unitOfWork, InstallerPackage package)
+    {
+        var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
+        var otherPackages = allPackages.Where(p => p.Id != package.Id).ToList();
+
+        return await Task.Run(() =>
+        {
+            var protectedRoots = otherPackages
+                .SelectMany(Services.Diffusion.BaseModelFolderRegistrar.ResolveModelRoots)
+                .ToList();
+
+            var used = otherPackages
+                .Select(p => p.InstallationPath)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Concat(otherPackages.SelectMany(InstallationOutputFolderResolver.Resolve))
+                .ToList();
+
+            var own = InstallationOutputFolderResolver.Resolve(package).ToList();
+
+            return (protectedRoots, used, own);
+        });
+    }
+
     private async Task OnRemoveRequestedAsync(InstallerPackageCardViewModel card)
     {
         if (_processManager.IsRunning(card.Id))
@@ -393,25 +511,23 @@ public partial class InstallerManagerViewModel : ViewModelBase
                 return;
             }
 
-            // Model roots other registered installations still discover must never be
-            // offered for removal — their startup backfill would silently re-add them.
-            // ResolveModelRoots reads extra_model_paths.yaml files: keep it off the UI thread.
-            var allPackages = await unitOfWork.InstallerPackages.GetAllAsync();
-            var otherPackages = allPackages.Where(p => p.Id != entity.Id).ToList();
-            var protectedRoots = await Task.Run(() => otherPackages
-                .SelectMany(Services.Diffusion.BaseModelFolderRegistrar.ResolveModelRoots)
-                .ToList());
-
             // Resolve the settings folders tied to this installation so the dialog can
-            // offer to remove them too (galleries/base folders by FK, LoRA sources by path).
+            // offer to remove them too (galleries/base folders by FK, LoRA sources by path),
+            // minus everything the surviving installations still use.
             var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-            var plan = InstallationSettingsCleanup.Resolve(settings, entity, protectedRoots);
+            var (protectedRoots, foldersUsedByOthers, ownOutputFolders) =
+                await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity);
+            var plan = InstallationSettingsCleanup.Resolve(
+                settings, entity, protectedRoots, foldersUsedByOthers, ownOutputFolders);
 
             var choice = await _dialogService.ShowRemoveInstallationDialogAsync(new RemoveInstallationPrompt(
                 card.Name,
                 plan.Galleries.Select(g => g.FolderPath).ToList(),
                 plan.LoraSources.Select(s => s.FolderPath).ToList(),
-                plan.BaseModelFolders.Select(f => f.FolderPath).ToList()));
+                plan.BaseModelFolders.Select(f => f.FolderPath).ToList(),
+                plan.SharedGalleryFolders,
+                plan.SharedLoraSourceFolders,
+                plan.SharedBaseModelFolders));
 
             if (!choice.Confirmed) return;
 
@@ -556,13 +672,18 @@ public partial class InstallerManagerViewModel : ViewModelBase
             // Remove from database first — including the settings rows tied to this
             // installation: their folders cease to exist, so unlike the plain remove
             // flow there is no choice to offer (dead rows would only linger as ⚠
-            // badges and dangling scan/download targets).
+            // badges and dangling scan/download targets). Folders a surviving
+            // installation still uses are the exception: an output directory shared
+            // with another install outlives this folder and must keep its row.
             var removedFolders = 0;
             var entity = await unitOfWork.InstallerPackages.GetByIdAsync(card.Id);
             if (entity is not null)
             {
                 var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
-                var plan = InstallationSettingsCleanup.Resolve(settings, entity);
+                var (protectedRoots, foldersUsedByOthers, ownOutputFolders) =
+                    await ResolveSurvivingInstallationFoldersAsync(unitOfWork, entity);
+                var plan = InstallationSettingsCleanup.Resolve(
+                    settings, entity, protectedRoots, foldersUsedByOthers, ownOutputFolders);
 
                 foreach (var gallery in plan.Galleries)
                 {
@@ -659,17 +780,147 @@ public partial class InstallerManagerViewModel : ViewModelBase
             return;
         }
 
+        if (card.IsEngine)
+        {
+            await OpenEngineFeaturesAsync();
+            return;
+        }
+
+        await ShowWorkloadsDialogAsync(card.InstallationPath);
+    }
+
+    /// <summary>
+    /// Test seam: shows the Features dialog. Null in production, where a real
+    /// <see cref="Views.Dialogs.EngineFeaturesDialog"/> is opened over the main window.
+    /// </summary>
+    internal Func<EngineFeaturesViewModel, Task>? EngineFeaturesDialogPresenter { get; set; }
+
+    /// <summary>
+    /// Opens the Engine's Features dialog, optionally with <paramref name="preselect"/> ticked. Called
+    /// from the Engine tile and from the editor's "Install Inpaint &amp; Outpaint" link.
+    /// </summary>
+    public async Task OpenEngineFeaturesAsync(Services.Engine.EngineFeature? preselect = null)
+    {
+        // Its yaml sync and installs would write into the folder being deleted.
+        if (_engineUninstallRunning)
+        {
+            const string refused = "Features dialog not opened: the Diffusion Nexus Engine is being uninstalled.";
+            Serilog.Log.Information(refused);
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, refused);
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                "The Diffusion Nexus Engine is being uninstalled, so its features can't be opened.");
+            return;
+        }
+
+        var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
+        if (card is null || !card.IsEngineInstalled || string.IsNullOrWhiteSpace(card.InstallationPath))
+        {
+            Serilog.Log.Information("Engine Features dialog refused: the Diffusion Nexus Engine is not installed");
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Features dialog not opened: the engine is not installed.");
+            await _dialogService.ShowMessageAsync("Diffusion Nexus Engine",
+                "Install the engine first — features are installed into it.");
+            return;
+        }
+
+        // The disk check behind this dialog resolves its search paths from the engine's own
+        // extra_model_paths.yaml, so sync it before checking and again after installing.
+        if (_engineModelPaths is not null)
+            DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
+
+        try
+        {
+            var vm = new EngineFeaturesViewModel(
+                _catalog, _checkerService, _installService, card.InstallationPath,
+                _resourceMonitor, _unifiedLogger, preselect, installActivity: _installActivity,
+                dialogs: _dialogService, remover: CreateEngineRemover());
+            await vm.LoadCommand.ExecuteAsync(null);
+
+            Serilog.Log.Information("Opening the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Info(LogCategory.Installation, "Diffusion Nexus Engine",
+                $"Opening the Features dialog for {card.InstallationPath}.");
+            if (EngineFeaturesDialogPresenter is not null)
+            {
+                await EngineFeaturesDialogPresenter(vm);
+            }
+            else
+            {
+                var dialog = new Views.Dialogs.EngineFeaturesDialog { DataContext = vm };
+                var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
+                    as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+                if (parentWindow is not null)
+                    await dialog.ShowDialog(parentWindow);
+            }
+
+            if (vm.DidInstall)
+            {
+                if (_engineModelPaths is not null)
+                    DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(await _engineModelPaths.SyncAsync(card.InstallationPath), _engine, _unifiedLogger);
+
+                if (vm.DidInstallNodePacks)
+                {
+                    RestartEngineOnNextUseForNewNodePacks();
+                }
+                else if (_engine?.BaseUrl is not null)
+                {
+                    const string kept =
+                        "Keeping the Diffusion Nexus Engine running: only models were installed, and it finds new model files without a restart.";
+                    Serilog.Log.Information(kept);
+                    _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", kept);
+                }
+
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+            }
+
+            if (vm.DidRemove && !vm.DidInstall)
+            {
+                // Lets an open Inpaint/Outpaint panel and Settings' Engine status re-check.
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to open the Engine Features dialog for {Path}", card.InstallationPath);
+            _unifiedLogger.Error(LogCategory.Installation, "Diffusion Nexus Engine",
+                "Failed to open the Features dialog", ex);
+            await _dialogService.ShowMessageAsync("Error", $"Failed to load Engine features: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// ComfyUI loads custom nodes only at process start, so an Engine that was already running
+    /// during a Features install would never see the new node packs. It is not stopped now — an
+    /// Inpaint, Outpaint or Canvas job may be running on it — but asked to restart: the next
+    /// Generate or Canvas use starts it fresh. Asked even when the Engine reports no URL: that is also
+    /// the case mid cold-start, when Python may already have scanned custom_nodes. A request made
+    /// while it is not running at all is used up by the next cold start.
+    /// </summary>
+    private void RestartEngineOnNextUseForNewNodePacks()
+    {
+        if (_engine is null)
+            return;
+
+        const string message =
+            "The Diffusion Nexus Engine restarts on its next use so it loads the newly installed node packs.";
+        Serilog.Log.Information(message);
+        _unifiedLogger.Info(LogCategory.InstanceManagement, "Diffusion Nexus Engine", message);
+        _engine.RequestRestart();
+    }
+
+    /// <summary>
+    /// Opens the workloads dialog against a ComfyUI root, listing every ComfyUI workload.
+    /// </summary>
+    private async Task ShowWorkloadsDialogAsync(string comfyUiRoot)
+    {
         try
         {
             var vm = new WorkloadsViewModel(
-                _configurationRepository, _checkerService, _installService,
-                card.InstallationPath);
+                _catalog, _checkerService, _installService,
+                comfyUiRoot, resourceMonitor: _resourceMonitor, installActivity: _installActivity);
             await vm.LoadWorkloadsCommand.ExecuteAsync(null);
 
-            var dialog = new Views.Dialogs.WorkloadsDialog
-            {
-                DataContext = vm
-            };
+            var dialog = new Views.Dialogs.WorkloadsDialog { DataContext = vm };
 
             var parentWindow = (Avalonia.Application.Current?.ApplicationLifetime
                 as Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime)?.MainWindow;
@@ -679,7 +930,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Name}", card.Name);
+            Serilog.Log.Error(ex, "Failed to open workloads dialog for {Path}", comfyUiRoot);
             await _dialogService.ShowMessageAsync("Error", $"Failed to load workloads: {ex.Message}");
         }
     }
@@ -782,7 +1033,7 @@ public partial class InstallerManagerViewModel : ViewModelBase
         catch (Exception ex)
         {
             Serilog.Log.Error(ex, "Failed to open Diffusion Nexus Core captioning dialog");
-            await _dialogService.ShowMessageAsync("Diffusion Nexus Core",
+            await _dialogService.ShowMessageAsync("Legacy Engine Core (Deprecated)",
                 $"Could not open captioning models view: {ex.Message}");
         }
     }
@@ -798,6 +1049,811 @@ public partial class InstallerManagerViewModel : ViewModelBase
         var card = InstallerPackageCardViewModel.CreateCoreCard();
         card.WorkloadsRequested += OnWorkloadsRequestedAsync;
         return card;
+    }
+
+    /// <summary>
+    /// Builds the static "Diffusion Nexus Engine" tile. Wires install, Features, Open Folder and Uninstall Engine. Visibility is controlled by
+    /// <see cref="IsEngineTileVisible"/>.
+    /// </summary>
+    private InstallerPackageCardViewModel CreateEngineCard(InstallerPackage? enginePackage)
+    {
+        var card = InstallerPackageCardViewModel.CreateEngineCard(enginePackage);
+        card.EngineInstallRequested += OnEngineInstallRequestedAsync;
+        card.WorkloadsRequested += OnWorkloadsRequestedAsync;
+        card.OpenFolderRequested += OnOpenFolderRequested;
+        card.EngineUninstallRequested += UninstallEngineAsync;
+        return card;
+    }
+
+    private Task OnEngineInstallRequestedAsync(InstallerPackageCardViewModel card) => InstallEngineAsync();
+
+    // One uninstall at a time: a second click while the first asks or deletes does nothing.
+    private bool _engineUninstallRunning;
+
+    private Services.Engine.EngineRemover CreateEngineRemover() =>
+        new(_engine as Services.Engine.IManagedEngineControl, _installActivity, _unifiedLogger, _removalFileSystem);
+
+    /// <summary>
+    /// Uninstall Engine: refuses while busy, shows what goes (and the models in the user's own folders,
+    /// with the choice to delete those too), stops the Engine, deletes its folder, then forgets it:
+    /// settings folders inside it (by path), its row, and the Engine as ComfyUI Server.
+    /// </summary>
+    internal async Task UninstallEngineAsync(InstallerPackageCardViewModel card)
+    {
+        if (_engineUninstallRunning) return;
+        _engineUninstallRunning = true;
+        IDisposable? uninstallActivity = null;
+
+        // Ends the tile's "Uninstalling..." state and releases the install-activity handle (both twice is fine).
+        void EndUninstall()
+        {
+            uninstallActivity?.Dispose();
+            card.EndEngineUninstall();
+        }
+
+        try
+        {
+            var remover = CreateEngineRemover();
+            if (remover.BusyReason() is { } busy)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall refused: the Engine is busy ({busy}). Nothing was changed.");
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(busy));
+                return;
+            }
+
+            var root = card.InstallationPath;
+
+            // A corrupted row (blank, relative, a drive) is never sized, checked or deleted: the app only forgets it.
+            var safeRoot = Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot(root);
+            var folder = safeRoot
+                ? await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root))
+                : Services.Engine.EngineFolderState.Missing;
+            // A folder that does not look like an Engine (a user-picked folder, a corrupted row) is never
+            // deleted either: it is treated like an unsafe root.
+            var notAnEngine = safeRoot && folder != Services.Engine.EngineFolderState.Missing
+                && !await Task.Run(() => Services.Engine.ManagedEngineLocator.LooksLikeEngine(root));
+            if (notAnEngine)
+            {
+                safeRoot = false;
+                folder = Services.Engine.EngineFolderState.Missing;
+            }
+            IReadOnlyList<Services.Engine.PlannedFile> outside = [];
+            Services.Engine.ModelFileTotal? unclaimed = null;
+            long folderBytes = 0;
+            // An Engine folder that is itself a junction or symlink loses only the link: nothing behind it is
+            // sized or counted, the question says so and the user is told again after.
+            var rootLink = safeRoot && folder != Services.Engine.EngineFolderState.Missing ? EngineRootLink(root) : (false, null);
+            if (notAnEngine)
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall: the recorded Engine folder {root} does not look like a Diffusion Nexus Engine " +
+                    "(no main.py, venv, custom_nodes, comfy or ComfyUI). Nothing on disk will be touched; the app only forgets the Engine.");
+            }
+            else if (!safeRoot)
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall: the recorded Engine folder \"{root}\" is not a folder the app can safely delete " +
+                    "(blank, not a full path, or a drive). Nothing on disk will be touched; the app only forgets the Engine.");
+            }
+            // The nested layout (the user picked a folder; the Engine is its ComfyUI clone and venv in it):
+            // only those parts and the install log go, then the folder itself only if nothing else is in it.
+            var nested = safeRoot && folder != Services.Engine.EngineFolderState.Missing && !rootLink.IsLink
+                && await Task.Run(() => Services.Engine.ManagedEngineLocator.IsNestedLayout(root));
+            IReadOnlyList<string> engineDirectories = [root];
+            IReadOnlyList<string> engineFiles = [];
+            if (nested)
+            {
+                engineDirectories = Services.Engine.ManagedEngineLocator.NestedEngineFolders(root).Where(Directory.Exists).ToList();
+                engineFiles = Services.Engine.ManagedEngineLocator.NestedEngineFiles(root).Where(File.Exists).ToList();
+            }
+
+            if (safeRoot && folder != Services.Engine.EngineFolderState.Missing)
+            {
+                (outside, unclaimed) = await PlanFeatureModelsAsync(root, folder);
+                if (rootLink.IsLink)
+                    unclaimed = null;
+                else
+                    folderBytes = await Task.Run(() =>
+                        engineDirectories.Sum(Services.Engine.EngineRemovalPlanner.FolderSize) +
+                        engineFiles.Sum(f => new FileInfo(f).Length));
+            }
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                $"Uninstall planned: {(nested ? $"the Engine's parts of {root} ({string.Join(", ", engineDirectories.Concat(engineFiles))})" : root)} " +
+                $"({(rootLink.IsLink ? $"a link to {rootLink.Target ?? "another folder"}; only the link is removed" : Services.Engine.EngineRemovalMessages.FormatSize(folderBytes))}, {(notAnEngine ? "not an Engine folder" : safeRoot ? folder : "unsafe folder")}); " +
+                $"{outside.Count} model(s) of its features sit in your own folders" +
+                (unclaimed is { Count: > 0 }
+                    ? $"; {unclaimed.Count} model file(s) ({Services.Engine.EngineRemovalMessages.FormatSize(unclaimed.Bytes)}) in its models folder no feature uses."
+                    : "."));
+
+            var hasOutside = outside.Count > 0;
+            var message = notAnEngine
+                ? Services.Engine.EngineRemovalMessages.UninstallNotAnEngine(root)
+                : !safeRoot
+                ? Services.Engine.EngineRemovalMessages.UninstallUnsafeFolder(root)
+                : folder == Services.Engine.EngineFolderState.Missing
+                    ? Services.Engine.EngineRemovalMessages.UninstallMissingFolder(root)
+                    : rootLink.IsLink
+                        ? Services.Engine.EngineRemovalMessages.UninstallLink(root, rootLink.Target, outside)
+                        : Services.Engine.EngineRemovalMessages.Uninstall(root, folderBytes, outside, unclaimed,
+                            nested ? engineDirectories.Concat(engineFiles).ToList() : null);
+            var choice = Services.Engine.EngineRemovalMessages.ToChoice(
+                await _dialogService.ShowOptionsAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, message,
+                    Services.Engine.EngineRemovalMessages.UninstallOptions(hasOutside)),
+                hasOutside);
+            if (choice == Services.Engine.RemovalChoice.Cancel)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, "Uninstall cancelled. Nothing was changed.");
+                return;
+            }
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, !safeRoot
+                ? "Forgetting the Engine without touching its recorded folder."
+                : choice == Services.Engine.RemovalChoice.Everything
+                    ? "Uninstalling the Engine and the listed models in your own folders."
+                    : "Uninstalling the Engine; your own model folders stay as they are.");
+
+            // From here to the forget step the tile shows the uninstall and offers no Features, Install or
+            // Uninstall, and the Features dialog refuses to open. An install that started while the question
+            // was open still refuses the uninstall: checked right before the handle is taken, with no await
+            // between, so the remover can skip the installs (its own handle would read as one).
+            card.BeginEngineUninstall();
+            if (remover.BusyReason() is { } busyNow)
+            {
+                EndUninstall();
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Uninstall refused: the Engine is busy ({busyNow}). Nothing was changed.");
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(busyNow));
+                return;
+            }
+            uninstallActivity = _installActivity?.Begin("Diffusion Nexus Engine uninstall");
+
+            // An unsafe root never reaches the remover: nothing is stopped, held or deleted.
+            var result = new Services.Engine.EngineRemovalResult(null, []);
+            if (safeRoot)
+            {
+                var missing = folder == Services.Engine.EngineFolderState.Missing;
+                IReadOnlyList<string> files = (missing ? [] : engineFiles)
+                    .Concat(choice == Services.Engine.RemovalChoice.Everything ? outside.Select(f => f.Path) : [])
+                    .ToList();
+                IReadOnlyList<string> directories = missing ? [] : engineDirectories;
+                result = await remover.RemoveAsync(directories, files, engineRoot: root, installActivityHeldByCaller: true);
+            }
+
+            // A failure inside what the uninstall deletes as the Engine (not a model in the user's own folder).
+            bool IsEnginePart(string path) => (nested ? engineDirectories.Concat(engineFiles) : [root]).Any(part => FolderPathMatch.Contains(part, path));
+
+            // Nested layout: the folder itself goes only when nothing but the Engine was in it.
+            var leftInRoot = 0;
+            var rootDeleted = !nested;
+            if (nested && !result.WasBusy && !result.Failed.Any(f => IsEnginePart(f.Path)))
+            {
+                try
+                {
+                    leftInRoot = Directory.Exists(root) ? Directory.EnumerateFileSystemEntries(root).Count() : 0;
+                    if (leftInRoot == 0 && Directory.Exists(root)) Directory.Delete(root, recursive: false);
+                    rootDeleted = leftInRoot == 0;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource, $"The emptied Engine folder {root} could not be deleted: {ex.Message}");
+                }
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, rootDeleted
+                    ? $"Deleted the emptied Engine folder {root}."
+                    : $"Left in {root}: {leftInRoot} other item(s) that are not part of the Engine.");
+            }
+
+            if (result.WasBusy)
+            {
+                EndUninstall();
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Busy(result.BusyReason!));
+                return;
+            }
+
+            // Anything of the Engine folder left: keep the row so Uninstall stays on the tile for another try.
+            // A file outside it (a model in the user's own folder) that could not go does not keep the row.
+            if (result.Failed.Any(f => IsEnginePart(f.Path)))
+            {
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    "The Engine was not fully uninstalled; it stays registered so Uninstall Engine can be tried again.");
+                EndUninstall();
+                card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(root)));
+                _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Failures(
+                        "The Diffusion Nexus Engine was not fully uninstalled. Close the programs that use these files, then choose Uninstall Engine again.",
+                        result.Failed));
+                return;
+            }
+
+            // Settings folders are forgotten only inside what was deleted.
+            IReadOnlyList<string> swept = notAnEngine ? []
+                : nested ? [.. Services.Engine.ManagedEngineLocator.NestedEngineFolders(root), .. rootDeleted ? new[] { root } : []]
+                : [root];
+            await ForgetEngineAsync(swept);
+
+            var index = InstallerCards.IndexOf(card);
+            if (index >= 0) InstallerCards[index] = CreateEngineCard(null);
+            EndUninstall();
+            _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs());
+            _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+
+            var done = "The Diffusion Nexus Engine was uninstalled.";
+            if (rootLink.IsLink)
+            {
+                done = Services.Engine.EngineRemovalMessages.UninstalledLinkOnly(root, rootLink.Target);
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, done);
+            }
+
+            if (leftInRoot > 0)
+                done += "\n\n" + Services.Engine.EngineRemovalMessages.LeftInFolder(root, leftInRoot);
+
+            if (result.Failed.Count > 0)
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle,
+                    Services.Engine.EngineRemovalMessages.Failures(done, result.Failed));
+            else if (rootLink.IsLink || leftInRoot > 0)
+                await _dialogService.ShowMessageAsync(Services.Engine.EngineRemovalMessages.UninstallTitle, done);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Engine uninstall failed");
+            _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, $"Uninstall failed: {ex.Message}", ex);
+            EndUninstall();
+            await ShowEngineFolderAsItIsAsync(card);
+            await _dialogService.ShowMessageAsync("Error", $"Uninstalling the Engine failed: {ex.Message}");
+        }
+        finally
+        {
+            EndUninstall();
+            _engineUninstallRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// The models of the Engine's present features that sit in the user's own folders, and the model
+    /// files in the Engine's models folder that no feature declares. A check that fails (corrupt catalog,
+    /// checker error) falls through to no outside models and unknown (null) unclaimed ones: the uninstall
+    /// still runs. The unclaimed ones are also unknown when the catalog lacks a feature's workload.
+    /// </summary>
+    private async Task<(IReadOnlyList<Services.Engine.PlannedFile> Outside, Services.Engine.ModelFileTotal? Unclaimed)> PlanFeatureModelsAsync(
+        string root, Services.Engine.EngineFolderState folder)
+    {
+        if (folder != Services.Engine.EngineFolderState.Installed) return ([], null);
+        try
+        {
+            // The disk check is synchronous file I/O over every feature and folder: off the UI thread.
+            var checks = await Task.Run(() => Services.Engine.EngineFeatureChecks.LoadAsync(_catalog, _checkerService, root, CancellationToken.None));
+
+            // A feature the catalog does not describe has unknown files: counting the model files no
+            // feature uses would count its files too, so that count is left unknown.
+            var unknown = checks.Where(c => !c.IsComplete).Select(c => c.DisplayName).ToList();
+            if (unknown.Count > 0)
+                _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                    $"The catalog has no description of {string.Join(", ", unknown)}; the model files no Engine feature uses are not counted.");
+
+            return await Task.Run(() => (
+                Services.Engine.EngineRemovalPlanner.PlanUninstallOutsideModels(root, checks),
+                unknown.Count > 0
+                    ? null
+                    : Services.Engine.EngineRemovalPlanner.PlanUninstallUnclaimedModels(root, checks)));
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Engine uninstall: feature check failed");
+            _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+                $"Could not check which models the Engine's features use: {ex.Message}; uninstalling the Engine folder only.");
+            return ([], null);
+        }
+    }
+
+    /// <summary>
+    /// Whether the Engine folder is itself a junction or symlink, and the folder it points to (null when
+    /// that cannot be read). Unreadable attributes count as no link: the remover checks again.
+    /// </summary>
+    private static (bool IsLink, string? Target) EngineRootLink(string root)
+    {
+        try
+        {
+            var info = new DirectoryInfo(Path.TrimEndingDirectorySeparator(root));
+            if (!info.Attributes.HasFlag(FileAttributes.ReparsePoint)) return (false, null);
+            try { return (true, info.ResolveLinkTarget(returnFinalTarget: true)?.FullName ?? info.LinkTarget); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return (true, null); }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (false, null);
+        }
+    }
+
+    /// <summary>
+    /// After an uninstall that failed partway (the folder may already be gone), shows the tile what the
+    /// disk holds now. Best effort: a failure here must not hide the original error.
+    /// </summary>
+    private async Task ShowEngineFolderAsItIsAsync(InstallerPackageCardViewModel card)
+    {
+        try
+        {
+            var path = card.InstallationPath;
+            card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(path)));
+            _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs());
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Engine uninstall: could not re-check the Engine folder");
+        }
+    }
+
+    /// <summary>
+    /// Drops what pointed at the Engine: settings folders whose path lies inside it (by path: an old
+    /// startup backfill linked the user's own libraries to the Engine row), the app-managed row(s), and
+    /// the Engine as ComfyUI Server (switched to the custom URL, which keeps its saved address). Only the
+    /// <paramref name="sweptFolders"/> are swept: the whole Engine folder in the direct layout, only the
+    /// deleted ComfyUI clone and venv in the nested one (the folder itself only when it was deleted), none
+    /// for a folder that did not look like an Engine. A folder that is not a safe Engine folder (blank,
+    /// relative, a drive) never sweeps anything.
+    /// </summary>
+    private async Task ForgetEngineAsync(IReadOnlyList<string> sweptFolders)
+    {
+        var (unitOfWork, owned) = RentUnitOfWork();
+        try
+        {
+            var settings = await unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            var removed = 0;
+            var swept = sweptFolders.Where(Services.Engine.EngineRemovalPlanner.IsSafeEngineRoot).ToList();
+            bool Inside(string? path) => swept.Any(folder => FolderPathMatch.Contains(folder, path));
+            foreach (var row in settings.BaseModelFolders.Where(f => Inside(f.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveBaseModelFolder(row); removed++; }
+            foreach (var row in settings.ImageGalleries.Where(g => Inside(g.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveImageGallery(row); removed++; }
+            foreach (var row in settings.LoraSources.Where(s => Inside(s.FolderPath)).ToList())
+            { unitOfWork.AppSettings.RemoveLoraSource(row); removed++; }
+
+            var switched = settings.ComfyUiServerMode == ComfyUiServerMode.Engine;
+            if (switched) settings.ComfyUiServerMode = ComfyUiServerMode.CustomUrl;
+
+            foreach (var package in (await unitOfWork.InstallerPackages.GetAllAsync()).Where(p => p.IsAppManaged).ToList())
+                unitOfWork.InstallerPackages.Remove(package);
+
+            await unitOfWork.SaveChangesAsync();
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                $"Engine uninstalled: forgot {removed} settings folder(s) inside it" +
+                (switched ? "; ComfyUI Server switched to the custom URL." : "."));
+            if (removed > 0 || switched)
+                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+        }
+        finally
+        {
+            if (owned) unitOfWork.Dispose();
+        }
+    }
+
+    private const string EngineLogSource = "Diffusion Nexus Engine";
+
+    // Counts Engine installs, so progress posted by a finished install never writes the next one's tile.
+    private int _engineInstallGeneration;
+
+    // An Engine install-log line into the Unified Console. Errors the SDK reports (Error, Critical)
+    // count as errors there; everything else is Info. Not Warning: the SDK reports every stderr line
+    // as Warning, and git and pip write ordinary progress there, so a clean install would count
+    // dozens of warnings. Not Debug: the console hides it by default, and the "Executing: ..."
+    // command is what names a step that hangs.
+    private void LogEngineInstallEntry(DiffusionNexus.Installer.SDK.Services.InstallLogEntry entry)
+    {
+        if (entry.Level is SdkLogLevel.Error or SdkLogLevel.Critical)
+            _unifiedLogger.Error(LogCategory.Installation, EngineLogSource, entry.Message);
+        else
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource, entry.Message);
+    }
+
+    // Commands (Debug) and verbose detail (Trace) stay in the console; the rest may show on the tile.
+    private static bool ShowsOnEngineTile(SdkLogLevel level) =>
+        level is not (SdkLogLevel.Debug or SdkLogLevel.Trace);
+
+    // One step after a successful Engine install. The engine is installed and its row saved by then,
+    // so a step that throws is logged as a warning, never reported as a failed install, and the
+    // steps after it still run.
+    private async Task RunEngineFollowUpAsync(string what, Func<Task> step)
+    {
+        try
+        {
+            await step();
+        }
+        catch (Exception ex)
+        {
+            LogEngineFollowUpFailure(what, ex);
+        }
+    }
+
+    private void RunEngineFollowUp(string what, Action step)
+    {
+        try
+        {
+            step();
+        }
+        catch (Exception ex)
+        {
+            LogEngineFollowUpFailure(what, ex);
+        }
+    }
+
+    private void LogEngineFollowUpFailure(string what, Exception ex)
+    {
+        Serilog.Log.Warning(ex, "Diffusion Nexus Engine installed, but could not {What}", what);
+        _unifiedLogger.Warn(LogCategory.Installation, EngineLogSource,
+            $"Engine installed, but could not {what}: {ex.Message}");
+    }
+
+    private static readonly char[] LineBreaks = ['\n', '\r'];
+
+    // One line of a log message for the tile: the newest, i.e. the last non-blank piece between line
+    // breaks. A traceback ends with the error, batched output with the latest step, and git and pip
+    // redraw progress in place with carriage returns. Scans backwards: batched pip output can be
+    // large, and this runs on the UI thread for every entry. Null when the message is blank.
+    private static string? ActivityLine(string? message)
+    {
+        if (string.IsNullOrEmpty(message)) return null;
+        var end = message.Length;
+        while (end > 0)
+        {
+            var start = message.LastIndexOfAny(LineBreaks, end - 1) + 1;
+            var piece = message.AsSpan(start, end - start).Trim();
+            if (!piece.IsEmpty) return piece.ToString();
+            end = start - 1;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Installs the base engine: asks for a target folder, runs the SDK install with all content
+    /// excluded, and on success records it as an app-managed ComfyUI installation. Progress goes
+    /// to the Unified Console so a stalled install shows its last successful step.
+    /// </summary>
+    public async Task InstallEngineAsync()
+    {
+        var card = InstallerCards.FirstOrDefault(c => c.IsEngine);
+        if (card is null || _engineInstaller is null) return;
+
+        // Guards re-entrancy: a second Install click routed through a stale card reference (or a
+        // freshly-built one, if the reload guard in OnIsEngineTileVisibleChanged were ever
+        // bypassed) must never start a second SDK install writing into the same folder while one
+        // is already running. Set before the folder dialog so it also covers the window while
+        // that's up, and cleared unconditionally in the outer finally below — every exit path
+        // from here on, cancelled pick, thrown exception, or a completed install, reaches it.
+        if (_isEngineInstallInFlight) return;
+        _isEngineInstallInFlight = true;
+        var visibilityAtStart = IsEngineTileVisible;
+        // Begun when the install itself starts (not during the folder pick); ended by both finallys below.
+        IDisposable? engineRunning = null;
+
+        // Outer try/finally guarantees the in-flight flag is cleared on every exit from here
+        // on, including an exception from the folder picker itself — ShowOpenFolderDialogAsync
+        // sat outside any try/finally before this fix, so a throw there left the flag stuck for
+        // the rest of the session: every later Install click became a silent no-op, and the
+        // Canvas visibility toggle stopped reloading the card list (OnIsEngineTileVisibleChanged
+        // also honors this flag).
+        try
+        {
+            var folder = await _dialogService.ShowOpenFolderDialogAsync(
+                $"Choose where to install the Diffusion Nexus Engine (default: {Services.Engine.ManagedEngineLocator.DefaultInstallRoot})");
+
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                return;
+            }
+
+            UnifiedConsolePanelRequested?.Invoke(this, EventArgs.Empty);
+
+            // Progress<T> posts its callbacks, so a report queued as the SDK returned can land after the
+            // install ended, or during the next one: it still reaches the console, but only the install
+            // that sent it, while it runs, writes the tile.
+            var generation = ++_engineInstallGeneration;
+            bool WritesTile() => generation == _engineInstallGeneration && card.IsEngineInstalling;
+
+            // The full log goes to the Unified Console (opened above), errors as errors. On
+            // the tile, raw lines replaced the step and pip's package lists flooded it (#609): the tile
+            // keeps the step and shows one line of the latest output, so a long step still looks alive.
+            // A blank line (pip and git write some to stderr) keeps the line that is there.
+            var logProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallLogEntry>(entry =>
+            {
+                LogEngineInstallEntry(entry);
+                if (WritesTile() && ShowsOnEngineTile(entry.Level) && ActivityLine(entry.Message) is { } line)
+                    card.EngineActivity = line;
+            });
+
+            var lastStep = -1;
+            var stepProgress = new Progress<DiffusionNexus.Installer.SDK.Services.InstallationProgress>(p =>
+            {
+                if (!WritesTile()) return;
+                // The previous step's last line says nothing about this one.
+                if (p.StepIndex != lastStep) card.EngineActivity = null;
+                lastStep = p.StepIndex;
+                card.EngineProgressPercent = p.ProgressPercentage;
+                card.EngineStatusMessage = $"[{p.StepIndex + 1}/{p.TotalSteps}] {p.Message}";
+            });
+
+            // Shown once the tile has ended the install: a failure dialog must not open over a tile
+            // that still says "Installing...".
+            string? failureToReport = null;
+            string? failureMessage = null;
+            string? installedPath = null;
+
+            try
+            {
+                // Inside the try: whatever throws from here on, the finally ends the install on the
+                // tile, so it can never stay on "Installing..." with Install hidden.
+                card.BeginEngineInstall(folder);
+                engineRunning = _installActivity?.Begin("Diffusion Nexus Engine");
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    $"Starting base engine install into {folder}.");
+
+                var sharedRoots = await ResolveSharedModelRootsAsync();
+
+                var outcome = await _engineInstaller.InstallBaseEngineAsync(
+                    new Services.Engine.EngineInstallRequest(folder, sharedRoots),
+                    logProgress, stepProgress, CancellationToken.None);
+
+                if (outcome.IsSuccess)
+                {
+                    // Reuse the existing app-managed row instead of always appending. A stale row
+                    // (folder gone) is exactly what put the tile back in front of the user with an
+                    // Install button in the first place — unconditionally adding a second IsAppManaged
+                    // row here would leave the stale one as the older, first-returned row for both
+                    // this tile's own load path and the Canvas engine-root resolver in App.axaml.cs
+                    // (both do a plain FirstOrDefault(p => p.IsAppManaged)), so the successful
+                    // reinstall would still look and behave like a dead install. Updating the row in
+                    // place (rather than removing + re-adding) also preserves its Id, so any settings
+                    // that ever get FK-linked to it (galleries, base model folders — see the ordinary
+                    // Remove flow above for what that can include) stay attached instead of being
+                    // orphaned by a delete.
+                    var appManagedRows = (await _unitOfWork.InstallerPackages.GetAllAsync())
+                        .Where(p => p.IsAppManaged)
+                        .ToList();
+
+                    var package = appManagedRows.FirstOrDefault();
+                    if (package is null)
+                    {
+                        package = new InstallerPackage
+                        {
+                            Name = "Diffusion Nexus Engine",
+                            InstallationPath = outcome.RepositoryPath ?? folder,
+                            Type = InstallerType.ComfyUI,
+                            ExecutablePath = null,
+                            Arguments = string.Empty,
+                            IsAppManaged = true,
+                            CreatedAt = DateTimeOffset.UtcNow
+                        };
+                        await _unitOfWork.InstallerPackages.AddAsync(package);
+                    }
+                    else
+                    {
+                        package.Name = "Diffusion Nexus Engine";
+                        package.InstallationPath = outcome.RepositoryPath ?? folder;
+                        package.Type = InstallerType.ComfyUI;
+                        package.ExecutablePath = null;
+                        package.Arguments = string.Empty;
+                        package.IsAppManaged = true;
+                        package.CreatedAt = DateTimeOffset.UtcNow;
+                        _unitOfWork.InstallerPackages.Update(package);
+
+                        // Defensive: a pre-fix build could already have left more than one
+                        // app-managed row behind. Converge on exactly one going forward.
+                        foreach (var duplicate in appManagedRows.Skip(1))
+                            _unitOfWork.InstallerPackages.Remove(duplicate);
+                    }
+
+                    await _unitOfWork.SaveChangesAsync();
+
+                    installedPath = package.InstallationPath;
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                        $"Engine installed at {package.InstallationPath}.");
+
+                    // The SDK's installer can only declare one shared library (its ModelBaseFolder
+                    // option holds a single path), so rewrite the engine's extra_model_paths.yaml
+                    // with every registered folder now that the install is on disk.
+                    if (_engineModelPaths is not null)
+                    {
+                        await RunEngineFollowUpAsync("wire the shared model folders", async () =>
+                        {
+                            var sync = await _engineModelPaths.SyncAsync(package.InstallationPath);
+                            DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(sync, _engine, _unifiedLogger);
+                            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                sync.Roots.Count > 0
+                                    ? $"Engine reads {sync.Roots.Count} model folder(s): {string.Join(" | ", sync.Roots)}"
+                                    : $"No shared model folders were wired into the engine ({sync.SkipReason ?? "none registered"}); " +
+                                      "it will only use its own models folder.");
+                        });
+                    }
+
+                    // Its models folder, where feature downloads land, is a Base Model Folder from the
+                    // start: Settings shows it and the app's model features read it without a restart.
+                    if (_baseModelFolderRegistrar is not null)
+                    {
+                        var registeredPackage = package;
+                        await RunEngineFollowUpAsync("register the Engine's models folder", async () =>
+                        {
+                            var modelsFolder = Services.Engine.ManagedEngineLocator.ModelsFolder(registeredPackage.InstallationPath);
+                            Directory.CreateDirectory(modelsFolder);
+                            if (await _baseModelFolderRegistrar.EnsureRegisteredAsync([registeredPackage]) > 0)
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    $"Registered the Engine's models folder as a Base Model Folder: {modelsFolder}");
+                                _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+                            }
+                            else
+                            {
+                                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                                    "The Engine's models folder was already registered.");
+                            }
+                        });
+                    }
+
+                    RunEngineFollowUp("announce the new installation",
+                        () => _eventAggregator.PublishInstallerPackagesChanged(new InstallerPackagesChangedEventArgs()));
+                    // Settings' Engine status line and the editor's readiness lines re-check on this.
+                    RunEngineFollowUp("tell Settings and the editor",
+                        () => _eventAggregator.PublishEngineChanged(new EngineChangedEventArgs()));
+                }
+                else if (outcome.IsCancelled)
+                {
+                    _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                        "Engine install cancelled by the user. Nothing was registered.");
+                }
+                else
+                {
+                    _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
+                        $"Engine install failed: {outcome.Message}");
+                    failureToReport = outcome.Message;
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Diffusion Nexus Engine install failed");
+                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
+                    $"Engine install failed: {ex.Message}", ex);
+                failureMessage = ex.Message;
+            }
+            finally
+            {
+                // Nothing installed: the row's folder may have changed (the install may have written
+                // into it), so read it again the way a reload would, off the UI thread (a sleeping
+                // drive must not freeze the window), and before the tile ends the install: Install
+                // comes back then, and a click must meet the folder as it is now.
+                if (installedPath is null && card.HasEngineRow)
+                {
+                    try
+                    {
+                        var rowFolder = card.InstallationPath;
+                        card.ApplyEngineFolder(await Task.Run(() => Services.Engine.ManagedEngineLocator.Probe(rowFolder)));
+                    }
+                    catch (Exception ex)
+                    {
+                        Serilog.Log.Warning(ex, "Could not read the Engine folder again after a failed install");
+                    }
+                }
+
+                card.EndEngineInstall(installedPath);
+                engineRunning?.Dispose();
+            }
+
+            // The install is over by now, so a dialog that cannot open is logged, never thrown.
+            try
+            {
+                if (failureToReport is not null)
+                {
+                    // A genuine failure (not a cancel) is worth reporting — offer the existing
+                    // feedback dialog instead of leaving the user with a dead end.
+                    var report = await _dialogService.ShowConfirmAsync("Engine install failed",
+                        $"{failureToReport}\n\nSend a report so this can be fixed?");
+                    if (report)
+                        await _dialogService.ShowFeedbackDialogAsync();
+                }
+                else if (failureMessage is not null)
+                {
+                    await _dialogService.ShowMessageAsync("Engine install failed", failureMessage);
+                }
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Error(ex, "Could not show the Engine install failure");
+                _unifiedLogger.Error(LogCategory.Installation, EngineLogSource,
+                    $"Could not show the install failure: {ex.Message}", ex);
+            }
+
+            // Asked once the tile shows the finished install, like the failure dialog above.
+            if (installedPath is not null)
+                await RunEngineFollowUpAsync("offer the Engine as the Server", OfferEngineAsServerAsync);
+        }
+        finally
+        {
+            _isEngineInstallInFlight = false;
+            engineRunning?.Dispose();
+
+            // The visibility switch may have moved while we were installing — its own reload was
+            // suppressed in OnIsEngineTileVisibleChanged to avoid detaching `card` mid-install.
+            // Catch up now, after the tile has shown how the install ended, whatever threw.
+            if (IsEngineTileVisible != visibilityAtStart)
+                _ = LoadInstallationsCommand.ExecuteAsync(null);
+        }
+    }
+
+    internal const string EngineOfferTitle = "Use the Diffusion Nexus Engine?";
+
+    internal const string EngineOfferMessage =
+        "The Diffusion Nexus Engine is installed. Use it from now on?\n\n" +
+        "Inpaint, Outpaint (also with Vision) and Batch Upscale will run on it instead of your own ComfyUI. " +
+        "Each one needs its feature installed on the Engine first: Installation Manager → Diffusion Nexus Engine → Features.\n\n" +
+        "You can change this any time in Settings → ComfyUI Server.";
+
+    internal const string KeepMyComfyUiOption = "Keep my ComfyUI";
+    internal const string UseTheEngineOption = "Use the Engine";
+
+    /// <summary>
+    /// After a successful Engine install, asks whether the Server setting should move to the Engine
+    /// (#612). Not asked when it already is the Engine: a fresh database starts there, and no settings
+    /// row reads as the Engine too. "Use the Engine" saves the setting and publishes
+    /// <see cref="SettingsSavedEventArgs"/>, as a save in Settings does, so open panels re-check.
+    /// </summary>
+    private async Task OfferEngineAsServerAsync()
+    {
+        var (unitOfWork, owned) = RentUnitOfWork();
+        try
+        {
+            // One read: the row the answer is saved to. The dialog is modal, so nothing in the app writes
+            // the settings while it is open.
+            var settings = await unitOfWork.AppSettings.GetSettingsAsync();
+            if (settings is null || settings.ComfyUiServerMode == ComfyUiServerMode.Engine) return;
+
+            // The dialog's last option is the primary one. Closing it keeps the setting.
+            var choice = await _dialogService.ShowOptionsAsync(
+                EngineOfferTitle, EngineOfferMessage, KeepMyComfyUiOption, UseTheEngineOption);
+            if (choice != 1)
+            {
+                _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                    "Kept your own ComfyUI as the Server. Change it any time in Settings → ComfyUI Server.");
+                return;
+            }
+
+            settings.ComfyUiServerMode = ComfyUiServerMode.Engine;
+            await unitOfWork.SaveChangesAsync();
+
+            _unifiedLogger.Info(LogCategory.Installation, EngineLogSource,
+                "Server set to the Diffusion Nexus Engine: Inpaint, Outpaint (also with Vision) and Batch Upscale run on it now.");
+            _eventAggregator.PublishSettingsSaved(new SettingsSavedEventArgs());
+        }
+        finally
+        {
+            if (owned) unitOfWork.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Model libraries the engine should read instead of duplicating. Uses the registered base
+    /// model folders when available; an empty list simply means the engine keeps models locally.
+    /// The starred default folder (if any) is ordered first, since the SDK installer feeds
+    /// <c>SharedModelRoots.FirstOrDefault()</c> into the engine's model base folder.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> ResolveSharedModelRootsAsync()
+    {
+        try
+        {
+            var settings = await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync();
+            return settings?.BaseModelFolders
+                .Where(f => f.IsEnabled && !string.IsNullOrWhiteSpace(f.FolderPath))
+                .OrderByDescending(f => f.IsDefault)
+                .ThenBy(f => f.Order)
+                .Select(f => f.FolderPath)
+                .ToList() ?? [];
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Could not resolve shared model roots for the engine install.");
+            return [];
+        }
     }
 
     private void OnOpenFolderRequested(InstallerPackageCardViewModel card)
@@ -823,12 +1879,37 @@ public partial class InstallerManagerViewModel : ViewModelBase
         }
     }
 
-    private async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
+    internal async Task OnUpdateRequestedAsync(InstallerPackageCardViewModel card)
     {
         var service = _updateServices.FirstOrDefault(s => s.SupportedTypes.Contains(card.Type));
         if (service is null)
         {
             await _dialogService.ShowMessageAsync("Not Supported", "Update is not supported for this installer type.");
+            return;
+        }
+
+        // The Engine is not updated under itself: the console's Stop asks first while a generation
+        // runs on it, which an update here could not. Checked before the confirmation below, so an
+        // update that cannot run asks nothing first.
+        if (card.IsEngine && EngineInUse())
+        {
+            await ShowEngineBusyForUpdateAsync();
+            return;
+        }
+
+        // Some updates are not a plain move forward (ComfyUI on the Manager's stable channel
+        // switches BACK to the newest release and may set the database aside). The badge may
+        // also be stale, so ask the service now and get the user's agreement to its exact text.
+        if (!await ConfirmUpdateIfNeededAsync(service, card))
+            return;
+
+        // No start of the Engine from the folder this update changes, whoever asks (the Canvas, a
+        // feature). Granted only with nothing running or booting from it; released as soon as the
+        // update itself ends, not when its result dialog closes.
+        using var maintenance = new ReleaseOnce(card.IsEngine && _engine is not null ? await _engine.TryBeginMaintenanceAsync() : null);
+        if (card.IsEngine && _engine is not null && !maintenance.Holds)
+        {
+            await ShowEngineBusyForUpdateAsync();
             return;
         }
 
@@ -860,9 +1941,20 @@ public partial class InstallerManagerViewModel : ViewModelBase
             _unifiedLogger.Info(LogCategory.Installation, card.Name, msg);
         });
 
+        // Right before the try whose finally ends it: nothing between Begin and the try can throw, so the
+        // catalog apply is never held by an update that is not running (#618 review).
+        var updateRunning = _installActivity?.Begin(card.Name);
         try
         {
-            var result = await service.UpdateAsync(card.InstallationPath, progress);
+            UpdateResult result;
+            try
+            {
+                result = await service.UpdateAsync(card.InstallationPath, progress);
+            }
+            finally
+            {
+                maintenance.Dispose();
+            }
             if (result.Success)
             {
                 card.IsUpdateAvailable = false;
@@ -921,12 +2013,33 @@ public partial class InstallerManagerViewModel : ViewModelBase
         {
             card.IsUpdating = false;
             card.UpdateStatusMessage = null;
+            updateRunning?.Dispose();
 
             // Safety net: always ensure subscribers know updating has stopped,
             // even if an earlier notification was missed.
             InstallerUpdateStateChanged?.Invoke(this, new InstallerUpdateStateEventArgs(
                 card.Id, IsUpdating: false, IsUpdateAvailable: card.IsUpdateAvailable, UpdateSummary: null));
         }
+    }
+
+    // Running, or booting a start (no URL yet): an engine whose host can tell says so; otherwise its URL.
+    private bool EngineInUse() => _engine is Services.Engine.IManagedEngineControl control
+        ? control.IsRunning || control.IsStarting
+        : _engine?.BaseUrl is not null;
+
+    private Task ShowEngineBusyForUpdateAsync() => _dialogService.ShowMessageAsync(
+        "Diffusion Nexus Engine is in use",
+        "Stop the Engine before updating it: use Stop on its tile in the Unified Console. If it is starting, wait until it has started.");
+
+    // Disposes what it holds once, however often it is disposed: the update releases the Engine's
+    // maintenance hold as soon as it ends, and the method's end releases it on every other path.
+    private sealed class ReleaseOnce(IDisposable? held) : IDisposable
+    {
+        private IDisposable? _held = held;
+
+        public bool Holds => _held is not null;
+
+        public void Dispose() => Interlocked.Exchange(ref _held, null)?.Dispose();
     }
 
     /// <summary>
@@ -953,6 +2066,34 @@ public partial class InstallerManagerViewModel : ViewModelBase
     {
         var tasks = InstallerCards.Select(card => CheckCardForUpdatesAsync(card));
         await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// Returns false when the update needs confirmation and the user declined. A failed or
+    /// timed-out pre-check does not block the update: the service applies its own guards.
+    /// </summary>
+    private async Task<bool> ConfirmUpdateIfNeededAsync(IInstallerUpdateService service, InstallerPackageCardViewModel card)
+    {
+        UpdateCheckResult check;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            check = await service.CheckForUpdatesAsync(card.InstallationPath, ct: cts.Token);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "Pre-update check failed for {Name}; continuing without confirmation", card.Name);
+            return true;
+        }
+
+        if (check.ConfirmationMessage is null)
+            return true;
+
+        _unifiedLogger.Info(LogCategory.Installation, card.Name, "Update needs confirmation: " + check.Summary);
+        var confirmed = await _dialogService.ShowConfirmAsync("Confirm update", check.ConfirmationMessage);
+        _unifiedLogger.Info(LogCategory.Installation, card.Name,
+            confirmed ? "User confirmed the switch." : "User declined the switch; nothing was changed.");
+        return confirmed;
     }
 
     private async Task CheckCardForUpdatesAsync(InstallerPackageCardViewModel card)

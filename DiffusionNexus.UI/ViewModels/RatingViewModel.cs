@@ -106,9 +106,14 @@ public partial class RatingViewModel : ObservableObject
         _selectedDatasetImage.RatingStatus = _selectedDatasetImage.IsApproved
             ? ImageRatingStatus.Unrated
             : ImageRatingStatus.Approved;
-        _selectedDatasetImage.SaveRating();
+        var saved = _selectedDatasetImage.SaveRating();
 
         NotifyRatingProperties();
+        if (!saved)
+        {
+            StatusMessageChanged?.Invoke(this, RatingNotSavedMessage);
+            return;
+        }
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {
@@ -128,9 +133,14 @@ public partial class RatingViewModel : ObservableObject
         _selectedDatasetImage.RatingStatus = _selectedDatasetImage.IsRejected
             ? ImageRatingStatus.Unrated
             : ImageRatingStatus.Rejected;
-        _selectedDatasetImage.SaveRating();
+        var saved = _selectedDatasetImage.SaveRating();
 
         NotifyRatingProperties();
+        if (!saved)
+        {
+            StatusMessageChanged?.Invoke(this, RatingNotSavedMessage);
+            return;
+        }
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {
@@ -148,9 +158,14 @@ public partial class RatingViewModel : ObservableObject
 
         var previousRating = _selectedDatasetImage.RatingStatus;
         _selectedDatasetImage.RatingStatus = ImageRatingStatus.Unrated;
-        _selectedDatasetImage.SaveRating();
+        var saved = _selectedDatasetImage.SaveRating();
 
         NotifyRatingProperties();
+        if (!saved)
+        {
+            StatusMessageChanged?.Invoke(this, RatingNotSavedMessage);
+            return;
+        }
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {
@@ -161,6 +176,8 @@ public partial class RatingViewModel : ObservableObject
 
         StatusMessageChanged?.Invoke(this, "Rating cleared");
     }
+
+    private const string RatingNotSavedMessage = "Rating not saved: the folder's ratings file is in use (see the Unified Console)";
 
     private void NotifyRatingProperties()
     {

@@ -1,0 +1,125 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:dlg="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.DownloadPreflightDialog"
+        x:DataType="dlg:DownloadPreflightDialog"
+        Title="{Binding WindowTitle}"
+        Width="640"
+        SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#2D2D30">
+
+  <StackPanel Margin="20" Spacing="14">
+
+    <StackPanel Orientation="Horizontal" Spacing="10">
+      <TextBlock Text="&#x26A0;" FontSize="22" Foreground="#FBBF24" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding HeaderText}" FontSize="18" FontWeight="Bold" Foreground="White" VerticalAlignment="Center"/>
+    </StackPanel>
+
+    <TextBlock Foreground="#CCCCCC" FontSize="13" TextWrapping="Wrap"
+               IsVisible="{Binding HasWaitlistable}">
+      <Run Text="{Binding TemporaryLead}"/><Run Text="Early Access" Foreground="#C084FC" FontWeight="SemiBold"/><Run Text="{Binding TemporaryTail}"/>
+    </TextBlock>
+
+    <TextBlock Foreground="#CCCCCC" FontSize="13" TextWrapping="Wrap"
+               IsVisible="{Binding HasWaitlistable}">
+      <Run Text="Add to waitlist" FontWeight="SemiBold" Foreground="#2DD4BF"/><Run Text=" tracks these versions on the Waitlist tab next to the download queue: each shows a countdown to its release, and once free they can be moved into the queue with one click."/>
+    </TextBlock>
+
+    <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" MaxHeight="140"
+            IsVisible="{Binding HasWaitlistable}">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <ItemsControl ItemsSource="{Binding EarlyAccessTitles}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="x:String">
+              <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                <Border Background="#669333EA" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                  <TextBlock Text="EA" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                </Border>
+                <TextBlock Text="{Binding}" Foreground="#DDDDDD" FontSize="12" TextWrapping="Wrap"/>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Border>
+
+    <StackPanel Spacing="6" IsVisible="{Binding HasPermanent}">
+      <TextBlock Foreground="#CCCCCC" FontSize="13" TextWrapping="Wrap">
+        <Run Text="{Binding PermanentLead}"/><Run Text="permanently paid" Foreground="#F87171" FontWeight="SemiBold"/><Run Text="{Binding PermanentTail}"/>
+      </TextBlock>
+      <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" MaxHeight="140">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding PermanentTitles}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                  <Border Background="#66DC2626" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                    <TextBlock Text="PAID" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                  </Border>
+                  <TextBlock Text="{Binding}" Foreground="#DDDDDD" FontSize="12" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Spacing="6" IsVisible="{Binding HasInstalled}">
+      <TextBlock Foreground="#CCCCCC" FontSize="13" TextWrapping="Wrap">
+        <Run Text="{Binding InstalledLead}"/><Run Text="already installed" Foreground="#4ADE80" FontWeight="SemiBold"/><Run Text="{Binding InstalledTail}"/>
+      </TextBlock>
+      <Border Background="#1A1A1A" CornerRadius="6" Padding="12,10" MaxHeight="140">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding InstalledTitles}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2">
+                  <Border Background="#6622C55E" CornerRadius="3" Padding="4,1" VerticalAlignment="Center">
+                    <TextBlock Text="INSTALLED" FontSize="9" Foreground="White" FontWeight="SemiBold"/>
+                  </Border>
+                  <TextBlock Text="{Binding}" Foreground="#DDDDDD" FontSize="12" TextWrapping="Wrap"/>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </Border>
+    </StackPanel>
+
+    <WrapPanel HorizontalAlignment="Right" ItemSpacing="8" LineSpacing="8">
+      <Button Content="Cancel"
+              MinWidth="90"
+              Click="OnCancelClick"/>
+      <Button Content="{Binding SkipButtonText}"
+              MinWidth="150"
+              Click="OnSkipClick"
+              IsVisible="{Binding ShowSkip}"/>
+      <Button Content="Open on Civitai"
+              MinWidth="130"
+              Click="OnOpenWebsiteClick"
+              IsVisible="{Binding HasPaywalled}"
+              ToolTip.Tip="Opens each paid model's page in your browser so you can buy and download manually"/>
+      <Button Content="Add to waitlist"
+              MinWidth="130"
+              Click="OnAddToWaitlistClick"
+              IsVisible="{Binding HasPaywalled}"
+              IsEnabled="{Binding HasWaitlistable}"
+              Background="#0D9488"
+              Foreground="White"
+              FontWeight="SemiBold"
+              ToolTip.Tip="{Binding WaitlistButtonTooltip}"/>
+      <Button Content="Download again"
+              MinWidth="110"
+              Click="OnDownloadAnywayClick"
+              IsVisible="{Binding ShowDownloadAnyway}"
+              Background="#9333EA"
+              Foreground="White"
+              FontWeight="SemiBold"
+              ToolTip.Tip="Fetch these files a second time, overwriting the copies already in your library"/>
+    </WrapPanel>
+
+  </StackPanel>
+</Window>

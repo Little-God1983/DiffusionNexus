@@ -273,6 +273,70 @@ public class JsonInfoFileReaderServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetModelData_WithSftWeightsFile_ShouldNotBeDropped()
+    {
+        // Arrange: the only weights file is the short-alias .sft container, not .safetensors or .pt.
+        var modelFiles = new[]
+        {
+            ("sft_model.sft", ""),
+            ("sft_model.civitai.info", @"{
+                ""baseModel"": ""SD 1.5"",
+                ""type"": ""LORA""
+            }")
+        };
+
+        foreach (var (fileName, content) in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
+        }
+
+        var service = new JsonInfoFileReaderService(
+            _testDirectoryPath,
+            (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken)
+        );
+
+        // Act
+        var result = await service.GetModelData(null, CancellationToken.None);
+
+        // Assert
+        var model = result.Single(m => m.SafeTensorFileName == "sft_model");
+        model.NoMetaData.Should().BeFalse();
+        model.DiffusionBaseModel.Should().Be("SD 1.5");
+    }
+
+    [Fact]
+    public async Task GetModelData_WithCkptWeightsFile_ShouldNotBeDropped()
+    {
+        // Arrange: the only weights file is .ckpt, not .safetensors or .pt.
+        var modelFiles = new[]
+        {
+            ("ckpt_model.ckpt", ""),
+            ("ckpt_model.civitai.info", @"{
+                ""baseModel"": ""SDXL"",
+                ""type"": ""LORA""
+            }")
+        };
+
+        foreach (var (fileName, content) in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_testDirectoryPath, fileName), content);
+        }
+
+        var service = new JsonInfoFileReaderService(
+            _testDirectoryPath,
+            (filePath, progress, cancellationToken) => new LocalFileMetadataProvider().GetModelMetadataAsync(filePath, cancellationToken)
+        );
+
+        // Act
+        var result = await service.GetModelData(null, CancellationToken.None);
+
+        // Assert
+        var model = result.Single(m => m.SafeTensorFileName == "ckpt_model");
+        model.NoMetaData.Should().BeFalse();
+        model.DiffusionBaseModel.Should().Be("SDXL");
+    }
+
+    [Fact]
     public void GroupFilesByPrefix_WithSpecialCharactersInFilenames_ShouldGroupCorrectly()
     {
         // Arrange

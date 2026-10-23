@@ -8,7 +8,9 @@ using DiffusionNexus.DataAccess.Recovery;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Infrastructure;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Infrastructure.Services;
+using DiffusionNexus.Installer.SDK.Catalog;
+using DiffusionNexus.Installer.SDK.Catalog.Updates;
 using DiffusionNexus.Installer.SDK.Services;
 using DiffusionNexus.Installer.SDK.Services.Installation;
 using DiffusionNexus.Installer.SDK.Shared.Services;
@@ -16,16 +18,18 @@ using DiffusionNexus.Installer.SDK.Shared.Services.Feedback;
 using DiffusionNexus.Service.Services;
 using DiffusionNexus.Service.Services.DatasetQuality;
 using DiffusionNexus.Service.Services.DatasetQuality.ImageAnalysis;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Converters;
 using DiffusionNexus.UI.Controls;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Catalog;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.Services.SpellCheck;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.Views;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using SdkContext = DiffusionNexus.Installer.SDK.DataAccess.DiffusionNexusContext;
+using ComfyUiUrl = DiffusionNexus.UI.Services.Diffusion.ComfyUiUrl;
 
 namespace DiffusionNexus.UI;
 
@@ -101,6 +105,9 @@ public partial class App : Application
                 Serilog.Log.Information("Disabling data annotation validation...");
                 DisableAvaloniaDataAnnotationValidation();
 
+                // Auto-height dialogs stay on the owner's screen as their content grows (issue #630).
+                Behaviors.DialogPlacement.Register();
+
                 // Configure services
                 Serilog.Log.Information("Configuring services...");
                 var services = new ServiceCollection();
@@ -148,6 +155,14 @@ public partial class App : Application
                     }
                     // Kill all managed child processes before scope disposal
                     Services?.GetService<PackageProcessManager>()?.Dispose();
+                    // Stop the app-owned ComfyUI engine, if it was ever started, so it never
+                    // outlives the app.
+                    var managedEngine = Services?.GetService<Services.Engine.ManagedComfyUiEngine>();
+                    if (managedEngine is not null)
+                    {
+                        try { managedEngine.StopAsync().GetAwaiter().GetResult(); }
+                        catch (Exception ex) { Serilog.Log.Warning(ex, "Managed ComfyUI engine stop failed."); }
+                    }
                     _appScope?.Dispose();
                 };
 
@@ -195,10 +210,12 @@ public partial class App : Application
             {
                 Serilog.Log.Information("Initializing app database...");
                 InitializeDatabase();
-                Serilog.Log.Information("Initializing SDK database...");
-                InitializeSdkDatabase();
             });
             startupProgress.Complete("database");
+
+            // Not part of the ready check: the first catalog load can unpack the embedded seed or wait
+            // on the installer's apply lock, and nothing on screen needs it before its async reads.
+            StartCatalogInBackground();
 
             // Everything below resumes on the Avalonia UI thread (its SynchronizationContext
             // was captured at the await above), which these steps require: they touch
@@ -277,14 +294,33 @@ public partial class App : Application
                         var packages = await uow.InstallerPackages.GetAllAsync();
                         var added = await folderRegistrar.EnsureRegisteredAsync(packages);
 
+                        // Drop the per-category rows the pre-fix registrar created — it fed
+                        // model SEARCH paths into the root registry, so one
+                        // extra_model_paths.yaml became twenty rows. Only app-registered rows
+                        // nested inside a current root are removed; see
+                        // RedundantBaseModelFolders for the full set of guards.
+                        var pruned = await folderRegistrar.PruneRedundantFoldersAsync(packages);
+
                         // The Settings page preloads its data before this backfill runs.
                         // Announce the change so an already-loaded Settings VM reloads its
                         // Base Model Folders list (same mechanism the gallery link uses).
-                        if (added > 0)
+                        if (added > 0 || pruned > 0)
                         {
                             Services!.GetService<IDatasetEventAggregator>()
                                 ?.PublishSettingsSaved(new SettingsSavedEventArgs());
                         }
+
+                        // Now that the folder list is settled, wire all of it into the app-owned
+                        // engine. Runs here as well as before each engine start so an engine
+                        // installed by an older build — which could only ever see the first folder
+                        // — is corrected without the user reinstalling it.
+                        var modelPathsSync = await scope.ServiceProvider
+                            .GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>()
+                            .SyncAsync();
+                        DiffusionNexus.UI.Services.Engine.EngineModelFoldersChanged.RequestRestartIfWritten(
+                            modelPathsSync,
+                            Services!.GetService<Services.Engine.IManagedComfyUiEngine>(),
+                            Services!.GetService<DiffusionNexus.Domain.Services.UnifiedLogging.IUnifiedLogger>());
                     }
                     catch (Exception ex)
                     {
@@ -389,6 +425,11 @@ public partial class App : Application
                     case Civitai.CivitaiBaseModelCatalogEventKind.UsedBundledFallback:
                         logger?.Warn(category, source, e.Message ?? $"Using bundled fallback ({e.Count} base models).", detail);
                         break;
+                    case Civitai.CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels:
+                        // Warn, not Info: the refresh may still "succeed" off an older file,
+                        // so this is the only signal that the list is going stale.
+                        logger?.Warn(category, source, e.Message ?? "A base model source returned nothing parseable.", detail);
+                        break;
                     case Civitai.CivitaiBaseModelCatalogEventKind.FetchFailed:
                         logger?.Warn(category, source, e.Message ?? "Base model fetch failed.", detail);
                         if (e.Exception is not null)
@@ -461,95 +502,29 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Reports the SDK catalog database status and applies any pending EF Core migrations.
-    /// Path resolution and the embedded-catalog deploy are owned entirely by
-    /// <see cref="ServiceCollectionExtensions.AddDiffusionNexusDataAccess"/> (which ran at DI
-    /// registration); this method reads the resulting <see cref="ISdkCatalogDatabase"/> for
-    /// reporting and migrates the SAME context the app uses. It deliberately does NOT re-resolve
-    /// the path or re-deploy — doing so previously diverged from the file the context opened
-    /// (a hardcoded %LocalAppData% deploy vs. an honored db_override.txt), surfacing as
-    /// "SQLite Error 14: unable to open database file".
+    /// The Installer SDK 2.x JSON catalog's startup work, fire-and-forget on the thread pool: channel,
+    /// Unified Console report, then the background update check (<see cref="CatalogStartup.RunAsync"/>).
+    /// Never fails startup.
     /// </summary>
-    private static void InitializeSdkDatabase()
+    private static void StartCatalogInBackground()
     {
-        const string logSource = "Installer SDK";
-
-        var activityLog = Services!.GetService<IActivityLogService>();
-
-        try
+        _ = Task.Run(async () =>
         {
-            // Single source of truth: the resolved path + embedded-deploy outcome captured at
-            // registration. The deploy already happened there (before the first connection).
-            var catalog = Services!.GetRequiredService<ISdkCatalogDatabase>();
-            var runtimeDb = catalog.DatabasePath;
-            var deploy = catalog.DeployResult;
-
-            if (deploy is not null)
+            try
             {
-                // a) DB version (always)
-                activityLog?.LogInfo(
-                    logSource,
-                    $"SDK database version: {deploy.ShippedVersion}",
-                    $"Path: {runtimeDb}");
-
-                // b) up-to-date / c) replaced
-                switch (deploy.Outcome)
-                {
-                    case SdkDatabaseDeployOutcome.UpToDate:
-                    case SdkDatabaseDeployOutcome.SamePath:
-                        activityLog?.LogInfo(logSource, "SDK database is up to date.");
-                        break;
-                    case SdkDatabaseDeployOutcome.FirstTimeDeploy:
-                        activityLog?.LogSuccess(
-                            logSource,
-                            $"SDK database deployed for the first time (v{deploy.ShippedVersion}).");
-                        break;
-                    case SdkDatabaseDeployOutcome.Upgraded:
-                        activityLog?.LogSuccess(
-                            logSource,
-                            $"SDK database upgraded from v{deploy.RuntimeVersionBefore ?? "unknown"} to v{deploy.ShippedVersion}.",
-                            $"Backup saved to: {deploy.BackupPath}");
-                        break;
-                    case SdkDatabaseDeployOutcome.NoShippedDatabase:
-                        activityLog?.LogWarning(
-                            logSource,
-                            "No shipped SDK database found; using existing runtime DB.");
-                        break;
-                }
+                Serilog.Log.Information("Starting the workload catalog in the background...");
+                await CatalogStartup.RunAsync(
+                    Services!.GetRequiredService<ICatalog>(),
+                    Services!.GetRequiredService<ICatalogUpdateCoordinator>(),
+                    Services!.GetService<IActivityLogService>());
             }
-            else
+            catch (Exception ex)
             {
-                // Consumer-managed path (a valid db_override.txt or an explicit path): the SDK does
-                // not deploy or version-stamp it — it is opened as-is.
-                activityLog?.LogInfo(
-                    logSource,
-                    "Using consumer-managed SDK database (no embedded deploy).",
-                    $"Path: {runtimeDb}");
+                // CatalogStartup never throws; this guards the service resolution around it.
+                Serilog.Log.Error(ex, "StartCatalogInBackground: Failed to start the workload catalog");
+                Services!.GetService<IActivityLogService>()?.LogError(CatalogStartup.LogSource, "Failed to start the workload catalog", ex);
             }
-
-            // Apply pending schema migrations against the SAME context the app uses — but only
-            // when there are any; an unconditional Migrate() costs a full EF migration pass on
-            // every launch (mirrors the core-DB gating above).
-            var sdkContext = Services!.GetRequiredService<SdkContext>();
-            var pendingSdkMigrations = sdkContext.Database.GetPendingMigrations().ToList();
-            if (pendingSdkMigrations.Count > 0)
-            {
-                Serilog.Log.Information("InitializeSdkDatabase: Applying {Count} pending migration(s)...", pendingSdkMigrations.Count);
-                sdkContext.Database.Migrate();
-                Serilog.Log.Information("InitializeSdkDatabase: Migration completed successfully");
-            }
-            else
-            {
-                Serilog.Log.Information("InitializeSdkDatabase: No pending migrations - SKIPPING Migrate()");
-            }
-
-            activityLog?.LogInfo(logSource, $"Database loaded from: {runtimeDb}");
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Error(ex, "InitializeSdkDatabase: Failed to initialize SDK database");
-            activityLog?.LogError(logSource, "Failed to initialize SDK database", ex);
-        }
+        });
     }
 
     private static void ConfigureServices(IServiceCollection services)
@@ -565,6 +540,8 @@ public partial class App : Application
 
         // UI-thread scheduler seam over Dispatcher.UIThread (testability; #437)
         services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
+        // Which install runs right now; the catalog apply waits while one does (#618).
+        services.AddSingleton<IInstallActivity, InstallActivity>();
 
         // System-clipboard seam (testability; #438)
         services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
@@ -580,6 +557,10 @@ public partial class App : Application
         services.AddTransient<IAppSettingsService, AppSettingsService>();
         services.AddTransient<IModelSyncService, ModelFileSyncService>();
         services.AddTransient<ILoraDuplicateFinder, LoraDuplicateFinder>();
+
+        // Library metadata sync pipeline (#521 WP2): appliers, state backfill, steps and the
+        // single-flight ILibrarySyncService the LoRA viewer plans and executes runs through.
+        services.AddLibrarySync();
 
         // DatasetBackupService - use factory to inject activity log service
         services.AddTransient<IDatasetBackupService>(sp => new DatasetBackupService(
@@ -642,20 +623,54 @@ public partial class App : Application
         // as Base Model Folders — on package add and as startup backfill.
         services.AddTransient<DiffusionNexus.UI.Services.Diffusion.BaseModelFolderRegistrar>();
 
+        // Writes the app-owned engine's extra_model_paths.yaml from those Base Model Folders, so
+        // the engine reads every registered library instead of only the first one the SDK's
+        // single-valued ModelBaseFolder option could carry. Scoped: depends on IUnitOfWork.
+        services.AddScoped<Services.Engine.EngineModelPathsSynchronizer>();
+
         // GPU VRAM + system RAM monitor (reusable widget shown in the canvas and the Pipelines view).
         services.AddSingleton<IResourceMonitorService, ResourceMonitorService>();
         services.AddTransient<ResourceMonitorViewModel>();
 
+        // The Krea 2 text2image workflow template, shipped as an AvaloniaResource under
+        // Assets/Pipelines/. Registered before ManagedComfyUiBackend so it can be injected there.
+        services.AddSingleton<Services.Diffusion.IWorkflowTemplateSource>(_ =>
+            new Services.Diffusion.AvaresWorkflowTemplateSource("Krea2-Text2Image-API.json"));
+
+        // The Canvas's second backend: the app-owned ComfyUI engine.
+        services.AddSingleton<Services.Diffusion.ManagedComfyUiBackend>(sp =>
+        {
+            var rootResolver = sp.GetRequiredService<Services.Engine.IEngineRootResolver>();
+            return new Services.Diffusion.ManagedComfyUiBackend(
+                sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>(),
+                () => rootResolver.ResolveAsync(),
+                sp.GetService<Services.Diffusion.IWorkflowTemplateSource>());
+        });
+
         // Diffusion Canvas view model (singleton — frames persist across navigation in v1).
-        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>();
+        services.AddSingleton<DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel>(sp =>
+            new DiffusionNexus.UI.ViewModels.DiffusionCanvas.DiffusionCanvasViewModel(
+                sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+                sp.GetService<ViewModels.ResourceMonitorViewModel>(),
+                sp.GetRequiredService<Services.Diffusion.ManagedComfyUiBackend>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+                sp.GetService<Services.Lora.ILoraCatalog>()));
 
 
         // ?? Installer SDK services ??
-        // Register SDK data access layer (uses shared database at %LocalAppData%\diffusion_nexus.db from NuGet source)
-        services.AddDiffusionNexusDataAccess();
+        // Installer SDK 2.x: JSON workload catalog (no database) + user settings. Shares
+        // %LocalAppData%\DiffusionNexus\catalog with the 3.x installer, follows the channel the
+        // installer saved and never writes it. Also registers the dismissed-banner store.
+        services.AddInstallerSdkCatalog(typeof(App).Assembly);
 
         // Register SDK installation pipeline and all step handlers
         services.AddInstallationServices();
+
+        // One client for the Gist-backed documents below: both are fetched in parallel at startup
+        // from the same host, so they share a connection pool. Safe to share because each service
+        // sets its User-Agent per request and applies its own timeout. Lives as long as the app
+        // (neither service owns it).
+        var gistHttpClient = new Lazy<HttpClient>(() => new HttpClient());
 
         // Gist-backed server message service (operator announcements shown in the main window banner).
         // Edit the Gist to change what users see — no rebuild required. App id "app" filters targeting.
@@ -664,14 +679,16 @@ public partial class App : Application
             {
                 Url = "https://gist.githubusercontent.com/Little-God1983/358c5fccc6655f6e56aef8470bb17c1c/raw/messages.json"
             },
-            new HttpClient(),
-            ownsHttpClient: true));
-        services.AddSingleton(_ =>
-        {
-            var settingsPath = DiffusionNexus.Installer.SDK.DataAccess.ServiceCollectionExtensions.GetUserSettingsFilePath();
-            var dir = System.IO.Path.GetDirectoryName(settingsPath) ?? AppContext.BaseDirectory;
-            return new DismissedMessageStore(System.IO.Path.Combine(dir, "dismissed_messages.json"));
-        });
+            gistHttpClient.Value,
+            ownsHttpClient: false));
+
+        // Gist-backed community links (the sidebar's YouTube/Patreon/... buttons). The options
+        // default to SharedConstants.CommunityLinksDocumentUrl, the document every DiffusionNexus
+        // app reads, and to a short timeout: a slow source never delays the window.
+        services.AddSingleton<ICommunityLinksService>(_ => new GistCommunityLinksService(
+            new CommunityLinksServiceOptions(),
+            gistHttpClient.Value,
+            ownsHttpClient: false));
 
         // Feedback reporting service (posts to the Cloudflare Worker relay, which holds
         // the GitHub credential — see docs/superpowers/plans/2026-07-03-feedback-sdk-and-relay.md
@@ -721,12 +738,88 @@ public partial class App : Application
             return new InstallationEngine(orchestrator);
         });
 
-        // ComfyUI workflow execution service (singleton - maintains HttpClient)
+        // Installation coordinator — the same facade the standalone Installer and Wizard use.
+        // AddInstallationServices() registers the pipeline but not this facade.
+        services.AddSingleton<IInstallationCoordinator>(sp =>
+            new InstallationCoordinator(sp.GetRequiredService<InstallationEngine>()));
+
+        // App-owned ComfyUI engine (Diffusion Nexus Engine).
+        services.AddSingleton<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>(sp =>
+            new Services.Engine.DialogUserPromptService(sp.GetRequiredService<IDialogService>()));
+        services.AddSingleton<Services.Engine.IManagedEngineInstaller>(sp =>
+            new Services.Engine.ManagedEngineInstaller(
+                sp.GetRequiredService<IInstallationCoordinator>(),
+                sp.GetRequiredService<ICatalog>(),
+                sp.GetRequiredService<DiffusionNexus.Installer.SDK.Shared.Services.IUserPromptService>()));
+        services.AddSingleton<Services.Engine.ManagedComfyUiEngine>(sp =>
+            new Services.Engine.ManagedComfyUiEngine(
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+        services.AddSingleton<Services.Engine.IManagedComfyUiEngine>(sp =>
+            sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        // The Unified Console's Engine tile (#610): the user's own Start / Stop / Restart.
+        services.AddSingleton<Services.Engine.IManagedEngineControl>(sp =>
+            sp.GetRequiredService<Services.Engine.ManagedComfyUiEngine>());
+        // A changed extra_model_paths.yaml needs an Engine restart: it is read only at start-up. The
+        // engine is resolved inside the callback, when it fires, not while building the resolver.
+        services.AddSingleton<Services.Engine.IEngineRootResolver>(sp =>
+            new Services.Engine.EngineRootResolver(
+                sp.GetRequiredService<IServiceScopeFactory>(),
+                onModelPathsChanged: () => sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>().RequestRestart(),
+                unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // ComfyUI client for the features not yet on IComfyUiClientProvider (ComfyUI captioning, the
+        // ComfyUI readiness backend). Built from the Settings URL — it used to ignore it and always
+        // talk to 8188. A URL change reaches these after a restart.
+        // A bad Settings URL must not throw here: this singleton feeds the readiness backend and
+        // captioning, and a throw would keep the user out of Settings.
         services.AddSingleton<IComfyUIWrapperService>(sp =>
         {
-            var settings = sp.GetRequiredService<IAppSettingsService>();
-            // Default URL; callers can reconfigure later if settings change
-            return new ComfyUIWrapperService();
+            string? url;
+            try
+            {
+                // Only the URL column, read-only: a full settings load (with its writes) is not
+                // worth blocking first resolution on.
+                using var scope = sp.CreateScope();
+                url = scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                    .GetComfyUiServerConnectionAsync().GetAwaiter().GetResult().Url;
+            }
+            catch (Exception ex)
+            {
+                Serilog.Log.Warning(ex, "Could not read the ComfyUI server URL from Settings; using {Default}", ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"Could not read the ComfyUI server URL from Settings; using {ComfyUiUrl.Default}.");
+                return new ComfyUIWrapperService(ComfyUiUrl.Default);
+            }
+
+            if (!string.IsNullOrWhiteSpace(url) && !ComfyUiUrl.IsValid(url))
+            {
+                Serilog.Log.Warning("The ComfyUI server URL in Settings is not valid: '{Url}'; using {Default}", url, ComfyUiUrl.Default);
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()?.Warn(
+                    Domain.Services.UnifiedLogging.LogCategory.Configuration, "ComfyUI",
+                    $"The ComfyUI server URL in Settings is not valid: '{url}'. Using {ComfyUiUrl.Default}; fix it in Settings → ComfyUI Server.");
+            }
+
+            return new ComfyUIWrapperService(ComfyUiUrl.OrDefault(url));
+        });
+
+        // The ComfyUI that Inpaint and Outpaint run on: the Engine or the user's own, per Settings.
+        // Settings are read through a fresh scope per call: IAppSettingsService is transient over a
+        // scoped DbContext, and parallel readiness checks must not share one context. Only the mode
+        // and URL are read, read-only, on every Generate.
+        services.AddSingleton<IComfyUiClientProvider>(sp =>
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new Services.Diffusion.ComfyUiClientProvider(
+                async ct =>
+                {
+                    using var scope = scopes.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct);
+                },
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
         });
 
         // Backend-agnostic feature readiness pipeline.
@@ -735,16 +828,28 @@ public partial class App : Application
         //     -> IFeatureBackendRouter               (picks the backend per feature)
         //       -> ComfyUIFeatureBackend             (ComfyUI server + workload checker)
         //       -> LocalInferenceFeatureBackend      (LlamaSharp captioning, sd.cpp generation)
+        //       -> EngineFeatureBackend              (Diffusion Nexus Engine folder + catalog workloads)
         //
         // A feature reports "Ready" iff its backing workload would show as "Full" in the
         // Installer Manager dialog. The unified logger plumb-through makes readiness
         // decisions visible in the in-app console.
         services.AddSingleton<IFeatureBackend>(sp =>
-            new ComfyUIFeatureBackend(
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new ComfyUIFeatureBackend(
                 sp.GetRequiredService<IComfyUIWrapperService>(),
-                sp.GetRequiredService<IAppSettingsService>(),
+                readServerUrl: async ct =>
+                {
+                    // Fresh scope per read: the Outpaint panel checks Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw (Vision then shows offline).
+                    using var scope = scopes.CreateScope();
+                    var connection = await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerConnectionAsync(ct).ConfigureAwait(false);
+                    return connection.Url ?? ComfyUiUrl.Default;
+                },
                 sp.GetRequiredService<Domain.Services.IWorkloadInstallationChecker>(),
-                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
+        });
 
         // Resolves the concrete LocalInferenceCaptioningBackend rather than the
         // ICaptioningBackend collection — going through the collection would force the
@@ -756,16 +861,37 @@ public partial class App : Application
                 sp.GetService<Inference.Captioning.LocalInferenceCaptioningBackend>(),
                 diffusion: null));
 
+        services.AddSingleton<IFeatureBackend>(sp =>
+            new Services.Engine.EngineFeatureBackend(
+                sp.GetRequiredService<Services.Engine.IEngineRootResolver>(),
+                sp.GetRequiredService<ICatalog>(),
+                sp.GetRequiredService<IConfigurationCheckerService>(),
+                sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
         services.AddSingleton<IFeatureBackendRouter>(sp =>
-            new FeatureBackendRouter(sp.GetServices<IFeatureBackend>()));
+        {
+            var scopes = sp.GetRequiredService<IServiceScopeFactory>();
+            return new FeatureBackendRouter(
+                sp.GetServices<IFeatureBackend>(),
+                serverModeAsync: async ct =>
+                {
+                    // Fresh scope per call: the Outpaint panel resolves Outpaint and OutpaintVision in
+                    // parallel, and two reads on one DbContext throw. A one-column read-only query,
+                    // awaited, so a readiness check never blocks the UI thread on the database.
+                    using var scope = scopes.CreateScope();
+                    return await scope.ServiceProvider.GetRequiredService<IAppSettingsService>()
+                        .GetComfyUiServerModeAsync(ct).ConfigureAwait(false);
+                });
+        });
 
         services.AddSingleton<IFeatureReadinessService>(sp =>
             new FeatureReadinessService(
                 sp.GetRequiredService<IFeatureBackendRouter>(),
                 FeatureRegistry.GetRequirements));
 
-        // Civitai API client (singleton - maintains HttpClient)
-        services.AddSingleton<Civitai.ICivitaiClient, Civitai.CivitaiClient>();
+        // The one door to the Civitai API — see CivitaiGatewayServiceCollectionExtensions for the
+        // sharing invariant this establishes (one pacer, one cooldown, one cache behind both lanes).
+        services.AddCivitaiGateway();
 
         // Civitai base-model catalog (singleton - in-memory + on-disk cache, falls back to bundled snapshot)
         services.AddSingleton<Civitai.ICivitaiBaseModelCatalog, Civitai.CivitaiBaseModelCatalog>();
@@ -852,9 +978,20 @@ public partial class App : Application
             sp.GetService<IActivityLogService>(),
             sp.GetService<ISettingsExportService>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
-            sp.GetService<IBackupScheduler>()));
+            sp.GetService<IBackupScheduler>(),
+            engineRootResolver: sp.GetService<Services.Engine.IEngineRootResolver>(),
+            engine: sp.GetService<Services.Engine.IManagedComfyUiEngine>(),
+            catalogUpdates: sp.GetService<ICatalogUpdateCoordinator>()));
 
-        services.AddSingleton<ILoraUpdateChecker, LoraUpdateChecker>();
+        services.AddSingleton<ILoraUpdateChecker>(sp => new LoraUpdateChecker(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredKeyedService<Civitai.ICivitaiClient>("background"),
+            sp.GetRequiredService<IAppSettingsService>(),
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+
+        // The one Civitai API-key lookup (spec §1 RC5) — replaces five verbatim copies.
+        services.AddSingleton<ICivitaiApiKeyProvider>(sp =>
+            new CivitaiApiKeyProvider(sp.GetRequiredService<IServiceScopeFactory>()));
 
         services.AddScoped<LoraViewerViewModel>(sp => new LoraViewerViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
@@ -863,11 +1000,31 @@ public partial class App : Application
             sp.GetService<ISecureStorage>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
             sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
-            sp.GetService<ILoraUpdateChecker>()));
+            sp.GetService<ILoraUpdateChecker>(),
+            sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            sp.GetService<IUiScheduler>(),
+            sp.GetService<IServiceScopeFactory>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            modelDownloader: sp.GetService<Services.Download.ICivitaiModelDownloader>(),
+            changeNotifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>()));
         services.AddScoped<LoraDownloadService>(sp => new LoraDownloadService(
             sp.GetService<Civitai.ICivitaiClient>(),
             sp.GetService<IAppSettingsService>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
+            apiKeyProvider: sp.GetRequiredService<ICivitaiApiKeyProvider>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>()));
+        services.AddScoped<ILoraDownloadService>(sp => sp.GetRequiredService<LoraDownloadService>());
+
+        // The cross-module "library gained a model" signal, and the ONE Civitai download path that
+        // raises it (spec §4.4 / D3) — callers must never wrap DownloadAsync in the coordinator.
+        services.AddSingleton<Domain.Services.ILibraryChangeNotifier, Infrastructure.Services.LibraryChangeNotifier>();
+        services.AddScoped<Services.Download.ICivitaiModelDownloader>(sp => new Services.Download.CivitaiModelDownloader(
+            downloadService: sp.GetRequiredService<ILoraDownloadService>(),
+            coordinator: sp.GetService<IDownloadCoordinator>(),
+            librarySync: sp.GetService<Domain.Services.Sync.ILibrarySyncService>(),
+            notifier: sp.GetService<Domain.Services.ILibraryChangeNotifier>(),
+            scopeFactory: sp.GetService<IServiceScopeFactory>(),
+            logger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Reusable LoRA catalog for the Multi-LoRA Picker (same sources as the LoRA Viewer Installed tab).
         services.AddSingleton<Services.Lora.ILoraCatalog, Services.Lora.LoraCatalog>();
@@ -875,21 +1032,21 @@ public partial class App : Application
         // Pipelines: app-side manifest provider + asset installer + module ViewModel.
         services.AddSingleton<Services.Pipelines.IPipelineManifestProvider, Services.Pipelines.PipelineManifestProvider>();
         services.AddScoped<Services.Pipelines.IPipelineAssetInstaller>(sp => new Services.Pipelines.PipelineAssetInstaller(
-            sp.GetRequiredService<IDownloadCoordinator>(),
-            sp.GetRequiredService<Civitai.ICivitaiClient>(),
-            sp.GetRequiredService<LoraDownloadService>(),
-            sp.GetRequiredService<IAppSettingsService>(),
-            sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
-            sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
+            coordinator: sp.GetRequiredService<IDownloadCoordinator>(),
+            civitai: sp.GetRequiredService<Civitai.ICivitaiClient>(),
+            modelDownloader: sp.GetRequiredService<Services.Download.ICivitaiModelDownloader>(),
+            settings: sp.GetRequiredService<IAppSettingsService>(),
+            backendProvider: sp.GetRequiredService<Services.Diffusion.LocalDiffusionBackendProvider>(),
+            unifiedLogger: sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>()));
 
         // Pipeline run UI: output writer + a tile-id -> run-ViewModel factory.
         services.AddScoped<Services.Pipelines.IPipelineOutputWriter, Services.Pipelines.PipelineOutputWriter>();
         services.AddTransient<Func<PipelineTileViewModel, ViewModels.Pipelines.IPipelineRun>>(sp => tile =>
             tile.Id switch
             {
-                "anime-to-real" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
-                "image-to-image" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
-                "batch-metadata-distiller" => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.AnimeToReal => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.AnimeToRealPipelineRunViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.ImageToImage => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.ImageToImagePipelineRunViewModel>(sp, tile.Manifest),
+                global::DiffusionNexus.UI.Services.Pipelines.WorkflowIds.BatchMetadataDistiller => ActivatorUtilities.CreateInstance<ViewModels.Pipelines.BatchMetadataDistillerViewModel>(sp, tile.Manifest),
                 _ => throw new NotSupportedException($"No run UI is registered for pipeline '{tile.Id}'."),
             });
 
@@ -905,7 +1062,7 @@ public partial class App : Application
             sp.GetRequiredService<IUnitOfWork>(),
             sp.GetRequiredService<PackageProcessManager>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
-            sp.GetRequiredService<IConfigurationRepository>(),
+            sp.GetRequiredService<ICatalog>(),
             sp.GetRequiredService<IConfigurationCheckerService>(),
             sp.GetRequiredService<IWorkloadInstallService>(),
             sp.GetServices<Domain.Services.IInstallerUpdateService>(),
@@ -918,7 +1075,12 @@ public partial class App : Application
             // IUnitOfWork is transient: each factory call yields a fresh context for
             // one destructive operation (remove / delete-from-disk), so those flows
             // never act on — or poison — the VM's long-lived shared context.
-            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>()));
+            unitOfWorkFactory: () => sp.GetRequiredService<IUnitOfWork>(),
+            engineInstaller: sp.GetRequiredService<Services.Engine.IManagedEngineInstaller>(),
+            resourceMonitor: sp.GetRequiredService<IResourceMonitorService>(),
+            engineModelPaths: sp.GetRequiredService<Services.Engine.EngineModelPathsSynchronizer>(),
+            engine: sp.GetRequiredService<Services.Engine.IManagedComfyUiEngine>(),
+            installActivity: sp.GetRequiredService<IInstallActivity>()));
         services.AddScoped<GenerationGalleryViewModel>(sp => new GenerationGalleryViewModel(
             sp.GetRequiredService<IAppSettingsService>(),
             sp.GetRequiredService<IDatasetEventAggregator>(),
@@ -941,7 +1103,6 @@ public partial class App : Application
             sp.GetService<IBackgroundRemovalService>(),
             sp.GetService<IDatasetBackupService>(),
             sp.GetService<IActivityLogService>(),
-            sp.GetService<IComfyUIWrapperService>(),
             sp.GetService<IThumbnailOrchestrator>(),
             sp.GetService<AnalysisPipeline>(),
             sp.GetService<BucketAnalyzer>(),
@@ -952,7 +1113,8 @@ public partial class App : Application
             sp.GetService<ColorDistributionAnalyzer>(),
             sp.GetService<IDownloadCoordinator>(),
             sp.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>(),
-            sp.GetService<Civitai.ICivitaiBaseModelCatalog>()));
+            sp.GetService<Civitai.ICivitaiBaseModelCatalog>(),
+            sp.GetService<IComfyUiClientProvider>()));
     }
 
     /// <summary>
@@ -1013,6 +1175,7 @@ public partial class App : Application
         // leaves its slot null, and the compound guard below skips wiring + data
         // load for the degraded app (the ready-check list shows which module died).
         InstallerManagerViewModel? installerManagerVm = null;
+        ModuleItem? installerManagerModule = null;
         LoraDatasetHelperViewModel? loraDatasetHelperVm = null;
         ModuleItem? loraDatasetHelperModule = null;
         LoraViewerViewModel? loraViewerVm = null;
@@ -1030,7 +1193,7 @@ public partial class App : Application
         {
             installerManagerVm = Services!.GetRequiredService<InstallerManagerViewModel>();
             var installerManagerView = new InstallerManagerView { DataContext = installerManagerVm };
-            var installerManagerModule = new ModuleItem(
+            installerManagerModule = new ModuleItem(
                 "Installer Manager",
                 "avares://DiffusionNexus.UI/Assets/Installer.png", // TODO: add dedicated Installer Manager icon
                 installerManagerView)
@@ -1175,6 +1338,7 @@ public partial class App : Application
 
                 mainViewModel.RegisterModule(diffusionCanvasModule);
                 mainViewModel.SetDiffusionCanvasModule(diffusionCanvasModule);
+
                 startupProgress.Complete("diffusion-canvas");
             }
             catch (Exception ex)
@@ -1251,7 +1415,10 @@ public partial class App : Application
             settingsModule = new ModuleItem(
                 "Settings",
                 "avares://DiffusionNexus.UI/Assets/settings.png",
-                settingsView);
+                settingsView)
+            {
+                ViewModel = settingsVm
+            };
 
             mainViewModel.RegisterModule(settingsModule);
             startupProgress.Complete("settings");
@@ -1294,9 +1461,25 @@ public partial class App : Application
                 mainViewModel.NavigateToModuleCommand.Execute(loraDatasetHelperModule);
             };
 
-            eventAggregator.NavigateToSettingsRequested += (_, _) =>
+            eventAggregator.NavigateToSettingsRequested += (_, e) =>
             {
                 mainViewModel.NavigateToModuleCommand.Execute(settingsModule);
+                if (e.Section == SettingsSection.ComfyUiServer)
+                {
+                    // Reset first so a second "change" click re-triggers the scroll.
+                    settingsVm.IsComfyUiServerExpanded = false;
+                    settingsVm.IsComfyUiServerExpanded = true;
+                }
+            };
+
+            eventAggregator.NavigateToEngineFeaturesRequested += (_, e) =>
+            {
+                if (installerManagerModule is not null)
+                    mainViewModel.NavigateToModuleCommand.Execute(installerManagerModule);
+                // Engine not installed: the Installation Manager offers its install; the Features
+                // dialog would only refuse.
+                if (!e.InstallEngineOnly)
+                    _ = installerManagerVm.OpenEngineFeaturesAsync(e.Preselect);
             };
 
             eventAggregator.NavigateToImageComparerRequested += (_, e) =>
@@ -1386,7 +1569,8 @@ public partial class App : Application
                 }),
                 Timed(sw, "datasetStorageCheck", () => loraDatasetHelperVm.DatasetManagement
                     .CheckStorageConfigurationCommand.ExecuteAsync(null)),
-                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()));
+                Timed(sw, "serverMessages", () => mainViewModel.LoadServerMessagesAsync()),
+                Timed(sw, "communityLinks", () => mainViewModel.LoadCommunityLinksAsync()));
             Serilog.Log.Information("LoadStartupData: all phases complete at +{Total}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)

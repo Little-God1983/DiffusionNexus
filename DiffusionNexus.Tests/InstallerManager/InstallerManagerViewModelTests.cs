@@ -4,7 +4,7 @@ using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
-using DiffusionNexus.Installer.SDK.DataAccess;
+using DiffusionNexus.Installer.SDK.Catalog;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.ConfigurationChecker;
 using DiffusionNexus.UI.ViewModels;
@@ -60,7 +60,7 @@ public class InstallerManagerViewModelTests
             .Setup(e => e.PublishSettingsSaved(It.IsAny<SettingsSavedEventArgs>()))
             .Callback(() => settingsSavedCount++);
 
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -111,7 +111,7 @@ public class InstallerManagerViewModelTests
         var mockAppSettings = new Mock<IAppSettingsRepository>();
         mockUow.Setup(u => u.AppSettings).Returns(mockAppSettings.Object);
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -171,7 +171,7 @@ public class InstallerManagerViewModelTests
         mockUow.Setup(u => u.InstallerPackages).Returns(mockRepo.Object);
         var mockProcessManager = new PackageProcessManager();
         var mockEventAggregator = new Mock<IDatasetEventAggregator>();
-        var mockConfigRepo = new Mock<IConfigurationRepository>();
+        var mockConfigRepo = new Mock<ICatalog>();
         var mockCheckerService = new Mock<IConfigurationCheckerService>();
         var mockInstallService = new Mock<IWorkloadInstallService>();
 
@@ -187,10 +187,12 @@ public class InstallerManagerViewModelTests
             new Mock<IUnifiedLogger>().Object);
 
         // Load cards. The list now contains 3 DB-backed packages plus the
-        // singleton static "Diffusion Nexus Core" card pinned to the top.
+        // singleton static "Diffusion Nexus Core" card pinned to the top and the
+        // Engine tile (visible by default since it no longer follows the Canvas switch).
         await vm.LoadInstallationsCommand.ExecuteAsync(null);
-        vm.InstallerCards.Should().HaveCount(4);
+        vm.InstallerCards.Should().HaveCount(5);
         vm.InstallerCards.Count(c => c.IsCore).Should().Be(1);
+        vm.InstallerCards.Count(c => c.IsEngine).Should().Be(1);
 
         var cardToMakeDefault = vm.InstallerCards.First(c => c.Id == 2);
 
@@ -208,6 +210,40 @@ public class InstallerManagerViewModelTests
 
     // ── Remove-installation flow (settings cleanup checkboxes) ──
 
+    [Fact]
+    public async Task MissingInstallation_HidesDeleteFromDisk_ButStillOffersRemove()
+    {
+        // The folder is already gone: "Delete from Disk" has nothing left to delete and
+        // would only confirm a destructive-sounding action that does nothing. Remove —
+        // which drops the database row and the linked settings folders — is the way out.
+        var harness = new RemoveFlowHarness(SettingsWithLinkedRows(),
+            installationPath: Path.Combine(Path.GetTempPath(), "dn-gone-" + Guid.NewGuid().ToString("N")));
+
+        var card = await harness.LoadCardAsync();
+
+        card.IsMissing.Should().BeTrue();
+        card.ShowDeleteFromDiskMenuItem.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PresentInstallation_OffersDeleteFromDisk()
+    {
+        var present = Directory.CreateTempSubdirectory("dn-present-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var harness = new RemoveFlowHarness(SettingsWithLinkedRows(), installationPath: present.FullName);
+
+            var card = await harness.LoadCardAsync();
+
+            card.IsMissing.Should().BeFalse();
+            card.ShowDeleteFromDiskMenuItem.Should().BeTrue();
+        }
+        finally
+        {
+            try { present.Delete(recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
     private sealed class RemoveFlowHarness
     {
         public Mock<IDialogService> Dialog { get; } = new();
@@ -218,7 +254,10 @@ public class InstallerManagerViewModelTests
         public InstallerPackage Package { get; }
         public InstallerManagerViewModel Vm { get; }
 
-        public RemoveFlowHarness(AppSettings settings, string? installationPath = null)
+        public RemoveFlowHarness(
+            AppSettings settings,
+            string? installationPath = null,
+            IEnumerable<InstallerPackage>? otherInstallations = null)
         {
             Package = new InstallerPackage
             {
@@ -229,8 +268,9 @@ public class InstallerManagerViewModelTests
                 Type = InstallerType.ComfyUI,
             };
 
+            List<InstallerPackage> allPackages = [Package, .. otherInstallations ?? []];
             PackageRepo.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync([Package]);
+                .ReturnsAsync(allPackages);
             PackageRepo.Setup(r => r.GetByIdAsync(5, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Package);
             AppSettingsRepo.Setup(r => r.GetSettingsWithIncludesAsync(It.IsAny<CancellationToken>()))
@@ -244,7 +284,7 @@ public class InstallerManagerViewModelTests
                 Uow.Object,
                 new PackageProcessManager(),
                 EventAggregator.Object,
-                new Mock<IConfigurationRepository>().Object,
+                new Mock<ICatalog>().Object,
                 new Mock<IConfigurationCheckerService>().Object,
                 new Mock<IWorkloadInstallService>().Object,
                 Enumerable.Empty<IInstallerUpdateService>(),
@@ -347,6 +387,109 @@ public class InstallerManagerViewModelTests
         harness.PackageRepo.Verify(r => r.Remove(It.IsAny<InstallerPackage>()), Times.Never);
         harness.Uow.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
         harness.Vm.InstallerCards.Should().Contain(card);
+    }
+
+    [Fact]
+    public async Task RemoveInstallation_DoesNotOfferAGalleryAnotherInstallationStillWritesTo()
+    {
+        // A gallery folder is owned by exactly one installation's FK, but several ComfyUI
+        // installs routinely point --output-directory at the same folder. Removing the
+        // FK owner must not offer to unregister a folder the survivors keep filling —
+        // and must say why it is being kept, rather than reporting "none linked".
+        var otherInstall = Directory.CreateTempSubdirectory("dn-other-install-" + Guid.NewGuid().ToString("N"));
+        var sharedOutput = Path.Combine(Path.GetTempPath(), "dn-shared-output-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(otherInstall.FullName, "run_nvidia.bat"),
+                $"python main.py --windows-standalone-build --output-directory {sharedOutput}");
+
+            var settings = new AppSettings
+            {
+                Id = 1,
+                ImageGalleries = [new ImageGallery { Id = 1, FolderPath = sharedOutput, InstallerPackageId = 5 }],
+            };
+            var other = new InstallerPackage
+            {
+                Id = 6,
+                Name = "ComfyUI (other)",
+                InstallationPath = otherInstall.FullName,
+                ExecutablePath = "run_nvidia.bat",
+                Type = InstallerType.ComfyUI,
+            };
+
+            var harness = new RemoveFlowHarness(settings, otherInstallations: [other]);
+            RemoveInstallationPrompt? prompt = null;
+            harness.Dialog
+                .Setup(d => d.ShowRemoveInstallationDialogAsync(It.IsAny<RemoveInstallationPrompt>()))
+                .Callback<RemoveInstallationPrompt>(p => prompt = p)
+                .ReturnsAsync(new RemoveInstallationResult(true, true, true, true));
+
+            var card = await harness.LoadCardAsync();
+            await card.RemoveCommand.ExecuteAsync(null);
+
+            prompt.Should().NotBeNull();
+            prompt!.GalleryFolders.Should().BeEmpty("the folder is still written to by installation 6");
+            prompt.SharedGalleryFolders.Should().BeEquivalentTo(sharedOutput);
+            harness.AppSettingsRepo.Verify(r => r.RemoveImageGallery(It.IsAny<ImageGallery>()), Times.Never);
+            harness.PackageRepo.Verify(r => r.Remove(harness.Package), Times.Once,
+                "the installation itself is still removed — only its shared folder survives");
+        }
+        finally
+        {
+            try { otherInstall.Delete(recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteFromDisk_KeepsAGalleryAnotherInstallationStillWritesTo()
+    {
+        // Deleting this install's tree does not delete a shared output folder that lives
+        // outside it, and the surviving install keeps writing there — so its row must stay.
+        var installPath = Path.Combine(Path.GetTempPath(), "dn-delete-shared-" + Guid.NewGuid().ToString("N"));
+        var otherInstall = Directory.CreateTempSubdirectory("dn-other-install-" + Guid.NewGuid().ToString("N"));
+        var sharedOutput = Path.Combine(Path.GetTempPath(), "dn-shared-output-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(otherInstall.FullName, "run_nvidia.bat"),
+                $"python main.py --output-directory \"{sharedOutput}\"");
+
+            var settings = new AppSettings
+            {
+                Id = 1,
+                ImageGalleries =
+                [
+                    new ImageGallery { Id = 1, FolderPath = sharedOutput, InstallerPackageId = 5 },
+                    new ImageGallery { Id = 2, FolderPath = Path.Combine(installPath, "output"), InstallerPackageId = 5 },
+                ],
+            };
+            var other = new InstallerPackage
+            {
+                Id = 6,
+                Name = "ComfyUI (other)",
+                InstallationPath = otherInstall.FullName,
+                ExecutablePath = "run_nvidia.bat",
+                Type = InstallerType.ComfyUI,
+            };
+
+            var harness = new RemoveFlowHarness(settings, installPath, [other]);
+            harness.Dialog
+                .Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>()))
+                .ReturnsAsync(true);
+
+            var card = await harness.LoadCardAsync();
+            await card.DeleteFromDiskCommand.ExecuteAsync(null);
+
+            harness.AppSettingsRepo.Verify(r => r.RemoveImageGallery(It.Is<ImageGallery>(g => g.Id == 1)), Times.Never,
+                "the shared output folder outlives this installation's tree");
+            harness.AppSettingsRepo.Verify(r => r.RemoveImageGallery(It.Is<ImageGallery>(g => g.Id == 2)), Times.Once,
+                "a folder inside the deleted tree really is gone");
+        }
+        finally
+        {
+            try { otherInstall.Delete(recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     [Fact]

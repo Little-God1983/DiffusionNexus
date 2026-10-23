@@ -54,6 +54,9 @@ public partial class PipelinesViewModel : ViewModelBase
     [ObservableProperty]
     private ViewModels.Pipelines.IPipelineRun? _activeRun;
 
+    /// <summary>Manifest id of the workflow behind <see cref="ActiveRun"/>; null when no run is open.</summary>
+    private string? _activeRunId;
+
     /// <summary>Design-time constructor (also used as a safe fallback).</summary>
     public PipelinesViewModel()
     {
@@ -155,6 +158,15 @@ public partial class PipelinesViewModel : ViewModelBase
             return;
         }
 
+        // The target workflow is already open: feed it instead of close + reopen. Disposing the run
+        // would cancel anything in flight (e.g. a running distill) and throw away its curated batch.
+        if (ActiveRun is { } open && string.Equals(_activeRunId, tile.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            if (inputImages is { Count: > 0 })
+                open.LoadInputImages(inputImages);
+            return;
+        }
+
         // Sending from one run's results into another workflow would otherwise leak the old run VM
         // (OpenRun overwrites ActiveRun without disposing); close it first.
         if (ActiveRun is not null)
@@ -239,6 +251,7 @@ public partial class PipelinesViewModel : ViewModelBase
             if (inputImages is { Count: > 0 })
                 run.LoadInputImages(inputImages);
             ActiveRun = run;
+            _activeRunId = tile.Id;
         }
         catch (Exception ex)
         {
@@ -257,6 +270,7 @@ public partial class PipelinesViewModel : ViewModelBase
             run.CloseRequested -= OnRunCloseRequested;
             run.Dispose();
             ActiveRun = null;
+            _activeRunId = null;
         }
 
         // A run may have created a new dataset version / written outputs; refresh the badges.

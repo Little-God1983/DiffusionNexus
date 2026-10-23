@@ -217,6 +217,83 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<Domain.Enums.ComfyUiServerMode> GetComfyUiServerModeAsync(CancellationToken cancellationToken = default)
+    {
+        var mode = await _unitOfWork.AppSettings
+            .GetComfyUiServerModeAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: a fresh database, whose settings will default to the Engine.
+        return mode ?? Domain.Enums.ComfyUiServerMode.Engine;
+    }
+
+    /// <inheritdoc />
+    public async Task<Domain.Models.ComfyUiServerConnection> GetComfyUiServerConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        var connection = await _unitOfWork.AppSettings
+            .GetComfyUiServerConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: a fresh database, whose settings will default to the Engine.
+        return connection ?? new Domain.Models.ComfyUiServerConnection(Domain.Enums.ComfyUiServerMode.Engine, null);
+    }
+
+    /// <inheritdoc />
+    public async Task<Domain.Models.CatalogUpdateSettings> GetCatalogUpdateSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetCatalogUpdateSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // No row yet: nothing was chosen.
+        return settings ?? new Domain.Models.CatalogUpdateSettings(null, false);
+    }
+
+    /// <inheritdoc />
+    public async Task SetCatalogChannelAsync(string channel, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(channel);
+        var settings = await TrackedSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.CatalogChannel = channel.Trim();
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> SetCatalogChannelIfSettingsExistAsync(string channel, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(channel);
+        _unitOfWork.ClearChangeTracker();
+        var settings = await _unitOfWork.AppSettings.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        // No row (the UI creates it), or a channel chosen meanwhile (a switch during the copy, PR #619 round 5).
+        if (settings is null || settings.CatalogChannel is not null) return false;
+        settings.CatalogChannel = channel.Trim();
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public async Task SetApplyCatalogUpdatesAutomaticallyAsync(bool on, CancellationToken cancellationToken = default)
+    {
+        var settings = await TrackedSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.ApplyCatalogUpdatesAutomatically = on;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The settings row, tracked, without its child collections (one column changes); created with them only
+    /// when missing. A fresh read: see GetSettingsAsync on the identity map.
+    /// </summary>
+    private async Task<AppSettings> TrackedSettingsAsync(CancellationToken cancellationToken)
+    {
+        _unitOfWork.ClearChangeTracker();
+        return await _unitOfWork.AppSettings.GetSettingsAsync(cancellationToken).ConfigureAwait(false)
+            ?? await _unitOfWork.AppSettings.GetSettingsWithIncludesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         settings.UpdatedAt = DateTimeOffset.UtcNow;
@@ -294,6 +371,7 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.MergeLoraSources = settings.MergeLoraSources;
         existingSettings.LoraSortSourcePath = settings.LoraSortSourcePath;
         existingSettings.LoraSortTargetPath = settings.LoraSortTargetPath;
+        existingSettings.LoraSorterExcludedFoldersJson = settings.LoraSorterExcludedFoldersJson;
         existingSettings.DatasetStoragePath = settings.DatasetStoragePath;
         existingSettings.DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders;
         existingSettings.BackupDatasetImagesEnabled = settings.BackupDatasetImagesEnabled;
@@ -302,9 +380,21 @@ public sealed class AppSettingsService : IAppSettingsService
         existingSettings.AutoBackupIntervalHours = settings.AutoBackupIntervalHours;
         existingSettings.AutoBackupLocation = settings.AutoBackupLocation;
         existingSettings.MaxBackups = settings.MaxBackups;
-        existingSettings.LastBackupAt = settings.LastBackupAt;
+        // LastBackupAt is deliberately NOT copied (#531). It is machine-local bookkeeping written
+        // only by UpdateLastBackupAtAsync, and nothing that builds one of these detached snapshots
+        // — the Settings page, SettingsExportService.ImportAsync — has a value for it to carry, so
+        // copying it here wrote the CLR default null over the real stamp on every save: the backup
+        // scheduler then read "never backed up". The freshly loaded tracked entity above already
+        // holds the true value; leaving it alone is the fix. Same rule as LastLibrarySyncAt, which
+        // is absent from this whitelist for exactly the same reason.
         existingSettings.ComfyUiServerUrl = settings.ComfyUiServerUrl;
+        existingSettings.ComfyUiServerMode = settings.ComfyUiServerMode;
+        // CatalogChannel and ApplyCatalogUpdatesAutomatically are absent on purpose (#618): the catalog
+        // section saves them at once through their own setters, and this snapshot would put back old values.
         existingSettings.LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays;
+        existingSettings.SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays;
+        existingSettings.SyncErrorRetryDays = settings.SyncErrorRetryDays;
+        existingSettings.SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency;
         existingSettings.UpdatedAt = settings.UpdatedAt;
 
         // Handle LoRA sources (remove deleted, update existing, add new)
@@ -509,6 +599,48 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<BaseModelFolder>> GetAllBaseModelFoldersAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.BaseModelFolders
+            .OrderBy(f => f.Order)
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<int> RemoveBaseModelFoldersAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return 0;
+        }
+
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+
+        // The default row is protected here rather than only at the call site: this is the
+        // last place before the delete, and a lost download target is a silent failure.
+        var doomed = settings.BaseModelFolders
+            .Where(f => ids.Contains(f.Id) && !f.IsDefault)
+            .ToList();
+
+        if (doomed.Count == 0)
+        {
+            return 0;
+        }
+
+        foreach (var folder in doomed)
+        {
+            settings.BaseModelFolders.Remove(folder);
+            _unitOfWork.AppSettings.RemoveBaseModelFolder(folder);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return doomed.Count;
+    }
+
+    /// <inheritdoc />
     public async Task<bool> AddBaseModelFolderAsync(string folderPath, int? installerPackageId = null, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folderPath);
@@ -673,6 +805,21 @@ public sealed class AppSettingsService : IAppSettingsService
     }
 
     /// <inheritdoc />
+    public async Task UpdateLastLibrarySyncAtAsync(DateTimeOffset lastLibrarySyncAt, CancellationToken cancellationToken = default)
+    {
+        var settings = await _unitOfWork.AppSettings
+            .GetSettingsAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (settings is not null)
+        {
+            settings.LastLibrarySyncAt = lastLibrarySyncAt;
+            settings.UpdatedAt = DateTimeOffset.UtcNow;
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<string?> GetLoraViewerFilterJsonAsync(CancellationToken cancellationToken = default)
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
@@ -684,6 +831,38 @@ public sealed class AppSettingsService : IAppSettingsService
     {
         var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
         settings.LoraViewerFilterJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetCivitaiBrowserFilterJsonAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.CivitaiBrowserFilterJson;
+    }
+
+    /// <inheritdoc />
+    public async Task SetCivitaiBrowserFilterJsonAsync(string? json, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.CivitaiBrowserFilterJson = string.IsNullOrWhiteSpace(json) ? null : json;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> GetLoraSorterExcludedFoldersJsonAsync(CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        return settings.LoraSorterExcludedFoldersJson;
+    }
+
+    /// <inheritdoc />
+    public async Task SetLoraSorterExcludedFoldersJsonAsync(string? json, CancellationToken cancellationToken = default)
+    {
+        var settings = await GetSettingsAsync(cancellationToken).ConfigureAwait(false);
+        settings.LoraSorterExcludedFoldersJson = string.IsNullOrWhiteSpace(json) ? null : json;
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }

@@ -295,8 +295,8 @@
                        HorizontalAlignment="Center"/>
           </StackPanel>
 
-          <ScrollViewer IsVisible="{Binding HasSelectedIssue}" Padding="20">
-            <StackPanel Spacing="16"
+          <ScrollViewer IsVisible="{Binding HasSelectedIssue}">
+            <StackPanel Margin="20" Spacing="16"
                         DataContext="{Binding}"
                         x:CompileBindings="True"
                         x:DataType="vmTabs:DatasetQualityTabViewModel">

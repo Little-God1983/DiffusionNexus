@@ -88,24 +88,24 @@ public interface IDialogService
     /// Shows a drag-and-drop file picker dialog for images and text files.
     /// </summary>
     /// <param name="title">Dialog title (e.g., "Add Images to: MyDataset").</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title);
 
     /// <summary>
     /// Shows a drag-and-drop file picker dialog with custom extensions.
     /// </summary>
     /// <param name="title">Dialog title.</param>
     /// <param name="allowedExtensions">Allowed file extensions (e.g., ".png", ".jpg").</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions);
 
     /// <summary>
     /// Shows a drag-and-drop file picker dialog pre-populated with initial files.
     /// </summary>
     /// <param name="title">Dialog title.</param>
     /// <param name="initialFiles">Files to pre-populate the dialog with.</param>
-    /// <returns>List of selected file paths, or null if cancelled.</returns>
-    Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles);
+    /// <returns>The selected files plus any ZIP extraction folders to delete afterwards, or null if cancelled.</returns>
+    Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles);
 
     /// <summary>
     /// Shows an option selection dialog with multiple choices.
@@ -360,11 +360,11 @@ public interface IDialogService
         string? category = null);
 
     /// <summary>
-    /// Shows the Download LoRA dialog for resolving a Civitai URL, previewing it, and choosing a destination.
+    /// Tells the user that downloading a LoRA from a link moved to the Browse Civitai tab
+    /// (issue #630), with a screenshot of a link pasted into its search box.
     /// </summary>
-    /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
-    /// <returns>Download result with selected version and target folder, or cancelled result.</returns>
-    Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders);
+    /// <returns>True when the user chose "Go to Browse Civitai".</returns>
+    Task<bool> ShowDownloadLoraMovedDialogAsync();
 
     /// <summary>
     /// Shows the duplicate fixer window for resolving duplicate image clusters.
@@ -430,6 +430,12 @@ public interface IDialogService
     /// </summary>
     /// <returns>Whether the user confirmed, plus the resolved Civitai model/version.</returns>
     Task<AssignCivitaiIdsDialogResult> ShowAssignCivitaiIdsDialogAsync();
+
+    /// <summary>Shows the metadata-sync plan dialog. Never null: closing the window is a cancel.</summary>
+    Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel);
+
+    /// <summary>Shows the post-run sync report.</summary>
+    Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel);
 }
 
 /// <summary>
@@ -518,6 +524,25 @@ public interface IBusyViewModel
 }
 
 /// <summary>
+/// Result from the plain file drop dialog overloads.
+/// </summary>
+public class FileDropResult
+{
+    /// <summary>
+    /// Selected file paths. Files that came out of a dropped ZIP archive live inside one of
+    /// <see cref="TemporaryDirectories"/>.
+    /// </summary>
+    public List<string> Files { get; init; } = [];
+
+    /// <summary>
+    /// Temporary directories the dialog created while expanding dropped ZIP archives. The caller
+    /// must delete these once it has copied <see cref="Files"/> to their destination, e.g. via
+    /// <see cref="Utilities.ZipMediaExtractor.DeleteExtractionDirectories"/>.
+    /// </summary>
+    public IReadOnlyList<string> TemporaryDirectories { get; init; } = [];
+}
+
+/// <summary>
 /// Result from the file drop dialog with conflict detection.
 /// </summary>
 public class FileDropWithConflictResult
@@ -536,6 +561,13 @@ public class FileDropWithConflictResult
     /// Whether the user cancelled the operation.
     /// </summary>
     public bool Cancelled { get; init; }
+
+    /// <summary>
+    /// Temporary directories the dialog created while expanding dropped ZIP archives. Some of the
+    /// files returned by <see cref="GetFilesToAdd"/> live here, so the caller must delete these
+    /// directories once the import has finished.
+    /// </summary>
+    public IReadOnlyList<string> TemporaryDirectories { get; init; } = [];
 
     /// <summary>
     /// Gets all files that should be added (non-conflicting + resolved conflicts).

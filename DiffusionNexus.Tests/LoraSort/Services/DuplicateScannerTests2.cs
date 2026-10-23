@@ -110,4 +110,22 @@ public class DuplicateScannerTests : IDisposable
         // Assert
         Assert.Empty(result);
     }
+
+    [Fact]
+    public async Task ScanAsync_WhenSftDuplicatePair_ReturnsOneSet()
+    {
+        // Arrange: .sft is the short alias for .safetensors and must be scanned too (Sortable, not
+        // just the historical ".safetensors"-only glob).
+        await CreateTestFile("file1.sft", "duplicate content");
+        await CreateTestFile("file2.sft", "duplicate content");
+        var scanner = new DuplicateScanner();
+
+        // Act
+        var result = await scanner.ScanAsync(_testFolderPath);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal("file1.sft", result[0].FileA.Name);
+        Assert.Equal("file2.sft", result[0].FileB.Name);
+    }
 }

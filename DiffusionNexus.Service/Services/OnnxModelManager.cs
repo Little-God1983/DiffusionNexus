@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Utilities;
 using Serilog;
 
 namespace DiffusionNexus.Service.Services;
@@ -47,8 +48,16 @@ public sealed class OnnxModelManager
     /// </summary>
     /// <param name="modelsBasePath">Optional custom path for model storage. Uses %LocalAppData%/DiffusionNexus/Models by default.</param>
     /// <param name="httpClient">Optional HttpClient for downloads. Creates a new one if not provided.</param>
-    public OnnxModelManager(string? modelsBasePath, HttpClient? httpClient)
+    /// <param name="freeSpaceProbe">
+    /// Optional override for reading free space on a path's volume. Defaults to
+    /// <see cref="DiskSpace.TryGetAvailableSpace"/>. Test seam only.
+    /// </param>
+    public OnnxModelManager(
+        string? modelsBasePath,
+        HttpClient? httpClient,
+        Func<string, FreeSpaceResult>? freeSpaceProbe = null)
     {
+        _freeSpaceProbe = freeSpaceProbe ?? (path => DiskSpace.TryGetAvailableSpace(path));
         _modelsBasePath = modelsBasePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DiffusionNexus",
@@ -67,24 +76,7 @@ public sealed class OnnxModelManager
     /// </summary>
     private const long FreeSpaceMarginBytes = 256L * 1024 * 1024;
 
-    /// <summary>
-    /// Free bytes on the volume holding <paramref name="path"/>, or -1 when it
-    /// can't be determined — -1 means "unknown, don't block".
-    /// </summary>
-    private static long ProbeFreeBytes(string path)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrWhiteSpace(root)) return -1;
-            var drive = new DriveInfo(root);
-            return drive.IsReady ? drive.AvailableFreeSpace : -1;
-        }
-        catch
-        {
-            return -1;
-        }
-    }
+    private readonly Func<string, FreeSpaceResult> _freeSpaceProbe;
 
     /// <summary>
     /// Deletes leftover <c>*.download</c> partials. The in-download cleanup
@@ -466,12 +458,23 @@ public sealed class OnnxModelManager
 
             // Free-space preflight: refuse to start a download the volume
             // can't hold instead of grinding it to zero and failing mid-stream.
-            var freeBytes = ProbeFreeBytes(destinationPath);
-            if (freeBytes >= 0 && expectedSize > 0 && freeBytes < expectedSize + FreeSpaceMarginBytes)
+            // An unknowable reading proceeds; an unreachable destination does not —
+            // this used to fail open on both (issue #581).
+            var space = _freeSpaceProbe(destinationPath);
+            if (space.Kind == FreeSpaceKind.Unreachable)
+            {
+                var message = $"Cannot reach the destination for {modelName}. " +
+                    "The drive or folder is not available.";
+                Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
+                progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
+                return false;
+            }
+
+            if (space.IsKnown && expectedSize > 0 && space.FreeBytes < expectedSize + FreeSpaceMarginBytes)
             {
                 var message =
                     $"Not enough free disk space for {modelName}: needs ~{(expectedSize + FreeSpaceMarginBytes) / (1024 * 1024):N0} MB, " +
-                    $"volume has {freeBytes / (1024 * 1024):N0} MB free.";
+                    $"volume has {space.FreeBytes / (1024 * 1024):N0} MB free.";
                 Log.Error("Download blocked — {Message} (target: {Path})", message, destinationPath);
                 progress?.Report(new ModelDownloadProgress(0, expectedSize, message));
                 return false;

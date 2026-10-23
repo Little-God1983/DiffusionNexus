@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiffusionNexus.DataAccess.Repositories;
@@ -63,6 +64,9 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Files)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // One small row per model: the images step's stamp is how the grid tells "not rated
+            // yet" from "Civitai had no rating" (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .Where(m => m.Versions.Any(v => v.Files.Any(f => f.LocalPath != null && f.LocalPath != "")))
             .AsSplitQuery()
             .AsNoTracking()
@@ -87,7 +91,6 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.CivitaiId,
                 i.Url,
                 i.MediaType,
-                i.IsNsfw,
                 i.NsfwLevel,
                 i.Width,
                 i.Height,
@@ -99,6 +102,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.ThumbnailMimeType,
                 i.ThumbnailWidth,
                 i.ThumbnailHeight,
+                // Two scalars, no BLOB: the tile refuses to re-fetch a row whose last attempt says
+                // not to, and without these it would see a blank slate on every row — which the
+                // retry policy reads as "never attempted", so a poster URL that 404s would be
+                // re-fetched on every scroll past the tile, forever.
+                i.ThumbnailAttemptedAt,
+                i.ThumbnailFailure,
                 i.LocalCachePath,
                 i.IsLocalCacheValid,
                 i.CachedAt,
@@ -114,8 +123,12 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 i.LikeCount,
                 i.HeartCount,
                 i.CommentCount,
-                // ThumbnailData deliberately EXCLUDED — loaded per-tile on demand
-                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData.Length > 0,
+                // ThumbnailData is answered, never selected. Compared against the empty BLOB
+                // rather than measured with .Length, which SQLite cannot translate: EF would
+                // answer the != null half in SQL, add the column to the SELECT list, and finish
+                // the comparison in memory — handing this query every thumbnail in the library,
+                // which is the exact cost the light load exists to avoid. See ThumbnailBlobs.Empty.
+                HasThumbnailInDb = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
             })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -137,7 +150,6 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                     CivitaiId = i.CivitaiId,
                     Url = i.Url,
                     MediaType = i.MediaType,
-                    IsNsfw = i.IsNsfw,
                     NsfwLevel = i.NsfwLevel,
                     Width = i.Width,
                     Height = i.Height,
@@ -149,6 +161,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                     ThumbnailMimeType = i.ThumbnailMimeType,
                     ThumbnailWidth = i.ThumbnailWidth,
                     ThumbnailHeight = i.ThumbnailHeight,
+                    ThumbnailAttemptedAt = i.ThumbnailAttemptedAt,
+                    ThumbnailFailure = i.ThumbnailFailure,
                     LocalCachePath = i.LocalCachePath,
                     IsLocalCacheValid = i.IsLocalCacheValid,
                     CachedAt = i.CachedAt,
@@ -186,6 +200,14 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
+    public Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default)
+        => Context.ModelImages.FirstOrDefaultAsync(i => i.Id == imageId, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default)
+        => await Context.ModelVersions.FindAsync([versionId], cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
     public async Task<Model?> GetByIdWithIncludesAsync(int id, CancellationToken cancellationToken = default)
     {
         return await Context.Models
@@ -198,6 +220,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Images)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // The images step's stamp: a tile refreshed from this load tells "not rated yet" from
+            // "Civitai had no rating" by it (#647, NsfwPolicy.Judge). Tracked like the rest, so the
+            // sync steps' GetOrCreate finds this instance instead of loading a second one.
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             .ConfigureAwait(false);
@@ -233,6 +259,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(
                 m => m.Versions.Any(v => v.Files.Any(f =>
@@ -263,6 +291,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == modelId.Value, cancellationToken)
             .ConfigureAwait(false);
@@ -449,5 +479,118 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .SetProperty(m => m.LastCheckedForUpdatesUtc, checkedAtUtc),
                 cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> SetUserNsfwRatingAsync(
+        IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default)
+    {
+        if (modelIds.Count == 0) return 0;
+
+        return await Context.Models
+            .Where(m => modelIds.Contains(m.Id))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.UserNsfwRating, (bool?)isNsfw)
+                .SetProperty(m => m.OriginalNsfwRating, m => m.OriginalNsfwRating ?? originalRating)
+                // ExecuteUpdate bypasses SaveChanges, which stamps UpdatedAt for every other change.
+                .SetProperty(m => m.UpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The pickle restriction is in the WHERE clause, not only in the caller's loop, because this
+    /// runs on EVERY <c>DiscoverNewFilesAsync</c> — every Viewer open, every background reconcile,
+    /// every sync — and it is a three-query split load of the whole version/file graph. Without the
+    /// clause, a library with thousands of unidentified LoRAs materialised all of them on every one
+    /// of those calls, forever, only for the caller to discard each one on its extension and change
+    /// zero rows. Now the candidate set is only what the pass can actually act on.
+    /// <para>
+    /// <c>ModelFileExtensions.Matches</c> stays the authoritative rule and the caller still applies
+    /// it — this clause is an optimisation and must never become the only guard. The two agree by
+    /// construction rather than by restating one rule twice: any file the caller would act on is a
+    /// non-safetensors file, so <c>Any</c> holds and the row is selected. The reverse does not have
+    /// to hold — a model whose PRIMARY file is a container but which also carries a pickle is
+    /// selected here and then correctly skipped in the loop, which is a superset, not a
+    /// disagreement.
+    /// </para>
+    /// <para>
+    /// <c>IsUserEdited</c> is excluded for the same reason <c>IdentifyModelStep</c> refuses to
+    /// re-stamp <c>Type</c> on such a row: the two write sites must agree about what a user's edit
+    /// means, or a user who deliberately typed <c>4x-detail-helper.pth</c> as <c>LORA</c> has it
+    /// flipped back on the next discovery — which is every Viewer open.
+    /// </para>
+    /// <para>
+    /// <c>EF.Functions.Like</c> rather than <c>EndsWith</c>: it translates to a SQL <c>LIKE</c>,
+    /// which SQLite evaluates case-insensitively for ASCII — matching the caller's
+    /// <c>OrdinalIgnoreCase</c> comparison — where <c>string.EndsWith(…, OrdinalIgnoreCase)</c> does
+    /// not translate at all.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            .Where(m => m.Type == ModelType.LORA
+                        && m.Source == DataSource.LocalFile
+                        && !m.IsUserEdited
+                        && (m.SyncState == null
+                            || m.SyncState.MetadataOutcome == SyncOutcome.NotIdentified
+                            || m.SyncState.MetadataOutcome == SyncOutcome.None)
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            !EF.Functions.Like(f.FileName, "%.safetensors")
+                            && !EF.Functions.Like(f.FileName, "%.sft"))))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Model>> GetHeaderReclassifyCandidatesAsync(
+        CancellationToken cancellationToken = default)
+        => await Context.Models
+            .Include(m => m.SyncState)
+            .Include(m => m.Versions)
+                .ThenInclude(v => v.Files)
+            // No Source filter and no outcome filter: a Matched row is exactly the case this query
+            // exists for — nothing else re-reads one. HeaderCheckedAt is what bounds it instead, and
+            // the SyncState != null half keeps this from admitting rows SyncStateInitializer has not
+            // derived yet; see the interface remarks for why creating those here would be harmful.
+            .Where(m => m.Type == ModelType.LORA
+                        && !m.IsUserEdited
+                        && m.SyncState != null
+                        && m.SyncState.HeaderCheckedAt == null
+                        && m.Versions.Any(v => v.Files.Any(f =>
+                            f.LocalPath != null && f.LocalPath != ""
+                            && (EF.Functions.Like(f.FileName, "%.safetensors")
+                                || EF.Functions.Like(f.FileName, "%.sft")))))
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
+        GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default)
+    {
+        // Flattened from ModelFiles with a filter on the owning Model's Type, the same shape
+        // GetInstalledCivitaiVersionIdsAsync/GetInstalledFileHashesAsync already use for a
+        // narrow projection — no Include, no entity graph, just the three columns the caller
+        // needs. ModelTypeExtensions.SupportAssetKinds.Contains(...) rather than
+        // Type.IsSupportAsset(): the latter is a custom extension method EF cannot translate to
+        // SQL (the same constraint the #527 backfill query hit), while Enumerable.Contains
+        // against SupportAssetKinds — the one definition of the support-asset set — is a
+        // standard EF pattern that becomes a parameterized IN, so this can never drift from
+        // IsSupportAsset() the way restating the four types inline here could.
+        var rows = await Context.ModelFiles
+            .Where(f => f.LocalPath != null && f.LocalPath != ""
+                        && ModelTypeExtensions.SupportAssetKinds.Contains(f.ModelVersion!.Model!.Type))
+            .Select(f => new { f.LocalPath, f.IsLocalFileValid, f.LocalFileVerifiedAt })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows
+            .Select(r => (r.LocalPath!, r.IsLocalFileValid, r.LocalFileVerifiedAt))
+            .ToList();
     }
 }

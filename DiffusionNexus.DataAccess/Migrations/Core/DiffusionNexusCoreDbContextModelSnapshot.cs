@@ -15,13 +15,18 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ApplyCatalogUpdatesAutomatically")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
 
                     b.Property<int>("AutoBackupIntervalDays")
                         .HasColumnType("INTEGER");
@@ -38,6 +43,20 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
                     b.Property<bool>("BackupDatasetImagesEnabled")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("CatalogChannel")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CivitaiBrowserFilterJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ComfyUiServerMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("Engine");
 
                     b.Property<string>("ComfyUiServerUrl")
                         .IsRequired()
@@ -76,12 +95,18 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<DateTimeOffset?>("LastBackupAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("LastLibrarySyncAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("LoraSortSourcePath")
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LoraSortTargetPath")
                         .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LoraSorterExcludedFoldersJson")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("LoraUpdateCheckStalenessDays")
@@ -100,6 +125,15 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("ShowVideoPreview")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SyncErrorRetryDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SyncNotIdentifiedRetryDays")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SyncThumbnailConcurrency")
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
@@ -442,6 +476,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsAppManaged")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsDefault")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
@@ -559,6 +596,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OriginalNsfwRating")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -580,6 +621,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("UserCategory")
                         .HasMaxLength(20)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool?>("UserNsfwRating")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
@@ -756,8 +800,15 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<bool>("IsLocalCacheValid")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsNsfw")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("LegacyIsNsfw")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("IsNsfw");
+
+                    b.Property<string>("LegacyNsfwLevel")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("NsfwLevel");
 
                     b.Property<int>("LikeCount")
                         .HasColumnType("INTEGER");
@@ -776,10 +827,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("NegativePrompt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("NsfwLevel")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("TEXT");
+                    b.Property<int>("NsfwLevel")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("NsfwRating");
 
                     b.Property<int?>("PostId")
                         .HasColumnType("INTEGER");
@@ -800,8 +850,15 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<int?>("Steps")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTimeOffset?>("ThumbnailAttemptedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<byte[]>("ThumbnailData")
                         .HasColumnType("BLOB");
+
+                    b.Property<string>("ThumbnailFailure")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
 
                     b.Property<int?>("ThumbnailHeight")
                         .HasColumnType("INTEGER");
@@ -834,6 +891,47 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.HasIndex("ModelVersionId", "SortOrder");
 
                     b.ToTable("ModelImages", (string)null);
+                });
+
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelSyncState", b =>
+                {
+                    b.Property<int>("ModelId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("HeaderCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ImagesCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MetadataAttempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("MetadataCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetadataOutcome")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SidecarSignature")
+                        .HasMaxLength(1100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("TagsCheckedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("ModelId");
+
+                    b.ToTable("ModelSyncStates", (string)null);
                 });
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelTag", b =>
@@ -1088,6 +1186,17 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Navigation("ModelVersion");
                 });
 
+            modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelSyncState", b =>
+                {
+                    b.HasOne("DiffusionNexus.Domain.Entities.Model", "Model")
+                        .WithOne("SyncState")
+                        .HasForeignKey("DiffusionNexus.Domain.Entities.ModelSyncState", "ModelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Model");
+                });
+
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.ModelTag", b =>
                 {
                     b.HasOne("DiffusionNexus.Domain.Entities.Model", "Model")
@@ -1162,6 +1271,8 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.Model", b =>
                 {
+                    b.Navigation("SyncState");
+
                     b.Navigation("Tags");
 
                     b.Navigation("Versions");

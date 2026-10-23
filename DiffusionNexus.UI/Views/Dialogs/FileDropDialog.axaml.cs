@@ -29,6 +29,10 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     private HashSet<string>? _existingFileNames;
     private Func<IEnumerable<FileConflictItem>, IEnumerable<string>, Task<FileConflictResolutionResult?>>? _onConflictsDetected;
     private string? _destinationFolder;
+    private readonly List<string> _tempDirectories = [];
+    private readonly Dictionary<string, ArchiveOrigin> _archiveOrigins = new(StringComparer.OrdinalIgnoreCase);
+    private bool _resolvingConflicts;
+    private readonly List<(string ArchiveName, int Count)> _skippedByArchive = [];
 
     public FileDropDialog()
     {
@@ -84,6 +88,24 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     /// Files that had no conflicts and can be copied directly.
     /// </summary>
     public List<string>? NonConflictingResultFiles { get; private set; }
+
+    /// <summary>
+    /// Temporary directories created while expanding dropped ZIP archives. Files in
+    /// <see cref="ResultFiles"/> may live here, so the caller must delete these directories
+    /// after it has imported the files. They are removed automatically when the dialog is cancelled.
+    /// </summary>
+    public IReadOnlyList<string> TemporaryDirectories => _tempDirectories;
+
+    /// <summary>
+    /// Notice about ZIP entries that could not be extracted (unusable name, disk error), or null.
+    /// Shown so a user who dropped a 200-image archive and got 199 files knows why.
+    /// </summary>
+    public string? SkippedEntriesNotice => FileDropSelectionHelper.BuildSkippedEntriesNotice(_skippedByArchive);
+
+    /// <summary>
+    /// Whether <see cref="SkippedEntriesNotice"/> has anything to say.
+    /// </summary>
+    public bool HasSkippedEntries => SkippedEntriesNotice is not null;
 
     #endregion
 
@@ -239,123 +261,140 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
 
         var files = GetFilesFromEvent(e);
         if (files is null) return;
-        
-        // Collect all dropped files
-        var droppedFiles = new List<string>();
-        
+
+        var incoming = new List<string>();
         foreach (var item in files)
         {
             if (item is IStorageFile file)
             {
-                var filePath = file.Path.LocalPath;
-                if (IsZipFile(filePath))
-                {
-                    // Extract and add media files from ZIP
-                    AddFilesFromZip(filePath);
-                    // Get the extracted files from SelectedFiles (they were added by AddFilesFromZip)
-                }
-                else
-                {
-                    droppedFiles.Add(filePath);
-                }
+                CollectIncomingFile(file.Path.LocalPath, incoming);
             }
             else if (item is IStorageFolder folder)
             {
-                CollectFilesFromFolder(folder.Path.LocalPath, droppedFiles);
+                CollectFilesFromFolder(folder.Path.LocalPath, incoming);
             }
         }
 
-        // Filter by allowed extensions
-        var filteredFiles = droppedFiles.Where(IsFileAllowed).ToList();
+        await AcceptIncomingFilesAsync(incoming);
+    }
 
-        // Check for conflicts if conflict detection is enabled
-        if (_existingFileNames is not null && _onConflictsDetected is not null && _destinationFolder is not null)
+    /// <summary>
+    /// Adds a single user-supplied path to <paramref name="incoming"/>. ZIP archives are expanded
+    /// into a temporary directory and contribute their media entries instead of the archive itself,
+    /// so archive content flows through exactly the same filter and conflict detection as loose files.
+    /// </summary>
+    private void CollectIncomingFile(string filePath, List<string> incoming)
+    {
+        if (IsZipFile(filePath))
         {
-            var conflictResult = FileConflictDetector.DetectConflicts(
-                filteredFiles,
-                _existingFileNames,
-                _destinationFolder);
-
-            // If there are any conflicts, invoke the callback
-            if (conflictResult.Conflicts.Count > 0)
-            {
-                var result = await _onConflictsDetected(conflictResult.Conflicts, conflictResult.NonConflictingFiles);
-                
-                if (result is null || !result.Confirmed)
-                {
-                    // User cancelled - don't add any files
-                    return;
-                }
-
-                // Store conflict resolution data for the caller
-                ConflictResolutionData = result;
-                NonConflictingResultFiles = conflictResult.NonConflictingFiles.ToList();
-                ResultFiles = ProcessConflictResolution(result, conflictResult.NonConflictingFiles);
-                Close(true);
-                return;
-            }
-            else
-            {
-                // No conflicts detection - add files normally
-                foreach (var filePath in filteredFiles)
-                {
-                    AddFile(filePath);
-                }
-            }
+            var extraction = ZipMediaExtractor.Extract(filePath, _allowedExtensions);
+            if (extraction.TempDirectory is not null)
+                _tempDirectories.Add(extraction.TempDirectory);
+            foreach (var (extractedPath, origin) in extraction.Origins)
+                _archiveOrigins[extractedPath] = origin;
+            if (extraction.SkippedEntryCount > 0)
+                _skippedByArchive.Add((Path.GetFileName(filePath), extraction.SkippedEntryCount));
+            incoming.AddRange(extraction.ExtractedFiles);
         }
         else
         {
-            // No conflict detection - add files normally
-            foreach (var filePath in filteredFiles)
-            {
-                AddFile(filePath);
-            }
+            incoming.Add(filePath);
+        }
+    }
+
+    /// <summary>
+    /// Filters <paramref name="incoming"/> by the allowed extensions, runs conflict detection over the
+    /// whole selection (already selected + incoming) when configured, and either closes the dialog
+    /// with a resolved result or appends the files to the visible selection.
+    /// </summary>
+    private async Task AcceptIncomingFilesAsync(IEnumerable<string> incoming)
+    {
+        var filtered = incoming.Where(IsFileAllowed).ToList();
+        if (filtered.Count == 0)
+        {
+            NotifyPropertiesChanged();
+            return;
+        }
+
+        var candidates = FileDropSelectionHelper.MergeDistinct(
+            SelectedFiles.Select(f => f.FilePath), filtered);
+
+        var outcome = await TryResolveConflictsAndCloseAsync(candidates);
+        if (outcome != ConflictCheckOutcome.NoConflicts)
+            return;
+
+        foreach (var filePath in filtered)
+        {
+            AddFile(filePath);
         }
 
         NotifyPropertiesChanged();
     }
 
-    /// <summary>
-    /// Processes the conflict resolution result and returns the final list of files to import.
-    /// </summary>
-    private List<string> ProcessConflictResolution(FileConflictResolutionResult result, List<string> nonConflictingFiles)
+    private enum ConflictCheckOutcome
     {
-        var filesToReturn = new List<string>();
+        /// <summary>Nothing conflicts (or detection is not configured); the caller continues normally.</summary>
+        NoConflicts,
+        /// <summary>Conflicts were resolved and the dialog has been closed with a result.</summary>
+        Closed,
+        /// <summary>The user dismissed the conflict dialog; nothing was added and the dialog stays open.</summary>
+        Cancelled,
+    }
 
-        // Add all non-conflicting files
-        filesToReturn.AddRange(nonConflictingFiles);
+    /// <summary>
+    /// Runs conflict detection over <paramref name="candidates"/>. When conflicts exist the conflict
+    /// callback is invoked and, if confirmed, the dialog closes with the resolved result populated.
+    /// </summary>
+    private async Task<ConflictCheckOutcome> TryResolveConflictsAndCloseAsync(List<string> candidates)
+    {
+        if (_existingFileNames is null || _onConflictsDetected is null || _destinationFolder is null)
+            return ConflictCheckOutcome.NoConflicts;
 
-        // Add conflicting files based on resolution
-        foreach (var conflict in result.Conflicts)
+        // The comparer is modal to the main window, not to this dialog, so a second Done click or
+        // drop while it is open would start a second resolution over the same selection.
+        if (_resolvingConflicts)
+            return ConflictCheckOutcome.Cancelled;
+
+        var detection = FileConflictDetector.DetectConflicts(
+            candidates, _existingFileNames, _destinationFolder, _archiveOrigins);
+        if (detection.Conflicts.Count == 0)
+            return ConflictCheckOutcome.NoConflicts;
+
+        _resolvingConflicts = true;
+        FileConflictResolutionResult? resolution;
+        try
         {
-            switch (conflict.Resolution)
-            {
-                case FileConflictResolution.Override:
-                case FileConflictResolution.Rename:
-                    // These files will be handled by the caller
-                    filesToReturn.Add(conflict.NewFilePath);
-                    break;
-                case FileConflictResolution.Ignore:
-                    // Skip this file
-                    break;
-            }
+            resolution = await _onConflictsDetected(detection.Conflicts, detection.NonConflictingFiles);
+        }
+        finally
+        {
+            _resolvingConflicts = false;
         }
 
-        return filesToReturn;
+        if (resolution is null || !resolution.Confirmed)
+            return ConflictCheckOutcome.Cancelled;
+
+        ConflictResolutionData = resolution;
+        NonConflictingResultFiles = detection.NonConflictingFiles.ToList();
+        ResultFiles = FileDropSelectionHelper.BuildFinalFileList(resolution, detection.NonConflictingFiles);
+        Close(true);
+        return ConflictCheckOutcome.Closed;
     }
 
     /// <summary>
     /// Collects all files from a folder.
     /// </summary>
-    private static void CollectFilesFromFolder(string folderPath, List<string> files)
+    private void CollectFilesFromFolder(string folderPath, List<string> files)
     {
         if (!Directory.Exists(folderPath)) return;
 
         try
         {
+            // Same route as a directly dropped file, so an archive inside the folder is expanded
+            // instead of being copied into the dataset as if it were media.
             foreach (var file in Directory.EnumerateFiles(folderPath))
             {
-                files.Add(file);
+                CollectIncomingFile(file, files);
             }
         }
         catch (IOException) { /* Directory access error */ }
@@ -541,12 +580,13 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
             FileTypeFilter = filters
         });
 
+        var incoming = new List<string>();
         foreach (var file in result)
         {
-            AddFile(file.Path.LocalPath);
+            CollectIncomingFile(file.Path.LocalPath, incoming);
         }
 
-        NotifyPropertiesChanged();
+        await AcceptIncomingFilesAsync(incoming);
     }
 
     private void OnRemoveFileClick(object? sender, RoutedEventArgs e)
@@ -558,9 +598,17 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         }
     }
 
-    private void OnDoneClick(object? sender, RoutedEventArgs e)
+    private async void OnDoneClick(object? sender, RoutedEventArgs e)
     {
-        ResultFiles = SelectedFiles.Select(f => f.FilePath).ToList();
+        var selected = SelectedFiles.Select(f => f.FilePath).ToList();
+
+        // Files that reached the selection without passing conflict detection (e.g. pre-populated
+        // initial files) get their final check here.
+        var outcome = await TryResolveConflictsAndCloseAsync(selected);
+        if (outcome != ConflictCheckOutcome.NoConflicts)
+            return;
+
+        ResultFiles = selected;
         NonConflictingResultFiles = ResultFiles;
         Close(true);
     }
@@ -569,6 +617,49 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
     {
         ResultFiles = null;
         Close(false);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+
+        // On cancel (Cancel button or window close) nothing will consume the extracted files,
+        // so every temporary directory is ours to remove. On success the caller owns the ones
+        // holding returned files; the rest (archive removed from the selection, or expanded but
+        // rejected by the filter) would otherwise leak.
+        if (ResultFiles is null)
+        {
+            DeleteTemporaryDirectories(_ => true);
+        }
+        else
+        {
+            var returned = ResultFiles;
+            DeleteTemporaryDirectories(dir => !returned.Any(f => IsInside(f, dir)));
+        }
+    }
+
+    private static bool IsInside(string filePath, string directory)
+    {
+        var dirFull = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(filePath).StartsWith(dirFull, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void DeleteTemporaryDirectories(Func<string, bool> shouldDelete)
+    {
+        foreach (var dir in _tempDirectories.Where(shouldDelete).ToList())
+        {
+            try
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup of our own temp folders.
+            }
+
+            _tempDirectories.Remove(dir);
+        }
     }
 
     #endregion
@@ -602,74 +693,12 @@ public partial class FileDropDialog : Window, INotifyPropertyChanged
         }
     }
 
-    /// <summary>
-    /// Extracts and adds files from a ZIP archive.
-    /// Only media files (not .zip files) are extracted.
-    /// </summary>
-    private void AddFilesFromZip(string zipPath)
-    {
-        try
-        {
-            // Create a temporary directory for extraction
-            var tempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ZipExtract_" + Guid.NewGuid().ToString("N")[..8]);
-            Directory.CreateDirectory(tempDir);
-
-            var extractedCount = 0;
-            var allowedWithoutZip = _allowedExtensions.Where(e => !DefaultArchiveExtensions.Contains(e)).ToArray();
-
-            using (var archive = ZipFile.OpenRead(zipPath))
-            {
-                foreach (var entry in archive.Entries)
-                {
-                    // Skip directories and empty entries
-                    if (string.IsNullOrEmpty(entry.Name))
-                        continue;
-
-                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-                    
-                    // Check if this file type is allowed (excluding zip)
-                    if (allowedWithoutZip.Length > 0 && !allowedWithoutZip.Contains(ext))
-                        continue;
-
-                    // Extract to temp directory with flat structure (just filename)
-                    var destPath = Path.Combine(tempDir, entry.Name);
-                    
-                    // Handle duplicate filenames by adding a suffix
-                    var counter = 1;
-                    while (File.Exists(destPath))
-                    {
-                        var nameWithoutExt = Path.GetFileNameWithoutExtension(entry.Name);
-                        destPath = Path.Combine(tempDir, $"{nameWithoutExt}_{counter}{ext}");
-                        counter++;
-                    }
-
-                    entry.ExtractToFile(destPath);
-                    
-                    // Add the extracted file (AddFile will handle duplicate checking in SelectedFiles)
-                    if (SelectedFiles.All(f => !f.FilePath.Equals(destPath, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        SelectedFiles.Add(new SelectedFileItem(destPath));
-                        extractedCount++;
-                    }
-                }
-            }
-
-            // If no files were extracted, clean up the temp directory
-            if (extractedCount == 0 && Directory.Exists(tempDir))
-            {
-                try { Directory.Delete(tempDir, recursive: true); } catch { }
-            }
-        }
-        catch
-        {
-            // Ignore extraction errors
-        }
-    }
-
     private void NotifyPropertiesChanged()
     {
         OnPropertyChanged(nameof(HasFiles));
         OnPropertyChanged(nameof(FileCountText));
+        OnPropertyChanged(nameof(SkippedEntriesNotice));
+        OnPropertyChanged(nameof(HasSkippedEntries));
     }
 
     #endregion

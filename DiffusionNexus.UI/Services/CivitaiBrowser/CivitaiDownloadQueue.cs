@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Avalonia.Media;
@@ -11,6 +11,9 @@ using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
+using DiffusionNexus.Service.Services.Lora;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.ViewModels;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,29 +35,55 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     private readonly string? _persistPathOverride;
 
-    private readonly LoraDownloadService? _downloadService;
+    private readonly ICivitaiModelDownloader? _downloader;
     private readonly IUnifiedLogger? _logger;
     private readonly ICivitaiClient? _civitaiClient;
+    private readonly ICivitaiApiKeyProvider? _apiKeyProvider;
     private SemaphoreSlim _gate = new(2);
     private int _maxConcurrency = 2;
     private CancellationTokenSource? _runCts;
 
-    public CivitaiDownloadQueue(LoraDownloadService? downloadService)
-        : this(downloadService, null, null, null)
+    /// <summary>
+    /// Jobs currently claimed by a worker — from the moment they are scheduled, not from the
+    /// moment they start transferring. Reference identity is what matters (the queue owns one
+    /// instance per job), and the set is touched from pool threads, hence the lock.
+    /// </summary>
+    private readonly HashSet<CivitaiDownloadJob> _scheduled = new();
+    private readonly object _scheduledLock = new();
+
+    /// <summary>
+    /// The Start batch currently draining, or null when no Start is running. A job added while
+    /// it runs joins it (issue #604) — Start used to snapshot its jobs once, so anything queued
+    /// mid-run sat at Queued and the queue stopped after the last "old" job.
+    /// </summary>
+    private RunBatch? _liveBatch;
+    private readonly object _batchLock = new();
+
+    /// <summary>One Start's runners, on one run epoch. The list only grows.</summary>
+    private sealed class RunBatch(CancellationToken token)
+    {
+        public CancellationToken Token { get; } = token;
+        public List<Task> Tasks { get; } = [];
+    }
+
+    public CivitaiDownloadQueue(ICivitaiModelDownloader? downloader)
+        : this(downloader, null, null, null)
     {
     }
 
     public CivitaiDownloadQueue(
-        LoraDownloadService? downloadService,
+        ICivitaiModelDownloader? downloader,
         IUnifiedLogger? logger,
         ICivitaiClient? civitaiClient,
         DownloadDestinationViewModel? destination,
-        string? persistPathOverride = null)
+        string? persistPathOverride = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null)
     {
         _persistPathOverride = persistPathOverride;
-        _downloadService = downloadService;
+        _downloader = downloader;
         _logger = logger;
         _civitaiClient = civitaiClient;
+        _apiKeyProvider = apiKeyProvider;
         Destination = destination ?? new DownloadDestinationViewModel();
         // Suppress the preview path inside the picker — each queued job may resolve
         // to a different folder, so the per-job expected path is rendered on the tile.
@@ -79,6 +108,43 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         RecomputeSpaceWarning();
         OnPropertyChanged(nameof(TotalQueuedBytes));
         OnPropertyChanged(nameof(TotalQueuedBytesDisplay));
+
+        // Add only: a Move also carries NewItems, and moving a tile is not queueing it.
+        if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is not null)
+            JoinLiveBatch(e.NewItems.Cast<CivitaiDownloadJob>());
+    }
+
+    /// <summary>
+    /// Schedules jobs added while a Start batch is running into that batch, so the queue keeps
+    /// going instead of stopping after the jobs Start saw. Nothing joins once the batch's epoch
+    /// is cancelled (Abort, Clear all): those jobs wait for the next Start, as they would have
+    /// before it ran.
+    /// <para>
+    /// Not gated on <see cref="SpaceWarning"/>: a late job that does not fit would stay Queued,
+    /// keep that queue-wide verdict up and turn away every job added after it, the stop this
+    /// exists to remove. Each joined job meets <see cref="RefuseForSpace"/> when it gets its
+    /// slot instead, as a Retry does, with a full reading taken at that moment. That check is
+    /// per job: two late jobs that each fit but not together both pass, as they would through
+    /// a Retry or a second Start while a transfer runs, because bytes still in flight are not
+    /// reserved anywhere.
+    /// </para>
+    /// </summary>
+    private void JoinLiveBatch(IEnumerable<CivitaiDownloadJob> added)
+    {
+        var jobs = added.Where(j => j.Status == JobStatus.Queued).ToList();
+        if (jobs.Count == 0) return;
+
+        RunBatch? batch;
+        lock (_batchLock) batch = _liveBatch;
+        if (batch is null || batch.Token.IsCancellationRequested) return;
+
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Adding {jobs.Count} newly queued download(s) to the running batch.");
+        foreach (var job in jobs)
+        {
+            var task = RunGatedAsync(job, batch.Token);
+            lock (_batchLock) batch.Tasks.Add(task);
+        }
     }
 
     private void HookJob(CivitaiDownloadJob j) => j.PropertyChanged += OnJobPropertyChanged;
@@ -97,12 +163,39 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         }
     }
 
-    /// <summary>Sum of bytes for jobs still queued (excludes downloading/done/failed).</summary>
-    public long TotalQueuedBytes => Jobs.Where(j => j.Status == JobStatus.Queued).Sum(j => j.SizeBytes);
+    /// <summary>
+    /// Sum of bytes for the jobs a Start would run (excludes downloading/done/failed).
+    /// Cancelled counts: Start re-runs those, and this pill sits directly above the gate's
+    /// verdict — counting a narrower set made the panel read "0 B" next to a banner demanding
+    /// 40 GB after an Abort.
+    /// </summary>
+    public long TotalQueuedBytes => Jobs
+        .Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled)
+        .Sum(j => j.SizeBytes);
 
     public string TotalQueuedBytesDisplay => FormatBytes(TotalQueuedBytes);
 
+    /// <summary>
+    /// Headroom the check keeps free on top of the queued bytes. A download needs its
+    /// <c>.download</c> partial plus the <c>.civitai.json</c>/<c>.preview.png</c> sidecars,
+    /// and a volume ground to zero bytes free destabilizes Windows when it is C:. Siblings
+    /// keep the same kind of margin: <c>CaptioningModelManager</c> 256 MB,
+    /// <c>LoraSorterViewModel</c> 1 GB.
+    /// </summary>
+    private const long SpaceSafetyMarginBytes = 1L << 30;
+
     private string? _spaceWarning;
+
+    /// <summary>
+    /// Blocking verdict: a drive the queue targets cannot hold the bytes aimed at it. Gates
+    /// Start queue-wide, as it did before this gate was reworked — an aggregate shortfall is
+    /// precisely what a per-job check cannot see.
+    /// An unreachable drive is deliberately NOT in here: the queue is restored from disk across
+    /// restarts, so one leftover job bound for an unplugged USB stick would have left Start
+    /// permanently dead for every healthy job, with nothing in the UI pointing at the culprit.
+    /// Those are refused per job in <see cref="RunJobAsync"/> instead and reported in
+    /// <see cref="SpaceNote"/>.
+    /// </summary>
     public string? SpaceWarning
     {
         get => _spaceWarning;
@@ -117,65 +210,343 @@ public sealed class CivitaiDownloadQueue : ObservableObject
 
     public bool HasSpaceWarning => !string.IsNullOrEmpty(SpaceWarning);
 
+    private string? _spaceNote;
+
     /// <summary>
-    /// Groups queued jobs by the drive root of their resolved target directory and
-    /// flags any drive where the required bytes exceed the live <c>AvailableFreeSpace</c>.
-    /// Per-drive reporting handles the case where a per-job override sends some
-    /// downloads to a different drive than the global destination.
+    /// Advisory verdict — what the gate could not cover: a volume that will not report its free
+    /// space (UNC share), a volume that cannot be reached, and jobs whose size Civitai never
+    /// reported. Does NOT gate Start; the per-job check at commit time is what stops those.
+    /// A silent all-clear would be the worse failure, so they are stated rather than hidden.
+    /// </summary>
+    public string? SpaceNote
+    {
+        get => _spaceNote;
+        private set
+        {
+            if (SetProperty(ref _spaceNote, value))
+            {
+                OnPropertyChanged(nameof(HasSpaceNote));
+            }
+        }
+    }
+
+    public bool HasSpaceNote => !string.IsNullOrEmpty(SpaceNote);
+
+    private string _lastSpaceCheckDisplay = "Not checked yet";
+
+    /// <summary>
+    /// When the check last probed a drive. <see cref="SpaceWarning"/> goes through
+    /// <c>SetProperty</c>, so re-running it to an identical verdict moves nothing on screen —
+    /// and a recheck button that does nothing visible reads as broken.
+    /// Seconds, not minutes: two presses inside one wall-clock minute produced a byte-identical
+    /// string and so raised no notification either, which was the same dead button.
+    /// Invariant culture: <c>:</c> in a custom format string is the culture's time separator, so
+    /// this rendered as "14.32" under fi-FI and friends.
+    /// </summary>
+    public string LastSpaceCheckDisplay
+    {
+        get => _lastSpaceCheckDisplay;
+        private set => SetProperty(ref _lastSpaceCheckDisplay, value);
+    }
+
+    /// <summary>
+    /// Free space on an already-resolved volume root, as a verdict rather than a number the
+    /// caller has to interpret: "unknowable" and "unreachable" want opposite answers here and
+    /// this queue used to tell them apart by catching exception types (issue #581). Takes the
+    /// volume rather than the destination so the grouping's resolution is not repeated. Test seam.
+    /// </summary>
+    internal Func<string, DiskProbe, FreeSpaceResult> FreeSpaceProbe { get; set; } =
+        DiskSpace.TryGetVolumeSpace;
+
+    /// <summary>Test seam for <see cref="LastSpaceCheckDisplay"/>.</summary>
+    internal Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.Now;
+
+    private enum RootSpace { Fits, Short, Unknown, Unreachable }
+
+    /// <summary>One destination directory and the bytes the queue intends to put in it.</summary>
+    /// <remarks>
+    /// The directory, not its volume: resolving the volume can block for the SMB timeout and this
+    /// is built on the UI thread. <see cref="ComputeSpaceState"/> does the resolving.
+    /// </remarks>
+    private sealed record PendingBytes(string Directory, long Bytes);
+
+    /// <summary>One volume and the bytes the queue intends to put on it, after the destinations
+    /// aimed at it have been merged.</summary>
+    private sealed record VolumeBytes(string Volume, long Bytes);
+
+    /// <summary>
+    /// What a Start would commit, read off <see cref="Jobs"/> in one pass on the UI thread.
+    /// <paramref name="UnsizedJobs"/> is counted rather than dropped: a version whose primary
+    /// file carries no <c>sizeKB</c> is enqueued with <c>SizeBytes = 0</c> and is invisible to a
+    /// byte comparison, while the stamp next to the button claims the destinations were checked.
+    /// </summary>
+    private sealed record PendingSnapshot(List<PendingBytes> Destinations, int UnsizedJobs);
+
+    /// <summary>The verdict strings plus how many volumes were actually probed.</summary>
+    private readonly record struct SpaceState(string? Warning, string? Note, int ProbedRoots);
+
+    /// <summary>
+    /// Re-reads free space for every drive the queue targets. Nothing in the app observes the
+    /// drives, so once the user frees room (or something else eats it) this is the only way to
+    /// refresh the verdict — and a stale warning keeps Start disabled (issue #379).
+    /// The snapshot is taken here and the probing happens off the UI thread: <c>DriveInfo</c> on a
+    /// mapped network drive whose server is gone blocks for the SMB timeout, and "the drive may
+    /// have changed" is exactly this button's premise.
+    /// </summary>
+    public async Task RecheckSpaceAsync()
+    {
+        try
+        {
+            var snapshot = SnapshotPending();
+            var state = await Task.Run(() => ComputeSpaceState(snapshot, DiskProbe.Full));
+            ApplySpaceState(state);
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Disk-space recheck: {SpaceWarning ?? SpaceNote ?? "all destinations have room"}");
+        }
+        catch (Exception ex)
+        {
+            // Per-root failures are already contained in ComputeSpaceState; reaching here means
+            // the check itself broke. Keep the last verdict rather than clearing it — silently
+            // re-enabling Start is the one outcome worse than a stale warning.
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Disk-space recheck failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Synchronous recompute for the automatic triggers (queue membership, job status,
+    /// destination change), which already ran on the UI thread before this existed.
+    /// <para>
+    /// This is the path that gates the Start button (<c>IsEnabled="{Binding
+    /// !Queue.HasSpaceWarning}"</c>), so it has to be mount-point aware or the accurate
+    /// re-verification inside <see cref="StartAllAsync"/> can never run — the button it guards
+    /// would already be disabled by a reading taken against the wrong volume.
+    /// <see cref="DiskProbe.LocalVolumesOnly"/> buys exactly that: a local volume mounted into a
+    /// folder is resolved and read in full (measured at well under a millisecond), while a
+    /// network destination reports Unknown instead of stalling the window for the SMB timeout.
+    /// Network destinations get their real verdict from the recheck, from Start, and from the
+    /// per-job check, all of which run off this thread.
+    /// </para>
     /// </summary>
     private void RecomputeSpaceWarning()
     {
         try
         {
-            var queued = Jobs
-                .Where(j => j.Status == JobStatus.Queued && j.SizeBytes > 0)
-                .ToList();
-            if (queued.Count == 0)
-            {
-                SpaceWarning = null;
-                return;
-            }
-
-            var groups = queued
-                .Select(j => new
-                {
-                    Job = j,
-                    Root = SafeGetPathRoot(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
-                })
-                .Where(x => !string.IsNullOrEmpty(x.Root))
-                .GroupBy(x => x.Root!, StringComparer.OrdinalIgnoreCase);
-
-            var lines = new List<string>();
-            foreach (var g in groups)
-            {
-                var needed = g.Sum(x => x.Job.SizeBytes);
-                long? available = null;
-                try
-                {
-                    var drive = new DriveInfo(g.Key);
-                    if (drive.IsReady) available = drive.AvailableFreeSpace;
-                }
-                catch { /* not a real drive */ }
-
-                if (available is long avail && needed > avail)
-                {
-                    lines.Add($"Need {FormatBytes(needed)} on {g.Key} — only {FormatBytes(avail)} free");
-                }
-            }
-
-            SpaceWarning = lines.Count > 0 ? string.Join("\n", lines) : null;
+            ApplySpaceState(ComputeSpaceState(SnapshotPending(), DiskProbe.LocalVolumesOnly));
         }
         catch (Exception ex)
         {
             _logger?.Debug(LogCategory.Download, "CivitaiQueue", $"Disk-space check failed: {ex.Message}");
-            SpaceWarning = null;
         }
     }
 
-    private static string? SafeGetPathRoot(string? path)
+    /// <summary>
+    /// Groups the jobs Start would run by their resolved target directory.
+    /// The job set has to be the same set <see cref="StartAllAsync"/> runs — <c>Queued</c> AND
+    /// <c>Cancelled</c>, per <see cref="AbortAllActive"/>'s contract — or an Abort followed by a
+    /// recheck clears the warning and re-arms Start for bytes nobody measured.
+    /// Touches <see cref="Jobs"/>, so it stays on the caller's (UI) thread — which is also why it
+    /// groups by directory and leaves the volume lookup to <see cref="ComputeSpaceState"/>.
+    /// </summary>
+    private PendingSnapshot SnapshotPending()
+    {
+        var pending = Jobs
+            .Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled)
+            .ToList();
+
+        var destinations = pending
+            .Where(j => j.SizeBytes > 0)
+            .Select(j => new
+            {
+                j.SizeBytes,
+                Directory = SafeFullPath(j.CustomTargetDirectory ?? j.ExpectedTargetDir)
+            })
+            .Where(x => !string.IsNullOrEmpty(x.Directory))
+            .GroupBy(x => x.Directory!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new PendingBytes(g.Key, g.Sum(x => x.SizeBytes)))
+            .ToList();
+
+        return new PendingSnapshot(destinations, pending.Count(j => j.SizeBytes <= 0));
+    }
+
+    /// <summary>
+    /// Resolves each destination to the volume it actually lands on, sums the bytes per volume,
+    /// and probes each one. Pure I/O over a snapshot — safe to run on a pool thread.
+    /// </summary>
+    /// <remarks>
+    /// The re-grouping is the point of resolving volumes rather than drive letters: with an 8 TB
+    /// disk mounted at <c>C:\Models</c>, <c>C:\Models</c> and <c>C:\Users\…</c> are two volumes
+    /// behind one letter. Bucketing them by letter summed bytes bound for different disks and
+    /// measured the total against whichever one the letter named (issue #581).
+    /// </remarks>
+    private SpaceState ComputeSpaceState(PendingSnapshot snapshot, DiskProbe probe)
+    {
+        var byVolume = snapshot.Destinations
+            .Select(d => new
+            {
+                // Never null here: SnapshotPending only keeps destinations that already came
+                // back from Path.GetFullPath, and GetVolumeRoot returns null only for input that
+                // is not a path at all. A dead letter or an unreachable share still has a root,
+                // and it is ClassifyVolume's job to say so — not this expression's.
+                Volume = DiskSpace.GetVolumeRoot(d.Directory, probe)!,
+                d.Bytes,
+            })
+            .GroupBy(x => x.Volume, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new VolumeBytes(g.Key, g.Sum(x => x.Bytes)))
+            .ToList();
+
+        var lines = new List<string>();
+        var notes = new List<string>();
+
+        foreach (var entry in byVolume)
+        {
+            var (kind, free) = ClassifyVolume(entry.Volume, entry.Bytes, probe);
+            switch (kind)
+            {
+                case RootSpace.Short:
+                    lines.Add(
+                        $"Need {FormatBytes(entry.Bytes)} + {FormatBytes(SpaceSafetyMarginBytes)} headroom on " +
+                        $"{entry.Volume} — only {FormatBytes(free)} free");
+                    break;
+                case RootSpace.Unknown:
+                    notes.Add($"Free space unknown on {entry.Volume} (network or unsupported path) — not checked");
+                    break;
+                case RootSpace.Unreachable:
+                    notes.Add($"{entry.Volume} cannot be reached — the {FormatBytes(entry.Bytes)} aimed at it will fail on start");
+                    break;
+            }
+        }
+
+        if (snapshot.UnsizedJobs > 0)
+        {
+            notes.Add($"{snapshot.UnsizedJobs} job(s) of unknown size are not covered by this check");
+        }
+
+        return new SpaceState(
+            lines.Count > 0 ? string.Join("\n", lines) : null,
+            notes.Count > 0 ? string.Join("\n", notes) : null,
+            byVolume.Count);
+    }
+
+    /// <summary>
+    /// One volume's verdict. "Unknowable" and "unreachable" arrive as values rather than
+    /// exception types now — this used to split them by catching <see cref="ArgumentException"/>
+    /// and probing for the folder, one of four hand-written copies of the same rule (issue #581).
+    /// </summary>
+    /// <remarks>
+    /// The catch stays at the call site of the seam rather than inside one implementation of it.
+    /// <see cref="DiskSpace.TryGetVolumeSpace"/> is total by construction, so this is a guard
+    /// against a contract violation rather than an expected path — but without it a single
+    /// throwing probe unwinds the <c>foreach</c> in <see cref="ComputeSpaceState"/> and costs
+    /// every remaining volume its verdict, which is the guarantee
+    /// <see cref="RecheckSpaceAsync"/>'s own handler is written against.
+    /// </remarks>
+    private (RootSpace Kind, long Free) ClassifyVolume(string volume, long neededBytes, DiskProbe probe)
+    {
+        FreeSpaceResult space;
+        try
+        {
+            space = FreeSpaceProbe(volume, probe);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Free-space probe failed for {volume}: {ex.Message}");
+            return (RootSpace.Unknown, 0L);
+        }
+
+        return space.Kind switch
+        {
+            FreeSpaceKind.Unknown => (RootSpace.Unknown, 0L),
+            FreeSpaceKind.Unreachable => (RootSpace.Unreachable, 0L),
+            _ => (neededBytes + SpaceSafetyMarginBytes > space.FreeBytes ? RootSpace.Short : RootSpace.Fits,
+                  space.FreeBytes),
+        };
+    }
+
+    /// <summary>
+    /// Last check before the bytes are committed, for THIS job's destination — the enforcement
+    /// point both entries share, since <see cref="RetryJobAsync"/> commits bytes without ever
+    /// passing the batch gate. Returns the refusal to show on the tile, or null to proceed.
+    /// Per job on purpose: two jobs that each fit but do not fit together are the aggregate
+    /// check's business, not this one's.
+    /// </summary>
+    private string? RefuseForSpace(CivitaiDownloadJob job, string targetDir)
+    {
+        var volume = DiskSpace.GetVolumeRoot(targetDir);
+        if (volume is null) return null;
+
+        var (kind, free) = ClassifyVolume(volume, job.SizeBytes, DiskProbe.Full);
+        return kind switch
+        {
+            RootSpace.Unreachable => $"Destination drive {volume} is not reachable.",
+            RootSpace.Short when job.SizeBytes > 0 =>
+                $"Not enough free space on {volume}: needs {FormatBytes(job.SizeBytes + SpaceSafetyMarginBytes)}, " +
+                $"only {FormatBytes(free)} free.",
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// Publishes a verdict. Marshals, because the automatic triggers reach here from job status
+    /// writes that happen off the dispatcher (<c>RunJobAsync</c> sets Status after
+    /// <c>ConfigureAwait(false)</c>), and <see cref="LastSpaceCheckDisplay"/> is bound — an
+    /// off-thread PropertyChanged on it would throw "Call from invalid thread" inside a download,
+    /// intermittently, only when the clock second rolled over between two recomputes.
+    /// </summary>
+    private void ApplySpaceState(SpaceState state) => UiInvoke(() => ApplySpaceStateCore(state));
+
+    /// <summary>
+    /// How a verdict reaches the bound properties. Extracted so the routing is assertable: a
+    /// headless test host reports <c>CheckAccess() == true</c> from every thread, so the
+    /// dispatcher decision itself cannot be observed in a test.
+    /// </summary>
+    internal Action<Action> UiInvoke { get; set; } = static action =>
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            action();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(action);
+    };
+
+    /// <summary>
+    /// A worker's tile write. Workers run after <c>ConfigureAwait(false)</c>, and Status and
+    /// StatusMessage are bound, so writing them in place raises PropertyChanged on a pool thread
+    /// — "Call from invalid thread", the hazard <see cref="ApplySpaceState"/> marshals around —
+    /// and the Status hook then enumerates <see cref="Jobs"/> on that thread while the UI thread
+    /// may be adding a late job to it. The download outcome itself is posted by
+    /// <c>RunJobAsync</c> for the same reason.
+    /// </summary>
+    private void SetStatus(CivitaiDownloadJob job, JobStatus status, string? message) => UiInvoke(() =>
+    {
+        job.Status = status;
+        job.StatusMessage = message;
+    });
+
+    private void ApplySpaceStateCore(SpaceState state)
+    {
+        SpaceWarning = state.Warning;
+        SpaceNote = state.Note;
+        // Only claim a check that actually touched a drive: an empty queue (or one where every
+        // job lacks a size) short-circuits without probing anything, and "Checked 09:14" there
+        // reads as "your destinations were verified".
+        LastSpaceCheckDisplay = state.ProbedRoots == 0
+            ? "Nothing to check"
+            : $"Checked {Clock().ToString("HH:mm:ss", CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// Absolute form of a target directory, for grouping. Relative paths are resolved because a
+    /// raw relative path has no root at all, and the empty filter in <see cref="SnapshotPending"/>
+    /// would drop that job's bytes out of the check entirely. Pure string work — no I/O, so this
+    /// is safe on the UI thread even for a destination on a dead network share.
+    /// </summary>
+    private static string? SafeFullPath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return null;
-        try { return Path.GetPathRoot(path); }
+        try { return Path.GetFullPath(path); }
         catch { return null; }
     }
 
@@ -233,7 +604,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     {
         if (result.Model is null) return null;
 
-        var primary = pick.Version.Files.FirstOrDefault(f => f.Primary == true) ?? pick.Version.Files.FirstOrDefault();
+        var primary = CivitaiVersionFiles.PickPrimary(pick.Version);
         var url = primary?.DownloadUrl ?? pick.Version.DownloadUrl;
         if (string.IsNullOrWhiteSpace(url)) return null;
 
@@ -273,14 +644,58 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         return job;
     }
 
+    /// <summary>
+    /// Enqueues a waitlist entry whose early-access gate has lapsed. Prefers file
+    /// metadata from <paramref name="freshVersion"/> (the just-re-verified API
+    /// response) and falls back to the data captured at waitlist-add time —
+    /// <paramref name="freshVersion"/> is null only in headless/no-client runs.
+    /// Returns null when the version is already queued (same dedup as Enqueue).
+    /// </summary>
+    public CivitaiDownloadJob? EnqueueFromWaitlist(CivitaiWaitlistEntry entry, CivitaiModelVersion? freshVersion)
+    {
+        if (Jobs.Any(j => j.VersionId == entry.VersionId))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Waitlist move skipped duplicate: {entry.ModelName} ({entry.VersionName}) — version {entry.VersionId} already in queue");
+            return null;
+        }
+
+        // The file the user waitlisted, by hash, before whatever is primary now: a version the
+        // waitlist followed by hash (#617) can carry a new primary file next to it.
+        var primary = CivitaiVersionFiles.PickBySha256OrPrimary(freshVersion, entry.ExpectedSha256);
+        var job = new CivitaiDownloadJob
+        {
+            ModelId = entry.ModelId,
+            VersionId = entry.VersionId,
+            ModelName = entry.ModelName,
+            VersionName = entry.VersionName,
+            BaseModel = entry.BaseModel,
+            Category = entry.Category,
+            FileName = primary?.Name ?? entry.FileName,
+            DownloadUrl = primary?.DownloadUrl ?? freshVersion?.DownloadUrl ?? entry.DownloadUrl,
+            SizeDisplay = entry.SizeDisplay,
+            SizeBytes = entry.SizeBytes,
+            IsEarlyAccess = false, // verified free, or trusted local countdown (no client to verify with)
+            ExpectedSha256 = primary?.Hashes?.SHA256 ?? entry.ExpectedSha256,
+            PreviewImageUrl = entry.PreviewImageUrl,
+            CivitaiVersion = freshVersion
+        };
+        job.ExpectedTargetDir = Destination.BuildTargetDirectory(job.BaseModel, job.Category);
+        Jobs.Add(job);
+        Persist();
+        RaiseCountsChanged();
+        _logger?.Info(LogCategory.Download, "CivitaiQueue",
+            $"Enqueued from waitlist: {entry.ModelName} — {entry.VersionName} ({entry.BaseModel}, {entry.SizeDisplay})",
+            $"VersionId: {entry.VersionId}\nFile: {job.FileName}\nUrl: {job.DownloadUrl}");
+        return job;
+    }
+
     public void Remove(CivitaiDownloadJob job)
     {
-        // If the tile is removed mid-download, cancel the in-flight transfer first
-        // so we don't keep streaming bytes for a job no one is watching.
-        if (job.Status == JobStatus.Downloading)
-        {
-            job.CancelByUser();
-        }
+        // Cancel before removing, whatever the status, so no runner keeps working for a job no one
+        // is watching: a mid-download transfer stops, and a job still waiting for a worker slot —
+        // Queued, but already owned by a runner — never starts. Harmless for a job with no runner.
+        job.CancelByUser();
         Jobs.Remove(job);
         Persist();
         RaiseCountsChanged();
@@ -302,19 +717,39 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     /// </summary>
     public async Task RetryJobAsync(CivitaiDownloadJob job)
     {
-        if (job.Status is JobStatus.Downloading or JobStatus.Completed) return;
-        if (_downloadService is null) return;
+        // Queued is excluded too: such a job is either already claimed by a runner waiting on
+        // the gate, or the next Start picks it up. Retrying it would only reset state under a
+        // runner that is about to use it.
+        if (job.Status is JobStatus.Downloading or JobStatus.Completed or JobStatus.Queued) return;
+        if (_downloader is null) return;
 
-        job.ResetForRetry();
-        Persist();
-        RaiseCountsChanged();
+        // Claim BEFORE ResetForRetry. Resetting first would move the job to Queued and then —
+        // if the claim were lost to a previous runner that has posted its terminal status but
+        // not yet released the claim — leave it Queued with nobody running it.
+        if (!TryClaim(job))
+        {
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Retry ignored: {job.ModelName} — {job.VersionName} is still claimed by a worker.");
+            return;
+        }
 
-        _runCts ??= new CancellationTokenSource();
-        var ct = _runCts.Token;
+        try
+        {
+            job.ResetForRetry();
+            Persist();
+            RaiseCountsChanged();
 
-        _logger?.Info(LogCategory.Download, "CivitaiQueue",
-            $"Retrying: {job.ModelName} — {job.VersionName}");
-        await RunGatedAsync(job, ct);
+            _runCts ??= new CancellationTokenSource();
+            var ct = _runCts.Token;
+
+            _logger?.Info(LogCategory.Download, "CivitaiQueue",
+                $"Retrying: {job.ModelName} — {job.VersionName}");
+            await RunGatedCoreAsync(job, ct);
+        }
+        finally
+        {
+            Unclaim(job);
+        }
         RaiseCountsChanged();
         Persist();
     }
@@ -334,7 +769,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     public void ClearAll()
     {
         var removed = Jobs.Count;
-        _runCts?.Cancel();
+        CancelRunEpoch();
         Jobs.Clear();
         Persist();
         RaiseCountsChanged();
@@ -366,8 +801,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         // Cancel the run-wide CTS too so any queued jobs still waiting on a
         // semaphore slot exit cleanly. They keep their Queued status (the worker
         // never started touching them) and can be resumed via Start.
-        _runCts?.Cancel();
-        _runCts = null;
+        CancelRunEpoch();
 
         if (stoppedCount > 0)
         {
@@ -379,16 +813,20 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     /// <summary>
-    /// Runs all queued jobs through the worker pool. Subsequent calls coalesce — already-
-    /// running jobs aren't restarted; only Queued ones are picked up.
+    /// Runs every Queued and Cancelled job through the worker pool — re-running the
+    /// Cancelled ones is the path <see cref="AbortAllActive"/> promises. Subsequent calls
+    /// coalesce: a job already claimed by a live runner is skipped, so no job is ever
+    /// scheduled twice, and jobs still waiting on a worker slot are left alone.
     /// </summary>
     public async Task StartAllAsync()
     {
-        if (_downloadService is null)
+        if (_downloader is null)
         {
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                "StartAll aborted: LoraDownloadService unavailable. Marking queued jobs as failed.");
-            foreach (var job in Jobs.Where(j => j.Status == JobStatus.Queued))
+                "StartAll aborted: ICivitaiModelDownloader unavailable. Marking queued jobs as failed.");
+            // Same set Start would have run — Cancelled jobs are re-run candidates, so they
+            // must report the unavailable service too rather than sitting silently Cancelled.
+            foreach (var job in Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled))
             {
                 job.Status = JobStatus.Failed;
                 job.StatusMessage = "Download service unavailable.";
@@ -396,19 +834,96 @@ public sealed class CivitaiDownloadQueue : ObservableObject
             return;
         }
 
-        _runCts?.Cancel();
-        _runCts = new CancellationTokenSource();
+        // Re-verify at the moment the bytes are committed. Start's gate in the panel is a
+        // binding on the last computed verdict, and nothing observes the drives in between —
+        // a queue sized against 200 GB free starts happily onto a drive a video export has
+        // since eaten, then dies part-way and leaves .download partials behind.
+        // Snapshot on this thread, probe off it: Jobs is an ObservableCollection the UI mutates,
+        // and enumerating it on the pool thread threw "Collection was modified" whenever a tile
+        // finished enqueueing in the same instant — straight into the catch below, which is the
+        // stale reading this block exists to remove.
+        SpaceState? fresh = null;
+        try
+        {
+            var snapshot = SnapshotPending();
+            var verdict = await Task.Run(() => ComputeSpaceState(snapshot, DiskProbe.Full));
+            ApplySpaceState(verdict);
+            fresh = verdict;
+        }
+        catch (Exception ex)
+        {
+            // A broken check must not ban every download — per-root failures are already
+            // contained, so reaching here is an internal fault, not a verdict.
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"Pre-start disk-space check failed, the previous verdict still stands: {ex.Message}");
+        }
+
+        // Gate only on a verdict THIS call produced. Falling back to the stored one would refuse
+        // a Start the user had just fixed by freeing space, which is the staleness #379 is about.
+        if (fresh is { Warning: not null } blocked)
+        {
+            // The banner alone reads as "Start did nothing", so say it on the tiles too. Status
+            // stays Queued/Cancelled: these jobs must remain eligible for the next Start.
+            foreach (var job in Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled))
+            {
+                job.StatusMessage = "Not started — not enough free space on the destination drive.";
+            }
+
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"Start aborted — {blocked.Warning}");
+            return;
+        }
+
+        // Join the current run epoch instead of cancelling it. Cancelling here used to
+        // kill every in-flight download — most visibly a per-tile Retry the user had
+        // just resumed — the moment Start was clicked again.
+        _runCts ??= new CancellationTokenSource();
         var ct = _runCts.Token;
 
-        var pending = Jobs.Where(j => j.Status == JobStatus.Queued).ToList();
+        // Cancelled jobs re-run on Start. The Cancelled -> Queued reset happens inside
+        // RunGatedAsync, under the claim, rather than in a pass here: a job whose previous
+        // runner has posted its terminal status but not yet released its claim would
+        // otherwise be reset to Queued and then skipped, stranding it with no runner.
+        var pending = Jobs.Where(j => j.Status is JobStatus.Queued or JobStatus.Cancelled).ToList();
         _logger?.Info(LogCategory.Download, "CivitaiQueue",
             $"Starting {pending.Count} download(s) (max concurrency: {_maxConcurrency})");
+
+        // Publish the batch before scheduling, so a job added from here on joins it. A second
+        // Start on the same epoch shares the batch; one on a fresh epoch (after an Abort)
+        // replaces it and leaves the old one to drain on its own.
+        RunBatch batch;
+        lock (_batchLock)
+        {
+            if (_liveBatch is null || _liveBatch.Token != ct) _liveBatch = new RunBatch(ct);
+            batch = _liveBatch;
+        }
+
         var tasks = pending.Select(job => RunGatedAsync(job, ct)).ToList();
-        await Task.WhenAll(tasks);
+        lock (_batchLock) batch.Tasks.AddRange(tasks);
+
+        // Drain until no job joined while we were waiting. Runners never throw (see
+        // RunGatedCoreAsync), so the only way out is the clean exit below — a fault would
+        // otherwise end the batch while other runners still download.
+        while (true)
+        {
+            Task[] snapshot;
+            lock (_batchLock) snapshot = batch.Tasks.ToArray();
+            await Task.WhenAll(snapshot);
+            lock (_batchLock)
+            {
+                if (batch.Tasks.Count != snapshot.Length) continue;
+                if (_liveBatch == batch) _liveBatch = null;
+                break;
+            }
+        }
         RaiseCountsChanged();
         Persist();
         var failedCount = ErrorCount;
-        var summary = $"Batch complete — {CompletedCount} done, {failedCount} failed, {ActiveCount} still active.";
+        // The counts are queue-wide, and Start now coalesces rather than cancelling, so
+        // another batch may still be running. Say that instead of implying the queue is done.
+        var stillActive = ActiveCount;
+        var summary = stillActive > 0
+            ? $"Start batch finished — {CompletedCount} done, {failedCount} failed, {stillActive} still active."
+            : $"Batch complete — {CompletedCount} done, {failedCount} failed.";
         // A batch with failures must not read as a routine Info line in the
         // Unified Console — the per-job errors are elsewhere in the scrollback.
         if (failedCount > 0)
@@ -418,6 +933,60 @@ public sealed class CivitaiDownloadQueue : ObservableObject
     }
 
     private async Task RunGatedAsync(CivitaiDownloadJob job, CancellationToken runCt)
+    {
+        // A job waiting on the gate is still Queued — Downloading is only set once the slot
+        // is taken — so a second Start (or a Retry) re-picks it as "pending" and would run a
+        // second concurrent transfer for the same job: two coordinator entries and a
+        // collision-renamed duplicate on disk. Claim the job for exactly one runner.
+        // Registered before the first await so the caller's synchronous
+        // Select(...).ToList() over pending jobs already sees the claim.
+        if (!TryClaim(job))
+        {
+            // Not an error: the job is already owned by a live runner. Logged because the
+            // alternative — a job that silently does nothing on Start — leaves no other trail.
+            _logger?.Debug(LogCategory.Download, "CivitaiQueue",
+                $"Start skipped {job.ModelName} — {job.VersionName}: already claimed by a worker.");
+            return;
+        }
+
+        try
+        {
+            // Re-run of a cancelled job. ResetForRetry hands it a fresh un-cancelled token —
+            // the old one is still fired from the Cancel click, and the linked CTS in
+            // RunGatedCoreAsync would otherwise abort it straight back to Cancelled. Done
+            // under the claim so the reset and the run that consumes it are inseparable.
+            if (job.Status == JobStatus.Cancelled) job.ResetForRetry();
+
+            await RunGatedCoreAsync(job, runCt).ConfigureAwait(false);
+        }
+        finally
+        {
+            Unclaim(job);
+        }
+    }
+
+    /// <summary>
+    /// Cancels the current run epoch and drops the fired CTS, so the next Start/Retry
+    /// creates a fresh one instead of joining a cancelled epoch and instantly aborting
+    /// every new job. Both halves are the invariant — never cancel without nulling.
+    /// </summary>
+    private void CancelRunEpoch()
+    {
+        _runCts?.Cancel();
+        _runCts = null;
+    }
+
+    private bool TryClaim(CivitaiDownloadJob job)
+    {
+        lock (_scheduledLock) return _scheduled.Add(job);
+    }
+
+    private void Unclaim(CivitaiDownloadJob job)
+    {
+        lock (_scheduledLock) _scheduled.Remove(job);
+    }
+
+    private async Task RunGatedCoreAsync(CivitaiDownloadJob job, CancellationToken runCt)
     {
         // Link the run-wide cancel (queue Start cycle / Clear all) with the per-job
         // cancel (user clicked Cancel on this tile). Either firing aborts only this job.
@@ -431,11 +1000,7 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         catch (OperationCanceledException)
         {
             // Cancelled while waiting for a slot. Don't release the gate (we never took it).
-            if (job.WasCancelledByUser)
-            {
-                job.Status = JobStatus.Cancelled;
-                job.StatusMessage = "Cancelled";
-            }
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
             return;
         }
 
@@ -443,11 +1008,34 @@ public sealed class CivitaiDownloadQueue : ObservableObject
         {
             await RunJobAsync(job, ct).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Cancelled in the part of RunJobAsync before its own try (destination lookup, space
+            // check) — the same moment as cancelling while waiting for a slot, so the same outcome:
+            // Cancelled for the user's Cancel/Remove, untouched (Queued, re-run by Start) for Abort.
+            if (job.WasCancelledByUser) SetStatus(job, JobStatus.Cancelled, "Cancelled");
+        }
+        catch (Exception ex)
+        {
+            // Anything else from that part (a settings or path failure). Escaping here used to end
+            // Start's whole batch, or surface from Retry as an unhandled command exception, while
+            // the tile sat at Queued with no reason shown.
+            SetStatus(job, JobStatus.Failed, ex.Message);
+            _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                $"{job.ModelName} — {job.VersionName} failed before its transfer began: {ex.Message}",
+                ex.ToString());
+        }
         finally
         {
             _gate.Release();
-            RaiseCountsChanged();
-            Persist();
+            // The counts are bound, and Persist enumerates Jobs while the UI thread may be adding
+            // to it (a late join is exactly that), so both go through the marshal too. Queued
+            // behind the terminal write above, so the file carries the final state as well.
+            UiInvoke(() =>
+            {
+                RaiseCountsChanged();
+                Persist();
+            });
         }
     }
 
@@ -470,201 +1058,194 @@ public sealed class CivitaiDownloadQueue : ObservableObject
                 : (await settings.GetEnabledLoraSourcesAsync(ct)).ToList();
             if (folders.Count == 0)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "No download destination set. Configure one in the Destination panel.";
+                SetStatus(job, JobStatus.Failed, "No download destination set. Configure one in the Destination panel.");
                 return;
             }
-            targetDir = Path.Combine(folders[0], string.IsNullOrWhiteSpace(job.BaseModel) ? "Unsorted" : job.BaseModel);
+            // The last hand-rolled path build in the download stack, now routed through the one
+            // builder the sorter uses: job.BaseModel arrives straight from Civitai, so it needs
+            // sanitising (an invalid filename character used to throw out of the directory create
+            // below) and the same Unknown\ bucket the sorter would pick — otherwise the sorter
+            // spends every run moving these files out of a folder it never agrees with.
+            targetDir = LoraPathBuilder.BuildTargetDirectory(
+                folders[0], job.BaseModel, null, includeBaseModel: true, includeCategory: false);
         }
-        Directory.CreateDirectory(targetDir);
-        var target = await ResolveCollisionFreeTargetPathAsync(
-            targetDir, job.FileName, job.VersionId, job.ExpectedSha256, ct);
-        if (!string.Equals(Path.GetFileName(target), job.FileName, StringComparison.OrdinalIgnoreCase))
+
+        // Commit-time check for this job's own destination. The batch gate cannot be the
+        // enforcement point: the per-tile Retry is a documented re-run path that never passes
+        // through it, and a queue-wide block on one dead root would strand every healthy job.
+        //
+        // Off the dispatcher, because this is reached synchronously from it: Start resumes on
+        // the UI thread after its own Task.Run, enters RunGatedAsync inline, and _gate's
+        // SemaphoreSlim(2) lets the first two jobs through WaitAsync without yielding — with no
+        // await between there and here once a destination is configured. A DiskProbe.Full
+        // reading of an offline network destination is the SMB timeout (measured: ~5 s), so
+        // taking it in place froze the window for as long as it took, per job.
+        var refusal = await Task.Run(() => RefuseForSpace(job, targetDir!), ct).ConfigureAwait(false);
+        if (refusal is not null)
         {
+            SetStatus(job, JobStatus.Failed, refusal);
             _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saving as '{Path.GetFileName(target)}' instead.");
+                $"{job.ModelName} — {job.VersionName} not started: {refusal}");
+            return;
         }
-        job.TargetPath = target;
+
+        // No Directory.CreateDirectory here: it sat outside the try below, so an unwritable or
+        // disconnected destination threw straight through RunGatedAsync (finally-only) into
+        // Task.WhenAll — skipping the counts, the persist and the batch summary, and stranding
+        // every remaining job as Queued. The downloader's step 3 creates the same directory and
+        // turns those exact exceptions into a Failed outcome for this job alone.
 
         try
         {
-            job.Status = JobStatus.Downloading;
-            job.StatusMessage = "Connecting...";
+            SetStatus(job, JobStatus.Downloading, "Connecting...");
 
-            // CivitaiVersion is null after restart-restore; rehydrate from the API.
             var civVersion = job.CivitaiVersion;
             if (civVersion is null && _civitaiClient is not null)
             {
-                civVersion = await _civitaiClient.GetModelVersionAsync(job.VersionId, cancellationToken: ct);
+                // Authenticated: this is the one call in the queue that used to go out anonymously,
+                // which both spent the stricter quota and hid gated versions from a restored job.
+                var apiKey = _apiKeyProvider is null ? null : await _apiKeyProvider.GetApiKeyAsync(ct);
+                civVersion = await _civitaiClient.GetModelVersionAsync(job.VersionId, apiKey, ct);
                 job.CivitaiVersion = civVersion;
             }
             if (civVersion is null)
             {
-                job.Status = JobStatus.Failed;
-                job.StatusMessage = "Could not resolve Civitai version metadata.";
+                SetStatus(job, JobStatus.Failed, "Could not resolve Civitai version metadata.");
                 return;
             }
 
-            var tcs = new TaskCompletionSource<bool>();
-            var taskName = $"Download {job.ModelName} ({job.VersionName})";
-            var coordinator = App.Services?.GetService<IDownloadCoordinator>();
-
-            // Local function — the actual download. The Coordinator wraps this and
-            // pushes the aggregated "N downloads in progress" view to the activity log,
-            // so we explicitly tell the download service NOT to also publish progress
-            // there (otherwise concurrent downloads fight over the single status slot).
-            async Task<bool> RunDownloadAsync(IProgress<DownloadTaskProgress>? coordinatorProgress, CancellationToken coordCt)
+            // The one Civitai download path (spec §4.4 / D3): collision policy, coordinator
+            // enqueue, SHA256 verification, persistence and the Tags+Thumbnails completion
+            // sync all live inside the downloader now — the queue only reports outcomes.
+            // File is passed explicitly (rather than left for the downloader to re-pick) so the
+            // whole job runs against ONE pick. It is NOT the enqueue-time snapshot, though: after a
+            // restart-rehydration civVersion is re-fetched and this pick is fresh, so only
+            // FileNameOverride still comes from the persisted job. The pick prefers the file whose
+            // hash the job expects (a waitlist entry followed by hash, #617, can sit on a version
+            // whose primary is another file) and falls back to the primary when the version no
+            // longer carries it — so job.ExpectedSha256 can still describe a file this run is not
+            // fetching, which is why the digest the queue records below comes from
+            // outcome.VerifiedSha256 and never from that snapshot.
+            var primaryFile = CivitaiVersionFiles.PickBySha256OrPrimary(civVersion, job.ExpectedSha256);
+            var request = new DownloadRequest(civVersion!, targetDir, DownloadTrigger.BrowseQueue)
             {
-                await _downloadService!.DownloadFileAsync(
-                    downloadUrl: job.DownloadUrl,
-                    targetPath: target,
-                    civitaiVersion: civVersion!,
-                    taskName: taskName,
-                    reportProgress: (pct, msg) =>
-                    {
-                        Dispatcher.UIThread.Post(() =>
-                        {
-                            job.ProgressPercent = pct * 100;
-                            job.StatusMessage = msg;
-                        });
-                        // Forward to the coordinator so the status bar reflects this
-                        // job's contribution to the aggregate.
-                        coordinatorProgress?.Report(new DownloadTaskProgress((int)(pct * 100), msg));
-                    },
-                    completed: () => Dispatcher.UIThread.Post(() =>
-                    {
+                File = primaryFile,
+                FileNameOverride = job.FileName,
+                TaskName = $"Download {job.ModelName} ({job.VersionName})",
+            };
+            // One hop to the dispatcher, not two. Progress<T> would post the handler to its
+            // captured SynchronizationContext first and only reach the dispatcher from there, so a
+            // report issued just before the download returns could be enqueued AFTER the terminal
+            // post below and leave the tile frozen at 99%. See UiThreadProgress.
+            var progressAdapter = new UiThreadProgress<DownloadProgress>(p =>
+            {
+                // Belt to the ordering brace: a report that somehow arrives after the job reached a
+                // terminal state must not repaint it as "Downloading".
+                if (job.Status != JobStatus.Downloading) return;
+                job.ProgressPercent = p.Percent;
+                job.StatusMessage = p.Message;
+            });
+            var outcome = await _downloader!.DownloadAsync(request, progressAdapter, ct).ConfigureAwait(false);
+
+            if (outcome.RenamedForCollision)
+            {
+                _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                    $"File name collision in {targetDir}: '{job.FileName}' already belongs to a different download — saved as '{Path.GetFileName(outcome.FinalPath)}' instead.");
+            }
+
+            // DownloadAsync is awaited with ConfigureAwait(false), so everything from here runs on a
+            // thread-pool thread — and TargetPath/Status/StatusMessage/ProgressPercent are all
+            // [ObservableProperty] behind live Avalonia bindings. Every one of those writes goes
+            // through the marshal (a post from here), TargetPath included (it drives the bound
+            // DisplayPath, so raising its PropertyChanged off-thread was the same hazard the rest
+            // of this block was already avoiding). The adapter above posts onto this same queue in
+            // one hop, so a progress update still in flight cannot be processed after — and
+            // clobber — this terminal state. UiInvoke rather than a bare Post so the tests' seam
+            // sees this write too, and so the finally's persist is queued behind it everywhere.
+            UiInvoke(() =>
+            {
+                job.TargetPath = outcome.FinalPath;
+
+                if (outcome.Status == DownloadStatus.Cancelled || job.WasCancelledByUser)
+                {
+                    job.Status = JobStatus.Cancelled;
+                    job.StatusMessage = "Cancelled";
+                    return;
+                }
+
+                switch (outcome.Status)
+                {
+                    case DownloadStatus.Completed:
+                        job.ProgressPercent = 100; // the throttled progress adapter's last report may sit below 100
+                        // Only a hash the downloader actually computed against the bytes on disk.
+                        // When it had nothing to verify against it says so by leaving this null, and
+                        // the job's enqueue-time expectation stays exactly what it is — an
+                        // expectation — instead of being persisted as a verification result.
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Done";
+                        break;
+
+                    case DownloadStatus.CompletedMetadataIncomplete:
+                        // The file can land perfectly while its Civitai metadata fetch fails. That
+                        // used to finish as a plain "Done", leaving the LoRA with no description,
+                        // tags or preview and no hint of why.
                         job.ProgressPercent = 100;
-                        job.StatusMessage = "Verifying...";
-                        tcs.TrySetResult(true);
-                    }),
-                    failed: () => Dispatcher.UIThread.Post(() =>
-                    {
-                        if (job.WasCancelledByUser)
-                        {
-                            job.Status = JobStatus.Cancelled;
-                            job.StatusMessage = "Cancelled";
-                        }
-                        else
-                        {
-                            job.Status = JobStatus.Failed;
-                            if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
-                                job.StatusMessage = "Failed";
-                        }
-                        tcs.TrySetResult(false);
-                    }),
-                    externalCancellationToken: coordCt,
-                    reportToActivityLog: coordinator is null);
-
-                // The completed/failed callbacks above set the TCS. Wait on it for
-                // the boolean result that the coordinator wants.
-                return await tcs.Task.ConfigureAwait(false);
-            }
-
-            if (coordinator is not null)
-            {
-                // Run through the shared coordinator. It already has a concurrency gate
-                // (typically 3) so it'll queue beyond that — that's fine because our
-                // own _gate already throttles to 2. The coordinator's slot is acquired
-                // immediately since we're well under its cap.
-                await coordinator.EnqueueAsync(taskName, RunDownloadAsync, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                // No coordinator available (design-time / unusual DI). Fall back to a
-                // direct call — the download service then DOES report to the activity
-                // log so the user at least sees one download's progress.
-                await RunDownloadAsync(null, ct).ConfigureAwait(false);
-            }
-
-            var ok = await tcs.Task.ConfigureAwait(false);
-            if (!ok) return;
-
-            // SHA256 verification — non-fatal: log warning, mark as completed-with-warning.
-            if (!string.IsNullOrWhiteSpace(job.ExpectedSha256) && File.Exists(target))
-            {
-                try
-                {
-                    var actual = await ComputeSha256Async(target, ct);
-                    if (!string.Equals(actual, job.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        job.Status = JobStatus.Failed;
-                        job.StatusMessage = $"Hash mismatch (got {actual[..8]}…, expected {job.ExpectedSha256[..8]}…)";
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Done — no metadata";
                         _logger?.Warn(LogCategory.Download, "CivitaiQueue",
-                            $"SHA256 mismatch for {target} — got {actual}, expected {job.ExpectedSha256}");
-                        return;
-                    }
-                    job.ActualSha256 = actual;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.Warn(LogCategory.Download, "CivitaiQueue", $"SHA256 verification failed: {ex.Message}");
-                }
-            }
+                            $"{job.ModelName} — {job.VersionName} downloaded, but its Civitai metadata could not be fetched. "
+                            + "Use Download Metadata on the model in the Installed tab to fill it in.",
+                            $"VersionId: {job.VersionId}\nFile: {job.TargetPath}");
+                        break;
 
-            // No sidecar files. All Civitai metadata is persisted to the database by
-            // LoraDownloadService.PersistDownloadedModelAsync, and thumbnails are
-            // stored in ModelImage.ThumbnailData. Writing .civitai.json / .preview.png
-            // would be redundant and nothing in the app reads them back.
+                    case DownloadStatus.ReusedExisting:
+                        // No transfer happened, so the throttled adapter never reported anything —
+                        // without this the tile would sit at 0% next to "Already downloaded".
+                        job.ProgressPercent = 100;
+                        job.Status = JobStatus.Completed;
+                        job.StatusMessage = "Already downloaded";
+                        // Reuse is content-proven: the collision policy hashed the on-disk file
+                        // against the expectation, so the outcome's digest is as verified as a
+                        // fresh transfer's.
+                        if (outcome.VerifiedSha256 is not null) job.ActualSha256 = outcome.VerifiedSha256;
+                        break;
 
-            job.Status = JobStatus.Completed;
-            job.StatusMessage = "Done";
+                    case DownloadStatus.HashMismatch:
+                        job.Status = JobStatus.Failed;
+                        job.StatusMessage = job.ExpectedSha256 is { Length: >= 8 }
+                            ? $"Hash mismatch (expected {job.ExpectedSha256[..8]}…)"
+                            : "Hash mismatch";
+                        _logger?.Warn(LogCategory.Download, "CivitaiQueue",
+                            $"SHA256 mismatch for {job.TargetPath}: {outcome.Error}");
+                        break;
+
+                    case DownloadStatus.Failed:
+                    default:
+                        job.Status = JobStatus.Failed;
+                        if (string.IsNullOrEmpty(job.StatusMessage) || job.StatusMessage == "Connecting...")
+                            job.StatusMessage = outcome.Error ?? "Failed";
+                        break;
+                }
+            });
         }
+        // These two catches reach the tile through the same marshal as every other worker write.
+        // Nothing races them: an exception this far out means `_downloader.DownloadAsync` itself
+        // threw, which happens before any progress report could still be in flight on the
+        // dispatcher queue (OperationCanceledException in particular is swallowed inside the
+        // downloader itself and surfaces as a Cancelled/Failed outcome, not a throw, in the
+        // ordinary case).
         catch (OperationCanceledException)
         {
-            job.Status = job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed;
-            job.StatusMessage = job.WasCancelledByUser ? "Cancelled" : "Stopped";
+            SetStatus(job,
+                job.WasCancelledByUser ? JobStatus.Cancelled : JobStatus.Failed,
+                job.WasCancelledByUser ? "Cancelled" : "Stopped");
         }
         catch (Exception ex)
         {
-            job.Status = JobStatus.Failed;
-            job.StatusMessage = ex.Message;
+            SetStatus(job, JobStatus.Failed, ex.Message);
         }
-    }
-
-    private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
-    {
-        await using var stream = File.OpenRead(path);
-        using var sha = SHA256.Create();
-        var bytes = await sha.ComputeHashAsync(stream, ct);
-        return Convert.ToHexString(bytes);
-    }
-
-    /// <summary>
-    /// Picks the on-disk target for a job, refusing to overwrite a different
-    /// model's file. Civitai file names are frequently generic ("V1.safetensors"),
-    /// so two unrelated models routed to the same BaseModel/Category folder
-    /// collide: the second download replaced the first model's weights on disk
-    /// and the path-based DB dedup then skipped registering it — downloaded to
-    /// 100% yet never installed. When the existing file's SHA256 matches the
-    /// job's expected hash it IS this download (re-download over self) and the
-    /// plain name is kept; otherwise the Civitai version id is appended — unique
-    /// per version and stable across retries, so a suffixed target that already
-    /// exists can only be this same version's earlier bytes and is safe to
-    /// overwrite.
-    /// </summary>
-    internal static async Task<string> ResolveCollisionFreeTargetPathAsync(
-        string targetDir, string fileName, int versionId, string? expectedSha256, CancellationToken ct)
-    {
-        var plain = Path.Combine(targetDir, fileName);
-        if (!File.Exists(plain)) return plain;
-
-        if (!string.IsNullOrWhiteSpace(expectedSha256))
-        {
-            try
-            {
-                var existingHash = await ComputeSha256Async(plain, ct).ConfigureAwait(false);
-                if (string.Equals(existingHash, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                    return plain;
-            }
-            catch (IOException)
-            {
-                // Unreadable/locked — can't prove it's ours, so don't overwrite it.
-            }
-        }
-
-        var stem = Path.GetFileNameWithoutExtension(fileName);
-        var extension = Path.GetExtension(fileName);
-        return Path.Combine(targetDir, $"{stem}_{versionId}{extension}");
     }
 
     #region Persistence
@@ -898,16 +1479,18 @@ public partial class CivitaiDownloadJob : ObservableObject
 
     /// <summary>
     /// Where the job is expected to land on disk, resolved from the shared destination
-    /// at enqueue time (and recomputed when destination settings change). Once the job
-    /// actually starts, <see cref="TargetPath"/> takes over as the authoritative path.
+    /// at enqueue time (and recomputed when destination settings change). Superseded by
+    /// <see cref="TargetPath"/> once the downloader reports where the file actually landed —
+    /// that only happens once, when <c>DownloadAsync</c> returns, not progressively while
+    /// downloading is in flight.
     /// </summary>
     [ObservableProperty]
     private string? _expectedTargetDir;
 
     /// <summary>
     /// Final-or-planned path to show on the queue tile. Prefers the on-disk
-    /// <see cref="TargetPath"/> once downloading has started, falling back to
-    /// <see cref="ExpectedTargetDir"/>.
+    /// <see cref="TargetPath"/> once the downloader has reported it, falling back to
+    /// <see cref="ExpectedTargetDir"/> while the job is still queued or downloading.
     /// </summary>
     public string? DisplayPath => TargetPath ?? ExpectedTargetDir;
 

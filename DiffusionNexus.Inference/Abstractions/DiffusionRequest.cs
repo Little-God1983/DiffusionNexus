@@ -61,8 +61,17 @@ public sealed class DiffusionRequest
     /// <summary>ControlNet conditioning inputs. <b>Currently ignored by the v1 backend.</b></summary>
     public IReadOnlyList<DiffusionReferenceImage> ControlNets { get; init; } = [];
 
-    // TODO(v2-img2img): Backend currently ignores this — placeholder for the img2img / canvas init-image flow.
-    /// <summary>Initial image for img2img. <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// Initial image for img2img. <b>Honored by both backends.</b> <c>Strength</c> is the denoise
+    /// strength: 0 keeps the input, 1 ignores it. The stable-diffusion.cpp backend passes it to
+    /// <c>ImageGenerationParameter.ImageToImage(...).WithStrength(...)</c>; the ComfyUI engine uploads
+    /// the file and rewires its graph through <c>LoadImage</c> → <c>VAEEncode</c> → the sampler's
+    /// <c>latent_image</c>, with <c>denoise</c> set from the same value.
+    /// </summary>
+    /// <remarks>
+    /// This is how the Diffusion Canvas's bounding box becomes an img2img run: the pixels under the box
+    /// are composited to a temp PNG and passed here (issue #518).
+    /// </remarks>
     public DiffusionReferenceImage? InitImage { get; init; }
 
     /// <summary>
@@ -78,7 +87,14 @@ public sealed class DiffusionRequest
     /// </summary>
     public bool AutoResizeReferenceImages { get; init; } = true;
 
-    // TODO(v2-inpaint): Backend currently ignores this — placeholder for inpaint mask painting.
-    /// <summary>Mask for inpainting (white = repaint, black = keep). <b>Currently ignored by the v1 backend.</b></summary>
+    /// <summary>
+    /// Inpaint mask: an opaque greyscale image the size of the output, white = repaint, black = keep, grey
+    /// = a feathered blend. <b>Honored by both backends, and only together with <see cref="InitImage"/></b>
+    /// (a mask without one is refused): the stable-diffusion.cpp backend passes it to
+    /// <c>WithMaskImage</c> and caps the strength just below 1.0, which it needs to encode the init image;
+    /// the ComfyUI engine uploads it and puts a <c>SetLatentNoiseMask</c> in front of its sampler. Its
+    /// <c>Strength</c> is unused; the denoise is the init image's.
+    /// </summary>
+    /// <remarks>The Diffusion Canvas's inpaint mask layer rasterises to this (issue #595).</remarks>
     public DiffusionReferenceImage? MaskImage { get; init; }
 }

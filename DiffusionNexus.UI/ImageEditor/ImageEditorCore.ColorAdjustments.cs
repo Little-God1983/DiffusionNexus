@@ -106,7 +106,7 @@ public partial class ImageEditorCore
             {
                 _isPreviewActive = false;
                 oldPreview?.Dispose();
-                OnImageChanged();
+                OnImageChanged(marksDirty: false);
                 return true;
             }
 
@@ -120,7 +120,7 @@ public partial class ImageEditorCore
             oldPreview?.Dispose();
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
         return _isPreviewActive;
     }
 
@@ -251,7 +251,7 @@ public partial class ImageEditorCore
             {
                 _isPreviewActive = false;
                 oldPreview?.Dispose();
-                OnImageChanged();
+                OnImageChanged(marksDirty: false);
                 return true;
             }
 
@@ -264,7 +264,7 @@ public partial class ImageEditorCore
             oldPreview?.Dispose();
         }
 
-        OnImageChanged();
+        OnImageChanged(marksDirty: false);
         return _isPreviewActive;
     }
 

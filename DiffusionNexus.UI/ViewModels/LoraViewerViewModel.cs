@@ -1,33 +1,37 @@
 using System.Collections.ObjectModel;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai;
 using DiffusionNexus.Civitai.Models;
-using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Domain.Utilities;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Service.Services;
+using DiffusionNexus.Service.Services.IO;
+using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.Download;
+using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
-using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels;
 
 /// <summary>
 /// ViewModel for the LoRA Viewer view displaying model tiles.
 /// </summary>
-public partial class LoraViewerViewModel : BusyViewModelBase
+public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 {
     private readonly IAppSettingsService? _settingsService;
     private readonly IModelSyncService? _syncService;
@@ -38,6 +42,76 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     private readonly ILoraUpdateChecker? _updateChecker;
 
     /// <summary>
+    /// The metadata sync pipeline (#521 WP2). The viewer plans a run, shows the outcome and
+    /// rebuilds its grid; selecting, hashing, calling Civitai and persisting all live in the
+    /// service, which is why this ViewModel no longer owns any sync phase of its own.
+    /// </summary>
+    private readonly ILibrarySyncService? _librarySync;
+
+    /// <summary>UI-thread marshalling seam (#437). Null only in the design-time ctor.</summary>
+    private readonly IUiScheduler? _uiScheduler;
+
+    /// <summary>
+    /// Scope factory for the fresh-<c>DbContext</c> reads (tile rebuild, API key, sorter
+    /// file list). Injected so those paths are reachable in tests; falls back to
+    /// <c>App.Services</c> exactly as the direct locator calls did.
+    /// </summary>
+    private readonly IServiceScopeFactory? _scopeFactory;
+
+    /// <summary>
+    /// Civitai API-key lookup shared with the hand-constructed <see cref="CivitaiBrowserViewModel"/>
+    /// and <see cref="ModelDetailViewModel"/> sub-VMs and the LoRA Sorter's metadata resolver.
+    /// Lazily built (and cached) from <see cref="_scopeFactory"/> when not DI-injected.
+    /// </summary>
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
+
+    /// <summary>
+    /// The one Civitai download path (spec §4.4). The toolbar's "Download LoRA" dialog and the
+    /// detail panel both hand their request to it instead of driving
+    /// <see cref="LoraDownloadService"/> + <see cref="IDownloadCoordinator"/> themselves — it
+    /// owns the coordinator enqueue, so callers must never wrap <c>DownloadAsync</c> in one.
+    /// </summary>
+    private readonly ICivitaiModelDownloader? _modelDownloader;
+
+    /// <summary>
+    /// The "library gained a model" signal every download path raises, so the Installed tab
+    /// rebuilds no matter which surface downloaded — including the Browse queue, which never told
+    /// it anything before (spec RC5). Subscribed in the constructor and detached in
+    /// <see cref="Dispose"/>: the notifier is a singleton while this view model is scoped, so the
+    /// subscription outlives the instance unless something takes it back.
+    /// </summary>
+    private readonly ILibraryChangeNotifier? _changeNotifier;
+
+    /// <summary>Guards <see cref="Dispose"/> against a second call doing anything.</summary>
+    private bool _disposed;
+
+    /// <summary>
+    /// True while a notifier-triggered rebuild is scheduled or running. A 20-job queue batch
+    /// raises 20 signals; one rebuild covers all of them.
+    /// </summary>
+    private bool _rebuildQueued;
+
+    /// <summary>
+    /// True only while the scheduled rebuild is actually reading the database — the window in
+    /// which a fresh arrival may have persisted too late to be in that read.
+    /// </summary>
+    private bool _rebuildRunning;
+
+    /// <summary>
+    /// Set when a signal arrives during <see cref="_rebuildRunning"/>: the trailing edge. The
+    /// last file of a batch is persisted while the rebuild for its predecessors is mid-read, so
+    /// without one more pass it would stay invisible until the next manual refresh.
+    /// </summary>
+    private bool _rebuildRequestedDuringRun;
+
+    /// <summary>
+    /// How long a notifier-triggered rebuild waits for further arrivals before running.
+    /// Long enough that a queue batch collapses into one rebuild, short enough that a single
+    /// download still shows up on its own.
+    /// </summary>
+    private static readonly TimeSpan RebuildCoalesceDelay = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>
     /// Cancels the in-flight update-check batch when the visible tile set changes
     /// (filter edits, refreshes, page navigation). A fresh token is issued
     /// every time a new batch starts.
@@ -46,6 +120,40 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     /// <summary>Cancels the in-flight "Download Metadata" sync; null when idle.</summary>
     private CancellationTokenSource? _metadataSyncCts;
+
+    /// <summary>
+    /// The user's retry windows, read from settings at startup and again at the top of every bulk
+    /// sync. Cached because the tiles' scroll-fetch gate asks per activation — a settings read per
+    /// tile passing the viewport is not a thing to do — and because the per-tile fetch has to judge
+    /// its un-forced steps by the same windows the sync run does.
+    /// </summary>
+    private SyncRetryPolicy _scrollRetryPolicy = SyncRetryPolicy.Default;
+
+    /// <summary>
+    /// The user's thumbnail fan-out, read alongside <see cref="_scrollRetryPolicy"/> and cached for
+    /// the same reason. A model with several due images fetches them through this width on the
+    /// per-tile path too — someone who set "Thumbnail downloads in parallel = 1" on a metered
+    /// connection meant it for every path, not only the bulk button.
+    /// </summary>
+    private int _thumbnailConcurrency = 4;
+
+    /// <summary>
+    /// The startup read that fills <see cref="_scrollRetryPolicy"/> and
+    /// <see cref="_thumbnailConcurrency"/>. Test seam: tests await it instead of relying on it
+    /// having finished.
+    /// </summary>
+    internal Task ScrollRetryPolicyLoad { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// True from the moment this ViewModel starts a run — bulk or per-tile — until it finishes.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="_metadataSyncCts"/> because the per-tile flow has no CTS of its
+    /// own, and separate from <c>ILibrarySyncService.IsRunning</c> because that only turns true
+    /// once <c>ExecuteAsync</c> is reached on a pool thread — the planning before it is already
+    /// work the user must not be able to start twice.
+    /// </remarks>
+    private bool _localSyncActive;
 
     /// <summary>
     /// Debounces search-text keystrokes. Every edit cancels the previous pending
@@ -171,6 +279,48 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     [ObservableProperty]
     private ModelDetailViewModel? _detailViewModel;
 
+    /// <summary>
+    /// Whether a metadata sync is running — this ViewModel's own, or anyone else's.
+    /// </summary>
+    /// <remarks>
+    /// The sync service is single-flight and throws on a second run rather than queueing it, so
+    /// both buttons that can start one are disabled while it is true (R10). Kept in step by
+    /// <see cref="RefreshSyncRunning"/> at every point a run starts or ends.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMissingMetadataCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    private bool _isSyncRunning;
+
+    /// <summary>
+    /// Re-reads the two sources of "a sync is running" and pushes the answer at the detail panel,
+    /// whose own button is the other way to start one.
+    /// </summary>
+    private void RefreshSyncRunning()
+    {
+        IsSyncRunning = SyncInFlight;
+        if (DetailViewModel is not null) DetailViewModel.IsLibrarySyncRunning = IsSyncRunning;
+    }
+
+    /// <summary>
+    /// The live answer to "is a run going?", read straight from its three sources rather than from
+    /// the observable mirror.
+    /// </summary>
+    /// <remarks>
+    /// One composite, used by both entry guards and by <see cref="RefreshSyncRunning"/> (F2). The
+    /// bulk guard used to ask only about its own CTS and the service's flag, and the service does
+    /// not raise that flag until <c>ExecuteAsync</c> — so a bulk press landing while a per-tile
+    /// fetch was still <i>planning</i> passed the guard and met the service's throw instead.
+    /// </remarks>
+    private bool SyncInFlight
+        => _localSyncActive || _metadataSyncCts is not null || (_librarySync?.IsRunning ?? false);
+
+    /// <summary>Keeps a detail panel opened mid-run from showing an enabled button.</summary>
+    partial void OnDetailViewModelChanged(ModelDetailViewModel? value)
+    {
+        if (value is not null) value.IsLibrarySyncRunning = IsSyncRunning;
+    }
+
     #endregion
 
     #region Collections
@@ -278,8 +428,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = null;
         _baseModelCatalog = null;
         _updateChecker = null;
+        _librarySync = null;
+        _uiScheduler = null;
+        _scopeFactory = null;
+        _apiKeyProvider = null;
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
+        SorterViewModel = new LoraSorterViewModel();
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -294,7 +449,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         ISecureStorage? secureStorage = null,
         IUnifiedLogger? logger = null,
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
-        ILoraUpdateChecker? updateChecker = null)
+        ILoraUpdateChecker? updateChecker = null,
+        ILibrarySyncService? librarySync = null,
+        IUiScheduler? uiScheduler = null,
+        IServiceScopeFactory? scopeFactory = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        ICivitaiModelDownloader? modelDownloader = null,
+        ILibraryChangeNotifier? changeNotifier = null)
     {
         _selectedSortOption = SortOptions[0];
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
@@ -305,6 +466,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         _logger = logger;
         _baseModelCatalog = baseModelCatalog;
         _updateChecker = updateChecker;
+        // Optional collaborators: injected by the DI factory, resolved from the locator only as
+        // a fallback so a hand-constructed viewer (tools, tests) still behaves like the real one.
+        _librarySync = librarySync ?? App.Services?.GetService<ILibrarySyncService>();
+        _uiScheduler = uiScheduler ?? App.Services?.GetService<IUiScheduler>();
+        _scopeFactory = scopeFactory ?? App.Services?.GetService<IServiceScopeFactory>();
+        _apiKeyProvider = apiKeyProvider ?? App.Services?.GetService<ICivitaiApiKeyProvider>();
+        _modelDownloader = modelDownloader ?? App.Services?.GetService<ICivitaiModelDownloader>();
+        _changeNotifier = changeNotifier ?? App.Services?.GetService<ILibraryChangeNotifier>();
+
+        // Every download path raises this after persisting, so the Installed tab no longer
+        // depends on the downloading surface remembering to tell it.
+        if (_changeNotifier is not null)
+        {
+            _changeNotifier.ModelDownloaded += OnLibraryModelDownloaded;
+        }
 
         // Live-update the base-model filter whenever the catalog is force-refreshed
         // (e.g. from the "Update base-model filter" button in Settings). Both the
@@ -318,20 +494,82 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         // Civitai browser sub-tab. Reuses the same ICivitaiClient and settings service.
         // The base-model filter list is mirrored from AvailableBaseModels which is itself
         // sourced from the full Civitai catalog (with distinct-from-installed as fallback).
-        var downloadService = App.Services?.GetService<LoraDownloadService>();
         var dialogService = App.Services?.GetService<IDialogService>();
+        var apiCache = App.Services?.GetService<ICivitaiApiCache>();
         var destination = new DownloadDestinationViewModel(dialogService);
-        var queue = new CivitaiDownloadQueue(downloadService, _logger, _civitaiClient, destination);
-        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, AvailableBaseModels);
+        var queue = new CivitaiDownloadQueue(_modelDownloader, _logger, _civitaiClient, destination,
+            apiKeyProvider: _apiKeyProvider);
+        var waitlist = new CivitaiWaitlist(_civitaiClient, _logger, apiCache: apiCache);
+        BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
+            apiKeyProvider: _apiKeyProvider);
+
+        // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
+        // disk seams are the production implementations.
+        SorterViewModel = _scopeFactory is null
+            ? new LoraSorterViewModel()
+            : new LoraSorterViewModel(
+                _settingsService, _syncService, _logger,
+                new DbLocalPathUpdater(_scopeFactory, _logger),
+                new SorterMetadataResolver(_civitaiClient, GetApiKeyForSorterAsync,
+                    SorterMetadataResolver.DefaultCacheDirectory, FileHasher.Sha256Upper, _logger),
+                new FileOperations(),
+                path => DiskSpace.TryGetAvailableSpace(path),
+                FileHasher.Sha256Upper,
+                File.Exists,
+                SortHistoryWriter.DefaultHistoryDirectory,
+                loadCachedFiles: LoadCachedFilesForSorterAsync);
+        SorterViewModel.SortCompleted += (_, _) => _ = RefreshAsync();
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
+
+        // Once, at startup: the tiles' scroll-fetch gate needs the user's retry windows before the
+        // first bulk sync of the session ever happens, and it must not read settings per tile.
+        //
+        // On Task.Run for the usual R7 reason, and this one needs it more than most: it wants two
+        // ints, but AppSettingsService.GetSettingsAsync clears the change tracker, loads the whole
+        // settings graph (LoRA sources, image galleries, base-model folders, dataset categories),
+        // saves, and de-duplicates categories and folder rows. SQLite has no true async, so awaited
+        // bare it ran that full graph load AND up to three writes inline on the UI thread before
+        // the constructor's first real yield — a startup hitch on exactly the view the
+        // UI-performance work targeted.
+        ScrollRetryPolicyLoad = Task.Run(LoadScrollRetryPolicyAsync);
+    }
+
+    /// <summary>
+    /// Detaches the library-changed subscription.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ILibraryChangeNotifier"/> is registered as a singleton while this view model is
+    /// scoped, so its invocation list outlives any one instance. Only one is resolved today (the
+    /// root scope, at startup), but the registration does not enforce that: a second resolution — a
+    /// new DI scope, a re-created viewer, a future navigation model — would root the old instance in
+    /// the singleton forever, double every coalesced rebuild, and keep each stale copy hitting the
+    /// database on every download. The class already does exactly this for the detail view model's
+    /// events. DI disposes scoped services when the scope goes, so no call site has to remember.
+    /// Idempotent: the flag makes a second call a no-op, and detaching an absent handler is one
+    /// anyway.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // The stored reference the constructor subscribed to — never a fresh resolve, which could
+        // hand back a different instance and leave the real subscription in place.
+        if (_changeNotifier is not null)
+            _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
     /// View model for the "Browse Civitai" sub-tab.
     /// </summary>
     public CivitaiBrowserViewModel BrowserViewModel { get; }
+
+    /// <summary>View model for the "LoRA Sorter" sub-tab.</summary>
+    public LoraSorterViewModel SorterViewModel { get; }
 
     #endregion
 
@@ -346,7 +584,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <see cref="ReconcileLibraryInBackgroundAsync"/>, which rebuilds the grid only if it
     /// finds a change (a new file appears, a deleted file drops out, a moved file relocates).
     /// </summary>
-    [RelayCommand]
+    /// <remarks>
+    /// Off while a sync runs (#540): a refresh mid-sync starts a second full-library read and its
+    /// "Loaded N models" overwrites the sync's verdict in the status bar. Startup calls it through
+    /// <c>ExecuteAsync</c>, which does not consult CanExecute, and the detail-deleted fallback
+    /// already checks it before falling back to a plain rebuild.
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync()
     {
         // Design-time or missing services fallback
@@ -364,12 +608,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             SyncStatus = "Loading models from database...";
 
             // 1. Show whatever is already cached — instantly.
-            var (uniqueModelCount, tiles) = await Task.Run(LoadCachedTilesAsync);
+            var (uniqueModelCount, tiles, excludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
 
             if (tiles.Count > 0)
             {
                 ReplaceTiles(tiles);
-                SyncStatus = $"Loaded {uniqueModelCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(uniqueModelCount, AllTiles.Count, excludedSupportAssets);
                 showedCachedTiles = true;
             }
             else
@@ -382,9 +626,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                     await DiscoverNewFilesAsync();
                     await BackfillCivitaiModelPageIdAsync();
                 });
-                var (freshCount, freshTiles) = await Task.Run(LoadCachedTilesAsync);
+                var (freshCount, freshTiles, freshExcludedSupportAssets) = await Task.Run(LoadCachedTilesAsync);
                 ReplaceTiles(freshTiles);
-                SyncStatus = $"Loaded {freshCount} models ({AllTiles.Count} tiles)";
+                SyncStatus = BuildLoadedStatus(freshCount, AllTiles.Count, freshExcludedSupportAssets);
             }
         }
         catch (Exception ex)
@@ -408,17 +652,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     /// <summary>
     /// Loads the installed-file rows from the catalog DB (a lightweight projection — no
     /// thumbnail BLOBs, no filesystem access) and groups them into per-location tiles
-    /// (issue #380: one tile per (Model, LoRA-source root)). Runs on the thread pool.
+    /// (issue #380: one tile per (Model, LoRA-source root)). Also counts the support assets
+    /// (#527) the load just left out, in the same background scope, so the Viewer's status line
+    /// can name them without a second round trip to the database on the UI thread. Runs on the
+    /// thread pool.
     /// </summary>
-    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles)> LoadCachedTilesAsync()
+    private async Task<(int UniqueModelCount, List<ModelTileViewModel> Tiles, int ExcludedSupportAssets)> LoadCachedTilesAsync()
     {
         using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
         var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
         var files = await freshSyncService.LoadCachedFilesAsync();
         var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
         var tiles = BuildPerLocationTiles(files);
-        return (distinctModels, tiles);
+        var excludedSupportAssets = await freshSyncService.CountExcludedSupportAssetsAsync();
+        return (distinctModels, tiles, excludedSupportAssets);
     }
+
+    /// <summary>
+    /// "Loaded 293 models (312 tiles)", plus "· 35 support assets (VAE, ControlNet, …) not shown"
+    /// when the library holds some. Naming them is the whole point: on a legacy library these
+    /// files leave a grid the user has watched for months, and a file that vanishes without a
+    /// reason reads as data loss rather than as tidying.
+    /// </summary>
+    /// <remarks>
+    /// Internal rather than private so <c>LoraViewerViewModelLoadedStatusTests</c> can exercise
+    /// both branches directly — reached through <c>InternalsVisibleTo("DiffusionNexus.Tests")</c>
+    /// (same technique <c>SortHistoryWriter</c> uses) — without constructing a full view model or
+    /// wiring the App.Services locator this class's DB-backed load path needs.
+    /// </remarks>
+    internal static string BuildLoadedStatus(int modelCount, int tileCount, int excludedSupportAssets)
+        => excludedSupportAssets > 0
+            ? $"Loaded {modelCount} models ({tileCount} tiles) · {excludedSupportAssets} support assets (VAE, ControlNet, …) not shown"
+            : $"Loaded {modelCount} models ({tileCount} tiles)";
 
     /// <summary>
     /// Swaps the tile set on the UI thread: unsubscribes the outgoing tiles, replaces
@@ -429,21 +694,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         foreach (var oldTile in AllTiles)
         {
-            oldTile.Deleted -= OnTileDeleted;
-            oldTile.DetailRequested -= OnTileDetailRequested;
+            DetachTile(oldTile);
         }
 
         AllTiles.Clear();
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Sum(t => t.ModelCount);
         RebuildAvailableBaseModels();
-        ApplyFilters();
+        ApplyFilters(ratingsChanged: true);
     }
 
     /// <summary>
@@ -459,9 +718,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             _logger?.Info(LogCategory.General, "LoraReconcile", "Background reconcile started (discover + verify)");
 
-            var (added, missing, moved) = await Task.Run(async () =>
+            var (added, repointed, reclassified, missing, moved) = await Task.Run(async () =>
             {
-                var newCount = await DiscoverNewFilesAsync();
+                var discovery = await DiscoverNewFilesAsync();
                 await BackfillCivitaiModelPageIdAsync();
 
                 using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
@@ -471,17 +730,35 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                         SyncStatus = p.Phase == "Verification complete" ? null : p.Phase));
 
                 // MissingCount = files gone from disk (now filtered out of LoadCachedFilesAsync);
-                // MovedCount = files whose path changed. Either, or a new file, changes the grid.
+                // MovedCount = files whose path changed. Either, or a new file, changes the grid —
+                // and so does a row the DISCOVERY half re-pointed (#537): the verify pass then sees
+                // a valid path and counts it as merely verified, so its own MovedCount misses it.
                 var result = await syncService.VerifyAndSyncFilesAsync(progress);
-                return (newCount, result.MissingCount, result.MovedCount);
+                return (discovery.NewModels.Count, discovery.RepointedCount, discovery.ReclassifiedCount,
+                    result.MissingCount, result.MovedCount);
             });
 
-            var changed = added > 0 || missing > 0 || moved > 0;
+            // reclassified belongs beside repointed for the same reason (#527): DiscoverNewFilesAsync
+            // now runs the legacy-library backfill on every call, including this passive one, and a
+            // row that just dropped out of the LoRA-family grid has to trigger the same rebuild a
+            // repointed row triggers by reappearing in it.
+            var changed = added > 0 || repointed > 0 || reclassified > 0 || missing > 0 || moved > 0;
             _logger?.Info(LogCategory.General, "LoraReconcile",
-                $"Reconcile done: {added} new, {missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
+                $"Reconcile done: {added} new, {repointed} re-pointed, {reclassified} reclassified, " +
+                $"{missing} missing (deleted from disk), {moved} moved → rebuild={changed}");
 
             if (changed)
-                await RebuildTilesFromDatabaseAsync();
+            {
+                var modelCount = await RebuildTilesFromDatabaseAsync();
+
+                // Only when rows actually changed KIND. Any other rebuild reason (a new file, a
+                // deletion, a move) leaves the status line's own trailing null alone, as before —
+                // but a reclassification is the one that makes tiles the user has been looking at
+                // for months disappear, and that has to come with its explanation attached rather
+                // than a launch later (§5).
+                if (reclassified > 0)
+                    await RestateLoadedStatusAsync(modelCount);
+            }
         }
         catch (Exception ex)
         {
@@ -491,12 +768,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Discover new files and add them to the database. Returns the number of new models
-    /// discovered so callers can decide whether the grid needs rebuilding.
-    /// Uses a fresh DI scope so the DbContext sees the latest committed data
+    /// Discover new files and add them to the database. Returns what the scan added AND what it
+    /// changed (re-pointed moved files, #537) so callers can decide whether the grid needs
+    /// rebuilding. Uses a fresh DI scope so the DbContext sees the latest committed data
     /// (avoids duplicates when files were already persisted by other operations).
     /// </summary>
-    private async Task<int> DiscoverNewFilesAsync()
+    private async Task<DiscoveryResult> DiscoverNewFilesAsync()
     {
         try
         {
@@ -514,14 +791,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 });
             });
 
-            var newModels = await syncService.DiscoverNewFilesAsync(progress);
+            var discovery = await syncService.DiscoverNewFilesAsync(progress);
 
             Dispatcher.UIThread.Post(() =>
             {
-                SyncStatus = $"Discovered {newModels.Count} new files";
+                SyncStatus = $"Discovered {discovery.NewModels.Count} new files";
             });
 
-            return newModels.Count;
+            return discovery;
         }
         catch (Exception ex)
         {
@@ -530,7 +807,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 SyncStatus = $"Discovery error: {ex.Message}";
             });
 
-            return 0;
+            return new DiscoveryResult();
         }
     }
 
@@ -591,9 +868,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             Logger: _logger,
             ScopeFactory: sp?.GetService<IServiceScopeFactory>(),
             DialogService: TryResolveDialogService(sp),
-            VideoThumbnailService: sp?.GetService<IVideoThumbnailService>(),
             Clipboard: sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
-            UiScheduler: sp?.GetService<IUiScheduler>());
+            UiScheduler: sp?.GetService<IUiScheduler>(),
+            // A delegate, not the value: tiles built now must see a policy re-read later (the
+            // startup load landing, or a bulk sync picking up changed settings) without a rebuild.
+            RetryPolicyProvider: () => _scrollRetryPolicy);
+    }
+
+    /// <summary>
+    /// Reads the saved sync settings once at startup so the tiles' scroll-fetch gate judges by the
+    /// user's retry windows from the first scroll, not only after the first bulk sync.
+    /// </summary>
+    /// <remarks>
+    /// Through <see cref="UseSettingsServiceAsync"/> for a fresh scope: this runs concurrently with
+    /// the other two startup tasks, which share the constructor-injected service's single
+    /// non-thread-safe DbContext. Failure is silent and harmless — the built-in default stands in.
+    /// </remarks>
+    private async Task LoadScrollRetryPolicyAsync()
+    {
+        try
+        {
+            var settings = await UseSettingsServiceAsync(s => s.GetSettingsAsync()).ConfigureAwait(false);
+            if (settings is null) return;
+
+            _scrollRetryPolicy = SyncRetryPolicy.FromDays(
+                settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
+            _thumbnailConcurrency = settings.SyncThumbnailConcurrency;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.General, "LoraViewer",
+                $"Could not read the sync retry settings; using the defaults: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -609,114 +915,385 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Download missing metadata from Civitai for models that were discovered locally.
-    /// Discovers new files first, then uses full-file SHA256 hash to find matching Civitai model versions.
-    /// Automatically re-fetches missing image data and downloads thumbnails afterward.
-    /// Heavy I/O runs on a background thread so the UI stays responsive.
+    /// Runs a full library metadata sync through <see cref="ILibrarySyncService"/> as a
+    /// conversation: scan for new files, plan the rest, ask the user what to run, run it, record
+    /// that it happened, rebuild the grid once, and show what came of it.
     /// </summary>
-    [RelayCommand]
+    /// <remarks>
+    /// The viewer owns none of the sync logic any more (#521 WP2) — no hashing, no Civitai
+    /// calls, no per-tile persistence. Everything the old phases did is a step in the service,
+    /// which records per-model state so a second run skips what has already been checked
+    /// instead of re-asking Civitai about the whole library.
+    /// <para>
+    /// Discovery is a separate, un-negotiable pre-run (Plan E): a scan cannot be counted before it
+    /// has run, so it is the one step nobody can be asked about — and running it first is what lets
+    /// every count in the dialog include the files it just found.
+    /// </para>
+    /// </remarks>
+    [RelayCommand(CanExecute = nameof(CanStartMetadataSync))]
     private async Task DownloadMissingMetadataAsync()
     {
-        if (_civitaiClient is null || _settingsService is null)
+        if (_librarySync is null)
         {
-            SyncStatus = "Civitai client not available.";
+            SyncStatus = "Library sync not available.";
             return;
         }
 
-        _metadataSyncCts = new CancellationTokenSource();
-        var ct = _metadataSyncCts.Token;
+        // Before the CTS is assigned, not after (R10). The service admits one run at a time and
+        // throws on the second; overwriting the field first would also have stranded the first
+        // run's token, so Cancel would then have cancelled nothing the user could see stop.
+        // CanExecute already greys the button out — this is the guard for every other route in
+        // (a keyboard binding, a test, a second window sharing the service).
+        if (SyncInFlight)
+        {
+            SyncStatus = AlreadyRunningStatus;
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _metadataSyncCts = cts;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+
+        var ct = cts.Token;
+
+        // These four live out here because the finally needs them (F3). The scan runs before the
+        // dialog and commits straight to the database — new Model rows (discovered) and re-pointed
+        // moved files (repointed, #537) — so the grid is stale from that moment on, and only the
+        // run path used to rebuild it. Every other exit (the user cancelling at the dialog, a
+        // missing dialog service, either single-flight refusal, the cancellation catch, the
+        // generic catch) left those rows invisible until a manual Refresh. rebuilt records that
+        // the run path already re-projected; rebuildOwed marks the stretch where the run itself
+        // may have committed work.
+        var discovered = 0;
+        var repointed = 0;
+        var reclassified = 0;
+        var rebuilt = false;
+        var rebuildOwed = false;
         try
         {
             IsBusy = true;
             IsCancellable = true;
-            BusyMessage = "Syncing with Civitai...";
+            BusyMessage = "Scanning source folders…";
+            SyncStatus = "Planning sync...";
 
-            // Get API key — use a fresh DI scope so we read the latest value
-            // from the database, avoiding stale EF Core tracked entities.
-            string? apiKey;
+            // The first plan after the upgrade also backfills a state row for every model that
+            // predates the table, which over a real library is the slowest thing this button ever
+            // does — and it happens before any progress is reported, so without a word the app looks
+            // hung. Two COUNT(*)s are a cheap way to know whether that is what is about to happen.
+            if (await Task.Run(() => HasPendingSyncStateBackfillAsync(ct), ct))
+                SyncStatus = "Preparing sync state — first run after update may take a moment…";
+
+            // The retry windows and the thumbnail fan-out are the user's, not constants. Read once
+            // per run and cached, because the tiles' scroll gate reads the same field.
+            //
+            // Through UseSettingsServiceAsync (a fresh scope), not the injected instance: this runs
+            // while the browser sub-VM and the passive update check may be reading settings over
+            // that shared, non-thread-safe DbContext — and GetSettingsAsync is no mere read, it
+            // clears the change tracker and saves. On Task.Run for the usual R7 reason.
+            var settings = await Task.Run(() => UseSettingsServiceAsync(s => s.GetSettingsAsync(ct)), ct)
+                           ?? new AppSettings();
+            var policy = SyncRetryPolicy.FromDays(settings.SyncNotIdentifiedRetryDays, settings.SyncErrorRetryDays);
+            _scrollRetryPolicy = policy;
+            _thumbnailConcurrency = settings.SyncThumbnailConcurrency;
+
+            // Discovery runs BEFORE the dialog, on its own, for two reasons: the counts the user is
+            // about to approve must include files added since the app started, and a scan cannot be
+            // counted in advance — so a "Discover" row in the dialog could only ever show a blank.
+            //
+            // Task.Run, not a bare await: SQLite has no true async, so the planning pass (the
+            // first-run state backfill plus every step's selection query) and the discovery scan
+            // both run to completion inline before anything yields — on the UI thread that means a
+            // frozen overlay and a dead Cancel button, which is exactly what the old phase code
+            // used a background thread to avoid. Every UI touch below the await hops back through
+            // PostToUi / InvokeOnUiAsync.
+            var discoverOptions = new SyncOptions(DiscoverOnly, RetryPolicy: policy);
+            var discoverPlan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, discoverOptions, ct), ct);
+
+            SyncReport discoverReport;
+            try
             {
-                using var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-                apiKey = await freshSettings.GetCivitaiApiKeyAsync();
+                discoverReport = await Task.Run(() => _librarySync.ExecuteAsync(discoverPlan, null, ct), ct);
             }
+            catch (SyncAlreadyRunningException ex)
+            {
+                ReportServiceAlreadyRunning(ex);
+                return;
+            }
+
+            discovered = discoverReport.NewFilesDiscovered;
+            repointed = discoverReport.FilesRepointed;
+            reclassified = discoverReport.FilesReclassified;
+
+            // ExecuteAsync is total now (#535): a throw outside its item loop comes back as
+            // AbortReason instead of escaping. For the scan that keeps the abort semantics it had
+            // when the service still threw — stop here, because a question built on counts a
+            // broken scan produced would put the user's yes on bad numbers. Ordinary scan failures
+            // (an unreadable folder) still proceed and are folded into the run's report below; an
+            // abort is a bug, not a verdict. The finally still rebuilds over whatever the scan
+            // committed first, via the discovered term of its gate.
+            if (discoverReport.AbortReason is not null)
+            {
+                SyncStatus = $"Sync error: {discoverReport.AbortReason}";
+                _logger?.Error(LogCategory.Network, "CivitaiSync", $"Sync scan aborted: {discoverReport.AbortReason}");
+                return;
+            }
+
+            var baseOptions = new SyncOptions(
+                PlannedStepKinds, RetryPolicy: policy, ThumbnailConcurrency: settings.SyncThumbnailConcurrency);
+            var plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, baseOptions, ct), ct);
 
             _logger?.Info(LogCategory.Network, "CivitaiSync",
-                $"Starting metadata sync (API key: {(string.IsNullOrEmpty(apiKey) ? "NOT SET" : "configured")})");
+                $"Plan dialog: {string.Join(" · ", plan.Steps.Select(s => $"{SyncReport.Label(s.Kind)} {s.Count}"))} · {discovered} discovered");
 
-            // Per-LoRA trigger logging is intentionally suppressed for this path —
-            // a single batch entry is logged at the start so the log file isn't
-            // flooded with 10K identical "trigger=DownloadMetadataButton" lines.
-            _logger?.Debug(LogCategory.Network, "LoraUpdateChecker",
-                $"Update batch started (trigger={LoraUpdateTriggerSource.DownloadMetadataButton})");
+            // The overlay comes down for the question: nothing is running while the user reads it,
+            // and a Cancel button over a modal dialog would be cancelling a run that has not started.
+            IsBusy = false;
+            IsCancellable = false;
+            BusyMessage = null;
 
-            // ── Phase 0: Discover new files and rebuild tiles so all models are visible ──
-            // Without this, only previously loaded tiles are processed.
-            var tiles = await Task.Run(async () =>
+            var dialogService = DialogService ?? App.Services?.GetService<IDialogService>();
+            if (dialogService is null)
             {
-                Dispatcher.UIThread.Post(() => SyncStatus = "Discovering new files...");
-                await DiscoverNewFilesAsync();
-                await BackfillCivitaiModelPageIdAsync();
-
-                Dispatcher.UIThread.Post(() => SyncStatus = "Loading models from database...");
-
-                using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-                var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
-                // Issue #380: per-location fan-out (see RefreshAsync for the rationale).
-                var files = await freshSyncService.LoadCachedFilesAsync();
-                return BuildPerLocationTiles(files);
-            });
-
-            // Update UI with discovered tiles
-            foreach (var oldTile in AllTiles)
-            {
-                oldTile.Deleted -= OnTileDeleted;
-                oldTile.DetailRequested -= OnTileDetailRequested;
+                SyncStatus = "Dialog service not available.";
+                return;
             }
 
-            AllTiles.Clear();
-            foreach (var tile in tiles)
+            var dialogVm = new SyncPlanDialogViewModel(
+                plan,
+                baseOptions,
+                replanAsync: o => Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, o, ct), ct),
+                settings.LastLibrarySyncAt,
+                discovered,
+                _logger);
+
+            var choice = await dialogService.ShowSyncPlanDialogAsync(dialogVm);
+            if (!choice.Confirmed || choice.Options is null)
             {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
+                // The button did do something — it scanned — so it owes an answer either way, and
+                // the answer is about the scan, in that order of importance: what it added, what it
+                // could not read, and only then the verdict. The verdict comes from the dialog's
+                // CURRENT state, never from `plan`: that plan was built before the dialog opened,
+                // and a Force toggle re-plans live, so an all-zero `plan` can sit behind a dialog
+                // showing 40 thumbnails. Saying "up to date" over that is a flat contradiction of
+                // the number the user was looking at a second earlier.
+                if (discovered > 0 && repointed > 0)
+                {
+                    // Both of the scan's writes in one pass — additive, not first-wins: the
+                    // re-linked models just reappeared on screen too, and dropping them here is
+                    // the #537 complaint one branch over.
+                    SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}" +
+                                 $" and re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
+                }
+                else if (discovered > 0)
+                {
+                    SyncStatus = $"Sync cancelled — the scan added {discovered} new file{(discovered == 1 ? "" : "s")}.";
+                }
+                else if (repointed > 0)
+                {
+                    // The scan's other write (#537): nothing added, but moved files were re-linked
+                    // to rows the grid had hidden — those models just came back on screen.
+                    SyncStatus = $"Sync cancelled — the scan re-linked {repointed} moved file{(repointed == 1 ? "" : "s")}.";
+                }
+                else if (discoverReport.Failures.Count > 0)
+                {
+                    SyncStatus = $"Sync cancelled — the scan reported {discoverReport.Failures.Count} failure(s), see the log.";
+                }
+                else
+                {
+                    SyncStatus = dialogVm.IsUpToDate ? UpToDateStatus : "Sync cancelled — nothing was run.";
+                }
+
+                _logger?.Info(LogCategory.Network, "CivitaiSync", "User cancelled at the plan dialog");
+                return;
             }
 
-            TotalModelCount = AllTiles.Sum(t => t.ModelCount);
-            RebuildAvailableBaseModels();
-            ApplyFilters();
+            IsBusy = true;
+            IsCancellable = true;
+            BusyMessage = "Syncing with Civitai...";
 
-            // ── Run sync phases (network + file I/O — awaits release the UI thread) ──
-            var statusParts = new List<string>();
+            var chosen = choice.Options;
+            _logger?.Info(LogCategory.Network, "CivitaiSync",
+                $"User started sync: steps [{string.Join(", ", chosen.Steps)}] forces " +
+                $"[I:{chosen.ForceIdentify} T:{chosen.ForceTags} Im:{chosen.ForceImages} Th:{chosen.ForceThumbnails}]");
 
-            // ── Phase 1: Sync metadata via Civitai API hash lookup (freshly discovered models) ──
-            // Must run before Phase 1b so the API gets first chance at providing rich metadata.
-            // Phase 1 already falls back to local sidecar files when the API returns 404.
-            await SyncMetadataPhaseAsync(apiKey, statusParts, ct);
+            // The dialog's own plan when it can vouch for it, and only otherwise a third pass
+            // (F13). PlanAsync runs SelectAsync on every requested step, and each of those is a
+            // repository query over the whole library plus per-item retry filtering — this button
+            // was paying for it at least twice, and once more for every Force the user toggled,
+            // even though each toggle had already re-planned with the exact options BuildResult
+            // then returned. The dialog withholds its plan whenever its counts no longer match its
+            // toggles (a failed re-plan), and then this plans again.
+            //
+            // A minutes-old plan is safe: RunStepAsync re-selects per step at execution time, so
+            // the plan's counts reach nothing but the report's Planned column.
+            var runPlan = choice.Plan
+                          ?? await Task.Run(() => _librarySync.PlanAsync(SyncScope.Library, chosen, ct), ct);
 
-            // ── Phase 1b: Re-process historical LocalFile models with sidecar fallback ──
-            // Targets models synced before sidecar parsing was added (already have LastSyncedAt
-            // but still have placeholder BaseModelRaw). Phase 1 handles fresh models.
-            await ReprocessLocalFileModelsPhaseAsync(statusParts, ct);
+            var progress = new UiProgress<LibrarySyncProgress>(this, p =>
+                SyncStatus = $"{SyncReport.Label(p.Step)} [{p.Index}/{p.Total}] {p.CurrentItem}");
 
-            // ── Phase 2: Re-fetch images for synced models that have no preview images ──
-            await RefetchMissingImagesPhaseAsync(apiKey, statusParts, ct);
+            // From here the run may commit work — each item in its own scope. ExecuteAsync is
+            // total now (#535): a run that dies midway comes back as a report with AbortReason
+            // and flows through the run path's own rebuild below. The flag still backs the
+            // finally's rebuild for the doors that remain — a run-path rebuild that fails (its
+            // local guard under #539 leaves rebuilt false), and a service regression that makes
+            // ExecuteAsync escape again. The cost is one wasted rebuild when the run dies before
+            // writing anything.
+            rebuildOwed = true;
 
-            // ── Phase 3: Backfill tags for models synced before tag persistence was added ──
-            await BackfillMissingTagsPhaseAsync(apiKey, statusParts, ct);
+            SyncReport report;
+            try
+            {
+                report = await Task.Run(() => _librarySync.ExecuteAsync(runPlan, progress, ct), ct);
+            }
+            catch (SyncAlreadyRunningException ex)
+            {
+                // The gate refused it at Wait(0), before any work — this press wrote nothing
+                // BEYOND THE SCAN, which is exactly why the gate keeps its discovered/repointed
+                // terms: only the run's own debt is being waived here.
+                rebuildOwed = false;
+                ReportServiceAlreadyRunning(ex);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                // Task.Run with an already-signalled token never invokes the delegate, and a
+                // cancellation INSIDE the service comes back as a Cancelled report — so an OCE at
+                // THIS await proves the run never entered ExecuteAsync (#540). Only here is that
+                // proof available, which is why the flag is lowered in this scoped catch and never
+                // in the shared OCE catch below: an OCE later in the flow (a dispatcher dying
+                // mid-swap) can arrive after a fully durable run that still owes its rebuild.
+                rebuildOwed = false;
+                throw;
+            }
 
-            // ── Rebuild tiles so Phase 4 operates on fresh DB-backed tiles ──
-            await RebuildTilesFromDatabaseAsync();
+            // The scan was its own run; fold ALL of it back in so every projection of this button
+            // press agrees. Not `with`: Summary is a get-only auto-property, and the copy
+            // constructor keeps the stale one — the dialog would print "Discovered 0" above "40 new
+            // files discovered" and the status bar would carry the same contradiction.
+            //
+            // Five things travel, not just the count (F4, F5, #527):
+            //  · Failures — DiscoverFilesStep deliberately records IOException /
+            //    UnauthorizedAccessException / DbUpdateException as SyncItemResult.Failure so a
+            //    report can show them. Dropped, a disconnected source folder produced a dialog with
+            //    no discovered line, no failure row and a clean report. Scan failures go FIRST so
+            //    the report dialog's orphan-group rule (a group for a kind absent from Steps sorts
+            //    last) still surfaces them — DiscoverFiles is not among this run's steps, so they
+            //    form exactly such a group, which is intended.
+            //  · UnexpectedFailures / FirstUnexpectedError — same reasoning, summed, scan first.
+            //  · Elapsed — on a real library the scan is often the slowest part of the press, and
+            //    the run's own stopwatch never saw it. "~40 s" for four minutes of waiting.
+            //  · FilesReclassified — the scan's third write (#527): pre-existing rows a library
+            //    predating support-asset detection stamped LORA, corrected in place. Dropped here,
+            //    a legacy library would silently reclassify ~35 rows with nothing anywhere saying
+            //    so — the same shape of bug this whole fold-in exists to prevent for the other two.
+            report = new SyncReport(
+                report.Plan,
+                report.Steps,
+                discoverReport.Failures.Concat(report.Failures).ToList(),
+                report.Cancelled,
+                discoverReport.Elapsed + report.Elapsed,
+                discovered,
+                discoverReport.UnexpectedFailures + report.UnexpectedFailures,
+                discoverReport.FirstUnexpectedError ?? report.FirstUnexpectedError,
+                // The scan's term is unreachable today — an aborted scan returns early above —
+                // but if that abort is ever made non-fatal, dropping it here would lose the
+                // reason silently. The coalesce order matches the other folded fields: scan first.
+                discoverReport.AbortReason ?? report.AbortReason,
+                discoverReport.FilesRepointed + report.FilesRepointed,
+                discoverReport.FilesReclassified + report.FilesReclassified);
 
-            // ── Phase 4: Download thumbnails for tiles still showing "No Preview" ──
-            await DownloadMissingThumbnailsPhaseAsync(statusParts, ct);
+            // "Last full sync" is what the next plan dialog tells the user about staleness, so it
+            // records a run that actually finished. Deliberately CancellationToken.None: this
+            // records what already happened, and a just-pressed Cancel must not lose it. Same fresh
+            // scope as the read above, for the same reason — and a write has more to lose.
+            //
+            // Guarded, and on the pool like the read: this is a SQLite write at the peak of WAL
+            // contention — the run that just ended has been writing for minutes. Letting it escape
+            // to the catch below would skip the rebuild AND the report dialog, which is the F1
+            // failure documented under the rebuild, re-entered through a new door. A timestamp is
+            // not worth everything the run achieved, so a failed stamp costs only the timestamp.
+            //
+            // And only a run that covered every kind WITH WORK may claim it (F6). The dialog exists
+            // so the user can run a subset; a 20-second thumbnails-only top-up that stamps this
+            // makes next week's dialog announce "Last full sync: <today>" for metadata that was
+            // never fetched at all. A subset run therefore leaves the timestamp where it was —
+            // stale in the safe direction, understating freshness rather than inventing it.
+            // Judged against the dialog's rows, not the four kinds: BuildResult drops zero-count
+            // kinds from the chosen set, so demanding all four would mean a library where one step
+            // legitimately has nothing to do could never stamp again. A kind with nothing to do is
+            // covered by doing nothing. An aborted run (#535) is excluded outright: the ticked
+            // kinds say what was asked for, not what actually ran before the run died.
+            if (!report.Cancelled && report.AbortReason is null
+                && dialogVm.Rows.All(r => r.Count == 0 || chosen.Steps.Contains(r.Kind)))
+            {
+                try
+                {
+                    await Task.Run(() => UseSettingsServiceAsync(async s =>
+                    {
+                        await s.UpdateLastLibrarySyncAtAsync(DateTimeOffset.UtcNow, CancellationToken.None)
+                            .ConfigureAwait(false);
+                        return true;
+                    }));
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                        $"Could not record the last-sync timestamp: {ex.Message}");
+                }
+            }
 
-            // Final status
-            if (statusParts.Count == 0)
-                statusParts.Add("Everything up to date");
+            // One rebuild, at the end: the service wrote straight to the database, so the
+            // in-memory tiles are stale until they are re-projected from it.
+            //
+            // Inside Task.Run for the same reason the plan and the run are (R7): the await above
+            // resumes on the UI thread, and this reads every visible file row out of SQLite — which
+            // has no true async, so it runs inline and freezes the overlay it is meant to be
+            // dismissing. RebuildTilesFromDatabaseAsync marshals its own tile swap through
+            // InvokeOnUiAsync, so calling it from the pool is what it is built for.
+            //
+            // Deliberately WITHOUT the run's token (F1). Cancelling is not failing: the service
+            // stops cooperatively and returns a report for the models it did finish, and those are
+            // already committed — passing the by-then-signalled token here made Task.Run throw
+            // before the rebuild, so the work landed in the database and stayed invisible in the
+            // grid, and the report was swallowed by the cancellation catch below.
+            //
+            // Guarded (#539): this is a DB read at the peak of WAL contention, and unguarded its
+            // throw reached the outer catches — a SUCCESSFUL run's verdict became "Sync error: …"
+            // (or, for an OCE off a dying dispatcher, "Metadata sync cancelled") and the report
+            // dialog was skipped, with the timestamp possibly already stamped. A failed rebuild
+            // costs only the rebuild: rebuilt stays false, so the finally's backstop gives it one
+            // deliberate retry — which can genuinely succeed once the post-run contention clears.
+            try
+            {
+                await Task.Run(RebuildTilesFromDatabaseAsync);
+                rebuilt = true;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                    $"Grid rebuild after the run failed (the backstop will retry): {ex.Message}");
+            }
 
-            var statusText = string.Join(" · ", statusParts);
+            var statusText = DescribeOutcome(report);
             _logger?.Info(LogCategory.Network, "CivitaiSync", statusText);
             SyncStatus = statusText;
+
+            // Down before the report, not behind it: the finally repeats this harmlessly, but a
+            // modal report over a live "Syncing..." overlay claims the run is still going.
+            IsBusy = false;
+            IsCancellable = false;
+            BusyMessage = null;
+
+            // An abort before any step tallied — the API-key read, the first step's selection —
+            // leaves a report whose table is empty (and, unless the scan recorded failures,
+            // nothing else to show). The status line above already leads with the abort; a modal
+            // over an empty table adds nothing to it, so that one case stays on the status line —
+            // the way the aborted-scan path already behaves. Any committed work or failure row
+            // still opens the dialog.
+            if (report.AbortReason is null || report.Steps.Count > 0 || report.Failures.Count > 0)
+                await dialogService.ShowSyncReportDialogAsync(new SyncReportDialogViewModel(report, discovered));
         }
         catch (OperationCanceledException)
         {
@@ -730,13 +1307,97 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         }
         finally
         {
-            IsBusy = false;
+            // The overlay does NOT come down yet (#540): if the backstop below has a rebuild to
+            // do, that is a multi-second UI-thread tile swap on a big library, and dropping the
+            // overlay first left it running unattributed while both sync buttons still refused
+            // input. Cancellable ends here either way — the token source is disposed next.
             IsCancellable = false;
+
+            // Only the CTS this call created: clearing the field unconditionally would let a
+            // late-finishing run dispose a newer run's token source out from under it.
+            cts.Dispose();
+            if (ReferenceEquals(_metadataSyncCts, cts)) _metadataSyncCts = null;
+
+            // The scan's rows are committed; the grid has to show them however this press ended
+            // (F3). Nothing else refreshes it — ILibraryChangeNotifier.ModelDownloaded is raised
+            // only by CivitaiModelDownloader, never by DiscoverFilesStep — so without this a
+            // cancelled dialog leaves twelve new LoRAs in the database and none of them on screen.
+            // reclassified belongs beside discovered/repointed for the same reason (#527): a row
+            // just reclassified out of LORA has to drop out of this LoRA-family grid on its own,
+            // not wait for a manual Refresh.
+            // rebuildOwed covers the doors the run path's own rebuild can leave open: that rebuild
+            // failing (#539 — this retry is deliberate, and can succeed once the post-run WAL
+            // contention clears), and a service regression that makes ExecuteAsync escape again
+            // (#535 made it total, so an escape is a bug — but the committed work would still
+            // need showing). Guarded so a failed rebuild costs only the rebuild — the verdict
+            // above stands, with the staleness appended rather than replacing it.
+            // BEFORE the sync-running flag drops: re-enabling the per-tile button while the tile
+            // collection is mid-swap would let a fetch update a tile the rebuild is discarding.
+            if ((discovered > 0 || repointed > 0 || reclassified > 0 || rebuildOwed) && !rebuilt)
+            {
+                IsBusy = true;
+                BusyMessage = "Refreshing library view…";
+                try
+                {
+                    await Task.Run(RebuildTilesFromDatabaseAsync);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
+                        $"Grid refresh after the sync failed: {ex.Message}");
+                    SyncStatus = $"{SyncStatus} · grid refresh failed — press Refresh to reload";
+                }
+            }
+
+            IsBusy = false;
             BusyMessage = null;
-            _metadataSyncCts?.Dispose();
-            _metadataSyncCts = null;
+
+            _localSyncActive = false;
+            RefreshSyncRunning();
         }
     }
+
+    /// <summary>
+    /// The discovery pre-run: the folder scan and nothing else. Run before the plan dialog opens so
+    /// the counts it shows include files added since the app started.
+    /// </summary>
+    private static readonly IReadOnlySet<SyncStepKind> DiscoverOnly =
+        new HashSet<SyncStepKind> { SyncStepKind.DiscoverFiles };
+
+    /// <summary>
+    /// The steps the plan dialog offers. Discovery is not among them: by the time the dialog opens
+    /// it has already happened, and its count could never have been shown in advance anyway.
+    /// Derived from the enum — a fifth step joins the button's plan and the dialog's rows together
+    /// or not at all, rather than being silently absent from both.
+    /// </summary>
+    private static readonly IReadOnlySet<SyncStepKind> PlannedStepKinds =
+        SyncOptions.AllStepsExcept(SyncStepKind.DiscoverFiles);
+
+    /// <summary>
+    /// The service admits one run at a time and throws on the second (its <c>Wait(0)</c> gate).
+    /// Both of this flow's runs can meet it — a download's completion sync holds the slot for a
+    /// moment — and that is a "not now", not a fault: no stack trace, no retry loop.
+    /// </summary>
+    /// <remarks>
+    /// The parameter type is the gate's own exception, deliberately. Catching plain
+    /// <see cref="InvalidOperationException"/> here caught every step's
+    /// <c>GetRequiredService&lt;IUnitOfWork&gt;()</c> and every <c>Single()</c> over an empty
+    /// sequence as well, so a DI regression was announced as "a metadata sync is already running",
+    /// logged at Info without the exception, and reproduced forever on every press. Anything else
+    /// now falls to the generic catch, which logs at Error with the exception attached.
+    /// </remarks>
+    private void ReportServiceAlreadyRunning(SyncAlreadyRunningException ex)
+    {
+        SyncStatus = AlreadyRunningStatus;
+        _logger?.Info(LogCategory.Network, "CivitaiSync",
+            $"Sync not started — the service is already running: {ex.Message}");
+    }
+
+    /// <summary>Both buttons that can start a run are off while one is running — the service takes one at a time.</summary>
+    private bool CanStartMetadataSync() => !IsSyncRunning;
+
+    /// <summary>The Refresh button obeys the same rule (#540) — see the remarks on <see cref="RefreshAsync"/>.</summary>
+    private bool CanRefresh() => !IsSyncRunning;
 
     /// <summary>
     /// Requests cancellation of the in-flight metadata sync. Safe no-op when idle.
@@ -768,7 +1429,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         => _metadataSyncCts = cts;
 
     /// <summary>
-    /// Opens the Civitai URL download dialog, lets the user preview the LoRA, and starts the download.
+    /// Index of the selected LoRA Viewer tab (0 Installed, 1 Browse Civitai, 2 LoRA Sorter),
+    /// bound two-way so the "Download LoRA has moved" dialog can switch to Browse Civitai.
+    /// </summary>
+    [ObservableProperty]
+    private int _selectedTabIndex;
+
+    /// <summary>Tab index of Browse Civitai in <c>LoraViewerView</c>'s TabControl.</summary>
+    internal const int BrowseCivitaiTabIndex = 1;
+
+    /// <summary>
+    /// The Installed tab's "Download LoRA" button. Downloading from a link moved to Browse
+    /// Civitai, whose search box takes the link (issue #630); the button stays so a user who
+    /// looks for it here is told where it went, and can jump there.
     /// </summary>
     [RelayCommand]
     private async Task DownloadLoraAsync()
@@ -780,69 +1453,78 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             return;
         }
 
-        IReadOnlyList<string> sourceFolders = [];
-        if (_settingsService is not null)
+        _logger?.Info(LogCategory.General, "LoraViewer", "Download LoRA clicked on the Installed tab — showing the \"moved to Browse Civitai\" dialog.");
+        if (await dialogService.ShowDownloadLoraMovedDialogAsync())
         {
-            sourceFolders = await _settingsService.GetEnabledLoraSourcesAsync();
+            _logger?.Info(LogCategory.General, "LoraViewer", "Switching to the Browse Civitai tab from the \"moved\" dialog.");
+            SelectedTabIndex = BrowseCivitaiTabIndex;
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the Installed tab whenever any surface adds a model to the library — the
+    /// detail panel, the Browse queue (which never notified anything
+    /// before, spec RC5), the waitlist. Coalesced: a queue batch raises one signal per file,
+    /// and a full rebuild per file would make a 20-item batch unusable, so the first arrival
+    /// schedules a rebuild ~1.5s out and every arrival during that window rides along with it.
+    /// </summary>
+    private void OnLibraryModelDownloaded(object? sender, ModelDownloadedEventArgs e)
+        // Raised on the notifying thread — marshal before touching the flag or the tiles, so
+        // the coalescing flag is only ever read and written on one thread.
+        => Dispatcher.UIThread.Post(() => _ = CoalesceRebuildAsync());
+
+    /// <summary>
+    /// The coalescing half of <see cref="OnLibraryModelDownloaded"/>, split out so it can be
+    /// driven in tests without an Avalonia dispatcher. Must be called on the UI thread.
+    /// </summary>
+    internal async Task CoalesceRebuildAsync()
+    {
+        if (_rebuildQueued)
+        {
+            // Still inside the debounce window: the scheduled rebuild has not read the database
+            // yet, so it will pick this arrival up too. Once it IS reading, this one may have
+            // persisted after the read began — remember it and run one more pass afterwards.
+            if (_rebuildRunning) _rebuildRequestedDuringRun = true;
+            return;
         }
 
-        var result = await dialogService.ShowDownloadLoraDialogAsync(sourceFolders);
-        if (!result.Confirmed || result.Version is null || string.IsNullOrWhiteSpace(result.DownloadUrl) || string.IsNullOrWhiteSpace(result.TargetFolder))
-            return;
-
-        var fileName = !string.IsNullOrWhiteSpace(result.FileName)
-            ? result.FileName
-            : $"{result.ModelName}_{result.Version.Name}.safetensors";
-        var targetPath = Path.Combine(result.TargetFolder, fileName);
-
-        var downloadService = App.Services?.GetService<LoraDownloadService>()
-                              ?? new LoraDownloadService(_civitaiClient, _settingsService, _logger);
-
-        SyncStatus = $"Downloading {fileName}...";
-        // Route through IDownloadCoordinator so this download aggregates with any
-        // concurrent Civitai-browser-queue downloads in the status bar (otherwise
-        // they fight over the single-slot activity-log progress field).
-        var coordinator = App.Services?.GetService<IDownloadCoordinator>();
-        var taskName = $"Downloading {fileName}";
-
-        _ = Task.Run(async () =>
+        _rebuildQueued = true;
+        try
         {
-            var tcs = new TaskCompletionSource<bool>();
-
-            async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
+            do
             {
-                await downloadService.DownloadFileAsync(
-                    result.DownloadUrl,
-                    targetPath,
-                    result.Version,
-                    taskName,
-                    reportProgress: (pct, message) =>
-                    {
-                        Dispatcher.UIThread.Post(() => SyncStatus = $"Downloading {fileName}: {message}");
-                        progress?.Report(new DownloadTaskProgress((int)(pct * 100), message));
-                    },
-                    completed: () => Dispatcher.UIThread.Post(async () =>
-                    {
-                        SyncStatus = $"Downloaded {fileName}";
-                        await RebuildTilesFromDatabaseAsync();
-                        tcs.TrySetResult(true);
-                    }),
-                    failed: () => Dispatcher.UIThread.Post(() =>
-                    {
-                        SyncStatus = $"Download failed: {fileName}";
-                        tcs.TrySetResult(false);
-                    }),
-                    externalCancellationToken: ct,
-                    reportToActivityLog: coordinator is null);
-
-                return await tcs.Task.ConfigureAwait(false);
+                _rebuildRequestedDuringRun = false;
+                await Task.Delay(RebuildCoalesceDelay);
+                _rebuildRunning = true;
+                try
+                {
+                    // Inside Task.Run for the same reason the bulk-sync call site is (R7): the
+                    // await above resumes on the UI thread, and this reads every visible file row
+                    // out of SQLite — which has no true async, so it runs inline and freezes the
+                    // grid. RebuildTilesFromDatabaseAsync marshals its own tile swap through
+                    // InvokeOnUiAsync, so calling it from the pool is what it is built for.
+                    await Task.Run(RebuildTilesFromDatabaseAsync);
+                }
+                catch (Exception ex)
+                {
+                    // Background refresh — a failed rebuild must not take the viewer down with
+                    // it, but it must not disappear silently either.
+                    _logger?.Warn(LogCategory.General, "LoraLibraryChanged",
+                        $"Rebuild after download failed: {ex.Message}");
+                }
+                finally
+                {
+                    _rebuildRunning = false;
+                }
             }
-
-            if (coordinator is not null)
-                await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
-            else
-                await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
-        });
+            while (_rebuildRequestedDuringRun);
+        }
+        finally
+        {
+            _rebuildQueued = false;
+            _rebuildRunning = false;
+            _rebuildRequestedDuringRun = false;
+        }
     }
 
     /// <summary>
@@ -875,1084 +1557,231 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             .ToList();
     }
 
-    private async Task RebuildTilesFromDatabaseAsync()
+    /// <summary>
+    /// The scope factory for fresh-<c>DbContext</c> reads: the injected one when present,
+    /// otherwise the locator — same failure mode as before when neither exists.
+    /// </summary>
+    private IServiceScopeFactory RequireScopeFactory()
+        => _scopeFactory ?? App.Services!.GetRequiredService<IServiceScopeFactory>();
+
+    /// <summary>
+    /// Status shown when a run had genuinely nothing left to do. The same const the plan dialog
+    /// shows (<see cref="SyncCopy.UpToDate"/>): the two are on screen together, so they must be
+    /// one string, not two that happen to match.
+    /// </summary>
+    private const string UpToDateStatus = SyncCopy.UpToDate;
+
+    /// <summary>
+    /// Status shown when a second run is asked for while one is going. The service refuses it, so
+    /// this says why rather than letting an exception message stand in for an explanation (R10).
+    /// </summary>
+    private const string AlreadyRunningStatus = "A metadata sync is already running.";
+
+    /// <summary>
+    /// Whether models are still waiting for a <c>ModelSyncState</c> row — i.e. whether the next
+    /// plan will pay for the one-time backfill. Two counts rather than a new repository seam: the
+    /// answer only decides a status line, and it is wrong in the harmless direction (a model deleted
+    /// between the counts) rather than in the direction that would skip work.
+    /// </summary>
+    private async Task<bool> HasPendingSyncStateBackfillAsync(CancellationToken ct)
     {
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        using var scope = RequireScopeFactory().CreateScope();
+        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+
+        var models = await unitOfWork.Models.CountAsync(_ => true, ct);
+        if (models == 0) return false;
+
+        return await unitOfWork.SyncStates.CountAsync(_ => true, ct) < models;
+    }
+
+    /// <summary>
+    /// The status line for a finished run. A run that discovered no new file and had nothing
+    /// planned in any step did no work at all, and <see cref="SyncReport.Summary"/> would report
+    /// that as "Discovered 0" — technically true, and useless to read.
+    /// </summary>
+    /// <remarks>
+    /// Items that failed with an exception no step claimed are called out separately (R5). They
+    /// are bugs, not "Civitai said no", and the run no longer dies on them — so unless the status
+    /// line says so, the only trace they leave is a log entry nobody opens.
+    /// </remarks>
+    private static string DescribeOutcome(SyncReport report)
+    {
+        // An aborted run is never "up to date", however empty its plan looked — the run died, and
+        // the verdict has to lead with that (#535). Only the lead differs: the tally AND the
+        // suffixes below still follow, because the run where the most went wrong is exactly the
+        // one whose failures and repoints must not go unsaid.
+        if (report.AbortReason is null
+            && report.NewFilesDiscovered == 0 && report.FilesRepointed == 0
+            && report.FilesReclassified == 0
+            && report.Steps.All(s => s.Planned == 0))
+        {
+            // Repoints veto "up to date" too (#537): models the grid had hidden just came back on
+            // screen, and this line is where the user learns why. Reclassifications veto it for
+            // the same reason (#527): a legacy library's VAEs and text encoders just stopped
+            // claiming to be LoRAs, and "up to date — nothing to do" would flatly contradict that.
+            return UpToDateStatus;
+        }
+
+        var status = report.Failures.Count > 0
+            ? $"{report.Summary} · {report.Failures.Count} failed"
+            : report.Summary;
+
+        if (report.FilesRepointed > 0)
+            status += $" · {SyncCopy.DescribeRepointed(report.FilesRepointed)}";
+
+        if (report.FilesReclassified > 0)
+            status += $" · {SyncCopy.DescribeReclassified(report.FilesReclassified)}";
+
+        if (report.UnexpectedFailures > 0)
+        {
+            var item = report.UnexpectedFailures == 1 ? "item" : "items";
+            status += $" · {report.UnexpectedFailures} {item} failed unexpectedly (see log)";
+        }
+
+        if (report.AbortReason is not null)
+        {
+            // The lead names the abort with its reason, so Summary's own "(aborted)" marker —
+            // right for the log line and the report dialog, where Summary stands alone — would
+            // only repeat it here. The marker is Summary's last part, joined like every other.
+            status = status.Replace(" · (aborted)", string.Empty, StringComparison.Ordinal);
+            return $"Sync aborted — {report.AbortReason} · {status}";
+        }
+
+        return status;
+    }
+
+    /// <summary>
+    /// Progress sink that marshals through this ViewModel's UI-thread seam — deliberately not
+    /// <see cref="Progress{T}"/>, which captures the <c>SynchronizationContext</c> at construction
+    /// and would add a second, invisible hop on top of the one the ViewModel already owns (and in
+    /// a unit test, with no context to capture, would deliver on the thread pool instead).
+    /// </summary>
+    private sealed class UiProgress<T>(LoraViewerViewModel owner, Action<T> onReport) : IProgress<T>
+    {
+        public void Report(T value) => owner.PostToUi(() => onReport(value));
+    }
+
+    /// <summary>Fire-and-forget hop to the UI thread, through the scheduler seam when injected.</summary>
+    private void PostToUi(Action action)
+    {
+        if (_uiScheduler is not null) _uiScheduler.Post(action);
+        else Dispatcher.UIThread.Post(action);
+    }
+
+    /// <summary>Awaitable hop to the UI thread, through the scheduler seam when injected.</summary>
+    private Task InvokeOnUiAsync(Action action)
+        => _uiScheduler is not null
+            ? _uiScheduler.InvokeAsync(action)
+            : Dispatcher.UIThread.InvokeAsync(action).GetTask();
+
+    /// <summary>
+    /// Rebuilds the grid from the database. Returns the number of DISTINCT models behind the new
+    /// tiles — the same number <see cref="LoadCachedTilesAsync"/> computes for the status line, and
+    /// the reason this returns anything at all: a caller that has just made tiles disappear
+    /// (<see cref="RestateLoadedStatusAsync"/>) needs it to say so, and it is free here because the
+    /// rows are already in hand. Callers that only want the rebuild ignore it.
+    /// </summary>
+    private async Task<int> RebuildTilesFromDatabaseAsync()
+    {
+        using var scope = RequireScopeFactory().CreateScope();
         var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
 
         // Issue #380: per-location fan-out — one tile per (Model, LoRA-source).
         var files = await syncService.LoadCachedFilesAsync();
         var tiles = BuildPerLocationTiles(files);
+        var distinctModels = files.Select(f => f.Model.Id).Distinct().Count();
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await InvokeOnUiAsync(() =>
         {
             // Unsubscribe from old tiles
             foreach (var oldTile in AllTiles)
             {
-                oldTile.Deleted -= OnTileDeleted;
-                oldTile.DetailRequested -= OnTileDetailRequested;
+                DetachTile(oldTile);
             }
 
             AllTiles.Clear();
 
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
-            }
+            foreach (var tile in tiles) AddTile(tile);
 
             TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
-            ApplyFilters();
+            ApplyFilters(ratingsChanged: true);
         });
+
+        return distinctModels;
     }
 
     /// <summary>
-    /// Phase 1b: Re-process historical LocalFile models that were synced before sidecar parsing was added.
-    /// Targets models with Source=LocalFile, no CivitaiId, placeholder BaseModelRaw, AND LastSyncedAt
-    /// already set (meaning Phase 1 already ran on them in a previous session but found no API match).
-    /// Fresh models (LastSyncedAt=null) are handled by Phase 1 which includes its own sidecar fallback.
+    /// Re-states the "Loaded N models … M support assets not shown" line after a rebuild that
+    /// removed tiles.
     /// </summary>
-    private async Task ReprocessLocalFileModelsPhaseAsync(List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingReprocess = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, Source: DataSource.LocalFile, LastSyncedAt: not null }
-                        && IsPlaceholderBaseModel(t.SelectedVersion?.BaseModelRaw))
-            .ToList();
-
-        if (tilesNeedingReprocess.Count == 0)
-        {
-            _logger?.Debug(LogCategory.General, "CivitaiSync",
-                "No historical LocalFile models with placeholder metadata — skipping Phase 1b");
-            return;
-        }
-
-        _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 1b: {tilesNeedingReprocess.Count} historical LocalFile models need sidecar re-processing");
-
-        var reprocessed = 0;
-        var skipped = 0;
-
-        for (var i = 0; i < tilesNeedingReprocess.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingReprocess[i];
-            var file = tile.SelectedVersion?.PrimaryFile;
-            var localPath = file?.LocalPath;
-
-            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
-            {
-                skipped++;
-                continue;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"[{i + 1}/{tilesNeedingReprocess.Count}] Re-reading sidecar for {tile.DisplayName}...");
-
-            try
-            {
-                var applied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-                if (applied) reprocessed++;
-                else skipped++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Warn(LogCategory.General, "CivitaiSync",
-                    $"Sidecar re-process failed for '{tile.DisplayName}': {ex.Message}");
-                skipped++;
-            }
-        }
-
-        if (reprocessed > 0)
-            statusParts.Add($"Sidecar re-processed: {reprocessed}");
-    }
-
-    /// <summary>
-    /// Returns true if the base model string is a placeholder value ('???' or null/empty).
-    /// </summary>
-    private static bool IsPlaceholderBaseModel(string? baseModel)
-        => string.IsNullOrWhiteSpace(baseModel) || baseModel == "???";
-
-    /// <summary>
-    /// Phase 1: Sync metadata for models that have never been synced.
-    /// </summary>
-    private async Task SyncMetadataPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingMetadata = AllTiles
-            .Where(t => t.ModelEntity is { CivitaiId: null, LastSyncedAt: null }
-                        && !(t.ModelEntity?.IsUserEdited ?? false))
-            .ToList();
-
-        if (tilesNeedingMetadata.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync", "All models already have metadata — skipping Phase 1");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 1: {tilesNeedingMetadata.Count} models need metadata");
-
-        var updated = 0;
-        var notFound = 0;
-        var localFallback = 0;
-        var skipped = 0;
-        var errors = 0;
-
-        for (var i = 0; i < tilesNeedingMetadata.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingMetadata[i];
-            var file = tile.SelectedVersion?.PrimaryFile;
-            if (file is null)
-            {
-                _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: no primary file");
-                skipped++;
-                continue;
-            }
-
-            var localPath = file.LocalPath;
-            if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
-            {
-                _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                    $"SKIP [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: file not found at {localPath}");
-                skipped++;
-                continue;
-            }
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Hashing {tile.DisplayName}...");
-
-            try
-            {
-                // Compute full-file SHA256 — same method as the proven old ComputeSHA256
-                var hash = await Task.Run(() => ComputeFullSha256(localPath));
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"[{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                    $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
-
-                Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] Looking up {tile.DisplayName}...");
-
-                // Send API key — authenticated requests get higher rate limits
-                var civitaiVersion = await _civitaiClient!.GetModelVersionByHashAsync(hash, apiKey);
-                if (civitaiVersion is null)
-                {
-                    _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                        $"NOT FOUND [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                        $"Hash {hash} returned 404 from Civitai");
-                    notFound++;
-
-                    // Fallback: try to read local .civitai.info / .json metadata files
-                    var localFallbackApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-                    if (localFallbackApplied)
-                    {
-                        _logger?.Info(LogCategory.Network, "CivitaiSync",
-                            $"LOCAL FALLBACK [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                            "Applied metadata from local .civitai.info / .json file");
-                        localFallback++;
-                    }
-
-                    // Mark as synced so this model is not retried on every run
-                    await MarkModelSyncedAsync(tile.ModelEntity);
-                    continue;
-                }
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"MATCHED [{i + 1}/{tilesNeedingMetadata.Count}] {file.FileName}",
-                    $"→ Model {civitaiVersion.ModelId}, Version {civitaiVersion.Id} ({civitaiVersion.Name})\n" +
-                    $"  Base: {civitaiVersion.BaseModel}, Images: {civitaiVersion.Images.Count}, Files: {civitaiVersion.Files.Count}");
-
-                // Update model entity with Civitai data
-                await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                updated++;
-
-                _logger?.Info(LogCategory.Network, "CivitaiSync",
-                    $"SAVED [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName} → DB updated");
-
-                Dispatcher.UIThread.Post(() =>
-                    SyncStatus = $"[{i + 1}/{tilesNeedingMetadata.Count}] ✓ {tile.DisplayName} ({updated} updated)");
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"HTTP ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: " +
-                    $"Status={ex.StatusCode}, {ex.Message}", ex);
-                errors++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"ERROR [{i + 1}/{tilesNeedingMetadata.Count}] {tile.DisplayName}: {ex.Message}", ex);
-                errors++;
-            }
-
-            // Civitai rate limit: ~2 requests/sec for authenticated, less for anonymous.
-            // The CivitaiClient handles 429 retries internally, but we still pace requests.
-            await Task.Delay(1500, ct);
-        }
-
-        var parts = new List<string>();
-        if (updated > 0) parts.Add($"{updated} updated");
-        if (localFallback > 0) parts.Add($"{localFallback} from local files");
-        if (notFound > 0) parts.Add($"{notFound} not on Civitai");
-        if (errors > 0) parts.Add($"{errors} errors");
-        if (skipped > 0) parts.Add($"{skipped} skipped");
-        statusParts.Add($"Metadata: {string.Join(", ", parts)}");
-    }
-
-    /// <summary>
-    /// Phase 2: Re-fetch image data from Civitai for models that were synced but have no preview images.
-    /// This happens when the initial sync didn't receive image data (empty images array from the API).
-    /// </summary>
-    private async Task RefetchMissingImagesPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingImages = AllTiles
-            .Where(t => t.IsImageDataMissing)
-            .ToList();
-
-        if (tilesNeedingImages.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync", "No synced models missing images — skipping Phase 2");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 2: {tilesNeedingImages.Count} synced models have no preview images, re-fetching from Civitai");
-
-        var fetched = 0;
-        var fetchErrors = 0;
-
-        for (var i = 0; i < tilesNeedingImages.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingImages[i];
-            var versionCivitaiId = tile.SelectedVersion?.CivitaiId;
-            if (versionCivitaiId is null) continue;
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Re-fetching images [{i + 1}/{tilesNeedingImages.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId.Value, apiKey);
-                if (civitaiVersion is not null && civitaiVersion.Images.Count > 0)
-                {
-                    _logger?.Info(LogCategory.Network, "CivitaiSync",
-                        $"Re-fetched {civitaiVersion.Images.Count} images for '{tile.DisplayName}'");
-
-                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                    fetched++;
-                }
-                else
-                {
-                    _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                        $"No images available for '{tile.DisplayName}' on Civitai");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"Failed to re-fetch images for '{tile.DisplayName}': {ex.Message}", ex);
-                fetchErrors++;
-            }
-
-            await Task.Delay(1500, ct);
-        }
-
-        if (fetched > 0 || fetchErrors > 0)
-        {
-            var part = $"Images re-fetched: {fetched}";
-            if (fetchErrors > 0) part += $", {fetchErrors} errors";
-            statusParts.Add(part);
-        }
-    }
-
-    /// <summary>
-    /// Phase 3: Backfill tags for models that were synced before tag persistence was added.
-    /// Uses the existing CivitaiId to fetch from Civitai — no file hashing needed.
-    /// Once all models have tags this phase becomes a no-op.
-    /// </summary>
-    private async Task BackfillMissingTagsPhaseAsync(string? apiKey, List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingTags = AllTiles
-            .Where(t => t.ModelEntity?.CivitaiId is not null and not 0
-                        && t.TagNames.Count == 0
-                        && t.SelectedVersion?.CivitaiId is not null
-                        && !(t.ModelEntity?.IsUserEdited ?? false))
-            .ToList();
-
-        if (tilesNeedingTags.Count == 0)
-        {
-            _logger?.Debug(LogCategory.Network, "CivitaiSync",
-                "All synced models already have tags — skipping Phase 3");
-            return;
-        }
-
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Phase 3: {tilesNeedingTags.Count} synced models need tag backfill");
-
-        var backfilled = 0;
-        var errors = 0;
-
-        for (var i = 0; i < tilesNeedingTags.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingTags[i];
-            var versionCivitaiId = tile.SelectedVersion!.CivitaiId!.Value;
-
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Backfilling tags [{i + 1}/{tilesNeedingTags.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                var civitaiVersion = await _civitaiClient!.GetModelVersionAsync(versionCivitaiId, apiKey);
-                if (civitaiVersion is not null)
-                {
-                    await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
-                    backfilled++;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.Network, "CivitaiSync",
-                    $"Failed to backfill tags for '{tile.DisplayName}': {ex.Message}", ex);
-                errors++;
-            }
-
-            // Civitai rate limit pacing
-            await Task.Delay(1500, ct);
-        }
-
-        if (backfilled > 0 || errors > 0)
-        {
-            var part = $"Tags backfilled: {backfilled}";
-            if (errors > 0) part += $", {errors} errors";
-            statusParts.Add(part);
-        }
-    }
-
-    /// <summary>
-    /// Phase 4: Download thumbnails for tiles still showing "No Preview" that have image URLs.
-    /// </summary>
-    private async Task DownloadMissingThumbnailsPhaseAsync(List<string> statusParts, CancellationToken ct)
-    {
-        var tilesNeedingThumbs = AllTiles
-            .Where(t => t.IsThumbnailMissing)
-            .ToList();
-
-        if (tilesNeedingThumbs.Count == 0)
-        {
-            _logger?.Debug(LogCategory.General, "CivitaiSync", "No tiles with downloadable but missing thumbnails — skipping Phase 4");
-            return;
-        }
-
-        _logger?.Info(LogCategory.General, "CivitaiSync",
-            $"Phase 4: {tilesNeedingThumbs.Count} tiles need thumbnail download");
-
-        var thumbSuccess = 0;
-        var thumbFailed = 0;
-
-        for (var i = 0; i < tilesNeedingThumbs.Count; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            var tile = tilesNeedingThumbs[i];
-            Dispatcher.UIThread.Post(() =>
-                SyncStatus = $"Downloading thumbnail [{i + 1}/{tilesNeedingThumbs.Count}] {tile.DisplayName}...");
-
-            try
-            {
-                await tile.TryDownloadMissingThumbnailAsync();
-
-                if (!tile.IsThumbnailMissing)
-                    thumbSuccess++;
-                else
-                    thumbFailed++;
-            }
-            catch (Exception ex)
-            {
-                _logger?.Error(LogCategory.General, "CivitaiSync",
-                    $"Failed thumbnail for '{tile.DisplayName}': {ex.Message}", ex);
-                thumbFailed++;
-            }
-
-            await Task.Delay(500, ct);
-        }
-
-        var thumbPart = $"Thumbnails: {thumbSuccess} downloaded";
-        if (thumbFailed > 0) thumbPart += $", {thumbFailed} failed";
-        statusParts.Add(thumbPart);
-    }
-
-    /// <summary>
-    /// Computes the full-file SHA256 hash for Civitai API lookup.
-    /// Uses the exact same approach as the proven old LoraMetadataDownloadService.ComputeSHA256.
-    /// </summary>
-    private static string ComputeFullSha256(string filePath)
-    {
-        using var stream = File.OpenRead(filePath);
-        using var sha256 = SHA256.Create();
-        var hash = sha256.ComputeHash(stream);
-        return Convert.ToHexStringLower(hash);
-    }
-
-    /// <summary>
-    /// Marks a model as synced (sets LastSyncedAt) so it is not retried on subsequent runs.
-    /// Used when the hash lookup returns 404 or the CivitaiId cannot be assigned.
-    /// </summary>
-    private static async Task MarkModelSyncedAsync(Model? model)
-    {
-        if (model is null) return;
-
-        try
-        {
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var dbModel = await unitOfWork.Models.GetByIdAsync(model.Id);
-            if (dbModel is not null)
-            {
-                dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-                await unitOfWork.SaveChangesAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Failed to mark model {Id} as synced", model.Id);
-        }
-    }
-
-    /// <summary>
-    /// Fallback: reads local .civitai.info or .json metadata files next to the safetensors file
-    /// and applies the discovered metadata to the model entity in the database.
-    /// Also discovers local preview images (same base name, image extension) and stores
-    /// them as thumbnail BLOBs so tiles show a preview without Civitai.
+    /// <remarks>
+    /// §5 of the design exists for exactly this moment and was missing from it. On a legacy
+    /// library's first launch after the upgrade, the initial load paints every tile with a support
+    /// count of 0 (nothing has been reclassified yet); the background reconcile then backfills,
+    /// rebuilds, and the tiles disappear — while the verify pass's own progress handler has just
+    /// set <see cref="SyncStatus"/> to phase text and then null. The user watches files vanish under
+    /// a blank status line, and the only explanation appears on the NEXT launch. A file that
+    /// vanishes without a reason reads as data loss, not as tidying.
     /// <para>
-    /// Two sidecar formats are supported:
-    /// <list type="bullet">
-    ///   <item><c>.civitai.info</c> — version-level Civitai response (top-level: id, modelId, baseModel, trainedWords, model{}, images[], files[])</item>
-    ///   <item><c>.json</c> — model-level Civitai response (top-level: id, name, type, nsfw, modelVersions[]) OR simple metadata (sd version, tags)</item>
-    /// </list>
+    /// Internal so <c>LoraViewerViewModelSyncTests</c>' existing scope-factory + UI-scheduler seam
+    /// can exercise it directly; <c>ReconcileLibraryInBackgroundAsync</c> itself is started
+    /// fire-and-forget from a command and offers nothing to await.
     /// </para>
-    /// </summary>
-    /// <returns>True if any local metadata was found and applied.</returns>
-    private async Task<bool> TryApplyLocalMetadataFallbackAsync(ModelTileViewModel tile, string localPath)
+    /// </remarks>
+    internal async Task RestateLoadedStatusAsync(int modelCount)
     {
-        try
-        {
-            var fileInfo = new FileInfo(localPath);
-            var directory = fileInfo.Directory;
-            if (directory is null || !directory.Exists) return false;
+        using var scope = RequireScopeFactory().CreateScope();
+        var syncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        var excludedSupportAssets = await syncService.CountExcludedSupportAssetsAsync();
 
-            var baseName = Path.GetFileNameWithoutExtension(fileInfo.Name);
-
-            // Look for .civitai.info or .json sidecar files
-            var civitaiInfoFile = directory.GetFiles($"{baseName}.civitai.info").FirstOrDefault();
-            var jsonFile = directory.GetFiles($"{baseName}.json").FirstOrDefault();
-
-            if (civitaiInfoFile is null && jsonFile is null)
-            {
-                // No sidecar metadata — still try local thumbnail
-                var thumbnailApplied = await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-                return thumbnailApplied;
-            }
-
-            // Parse the sidecar file — prefer .civitai.info (richer version-level data)
-            var metadataFile = civitaiInfoFile ?? jsonFile!;
-            var isCivitaiInfoFormat = civitaiInfoFile is not null;
-            var json = await File.ReadAllTextAsync(metadataFile.FullName);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Use a fresh DI scope for DB writes
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            var model = tile.ModelEntity;
-            if (model is null) return false;
-
-            // Load ONLY the target model — not the entire database
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-            if (dbModel is null) return false;
-
-            var dirty = false;
-
-            // Locate the DB version that owns the file at localPath
-            var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, localPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (isCivitaiInfoFormat)
-            {
-                dirty = await ApplyCivitaiInfoFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath);
-            }
-            else
-            {
-                // .json may be model-level (has "modelVersions") or simple metadata (has "sd version")
-                dirty = root.TryGetProperty("modelVersions", out _)
-                    ? await ApplyModelLevelJsonFormatAsync(root, dbModel, dbVersion, unitOfWork.Models, localPath)
-                    : ApplySimpleJsonFormat(root, dbModel, dbVersion);
-            }
-
-            // Always mark source and sync time
-            dbModel.Source = DataSource.LocalFile;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            dirty = true;
-
-            if (dirty)
-            {
-                await unitOfWork.SaveChangesAsync();
-
-                // Reload ONLY this model after save
-                var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-                if (refreshedModel is not null)
-                {
-                    await Dispatcher.UIThread.InvokeAsync(() => tile.RefreshModelData(refreshedModel));
-                }
-            }
-
-            // Try to find and apply a local thumbnail image
-            await TryApplyLocalThumbnailAsync(tile, directory, baseName);
-
-            return dirty;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Warn(LogCategory.General, "LocalFallback",
-                $"Failed to read local metadata for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
+        // Through the UI hop rather than assigned here, for thread affinity — not for ordering. The
+        // await above resumes on whichever pool thread completed it, so a direct assignment would
+        // raise PropertyChanged off the UI thread, and AllTiles.Count would be read while the UI
+        // thread may be mutating that ObservableCollection. Both are why the load path does the same.
+        //
+        // It buys no ordering against the reconcile's progress handler, and must not be read as if it
+        // did: that Progress<SyncProgress> is constructed inside Task.Run with no SynchronizationContext
+        // captured, so its callbacks run on the pool rather than in the dispatcher queue, and one still
+        // in flight can reach Dispatcher.UIThread.Post after this write does. The status line is
+        // re-stated on every rebuild that removes tiles, so a lost race costs the explanation for one
+        // pass, not the correctness of anything.
+        await InvokeOnUiAsync(() =>
+            SyncStatus = BuildLoadedStatus(modelCount, AllTiles.Count, excludedSupportAssets));
     }
 
     /// <summary>
-    /// Applies metadata from a .civitai.info sidecar (version-level Civitai response).
-    /// Extracts: model name, NSFW, modelId → CivitaiId/CivitaiModelPageId,
-    /// version id → CivitaiId, baseModel, trainedWords, image URLs, file hashes.
+    /// Returns true if the base model string is a placeholder value ('???' or null/empty). One
+    /// implementation, in <see cref="SyncStateDeriver.IsPlaceholder"/> — the rule has to be the same
+    /// here, in the sorter, and in the sync step that writes the label.
     /// </summary>
-    private async Task<bool> ApplyCivitaiInfoFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
+    private static bool IsPlaceholderBaseModel(string? baseModel) => SyncStateDeriver.IsPlaceholder(baseModel);
+
+    /// <summary>
+    /// Loads the installed-file rows for the LoRA Sorter from a fresh DI scope, the same pattern
+    /// <see cref="LoadCachedTilesAsync"/> uses. <c>IModelSyncService</c> and <c>IUnitOfWork</c> are
+    /// transient while this ViewModel is scoped, so <see cref="_syncService"/> is a single
+    /// session-long <c>DbContext</c>; the sorter starts preview passes fire-and-forget from three
+    /// option hooks with no re-entrancy guard, so handing it that shared instance risked
+    /// "A second operation was started on this context instance before a previous operation
+    /// completed" on a big library.
+    /// </summary>
+    private async Task<IReadOnlyList<InstalledModelFile>> LoadCachedFilesForSorterAsync(CancellationToken ct)
     {
-        var dirty = false;
-
-        // ── Model-level fields from nested "model" object ──
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        // ── CivitaiId / CivitaiModelPageId from "modelId" ──
-        if (root.TryGetProperty("modelId", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Version-level fields ──
-        if (dbVersion is not null)
-        {
-            // Version CivitaiId from top-level "id"
-            if (root.TryGetProperty("id", out var versionIdProp) && versionIdProp.TryGetInt32(out var civitaiVersionId))
-            {
-                var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                if (!versionIdTaken)
-                {
-                    dbVersion.CivitaiId = civitaiVersionId;
-                    dirty = true;
-                }
-            }
-
-            // Version name
-            if (root.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-            {
-                dbVersion.Name = vNameStr;
-                dirty = true;
-            }
-
-            // Base model
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Trained words / trigger words
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
-            }
-
-            // Download URL
-            if (root.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbVersion.DownloadUrl = dlUrlStr;
-                dirty = true;
-            }
-
-            // ── Image URLs from "images" array ──
-            if (root.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyImagesFromJson(dbVersion, images);
-            }
-
-            // ── File hashes from "files" array ──
-            if (root.TryGetProperty("files", out var files) && files.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dirty |= ApplyFileHashesFromJson(dbVersion, files, localPath);
-            }
-        }
-
-        return dirty;
+        using var scope = RequireScopeFactory().CreateScope();
+        var freshSyncService = scope.ServiceProvider.GetRequiredService<IModelSyncService>();
+        return await freshSyncService.LoadCachedFilesAsync(ct);
     }
 
     /// <summary>
-    /// Applies metadata from a .json sidecar that is a model-level Civitai response
-    /// (has top-level id, name, type, nsfw, modelVersions[]).
-    /// Finds the matching version by filename in the modelVersions array.
+    /// Civitai API key handed to <see cref="SorterMetadataResolver"/> for the LoRA Sorter's
+    /// unknown-file resolution. Delegates to <see cref="ICivitaiApiKeyProvider"/> — see its doc
+    /// comment for why a fresh DI scope is used rather than a long-lived settings instance.
     /// </summary>
-    private async Task<bool> ApplyModelLevelJsonFormatAsync(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion,
-        IModelRepository modelRepo,
-        string localPath)
+    private Task<string?> GetApiKeyForSorterAsync()
     {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        // ── Model-level fields ──
-        if (root.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-        {
-            dbModel.Name = nameStr;
-            dirty = true;
-        }
-
-        if (root.TryGetProperty("nsfw", out var nsfw)
-            && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-        {
-            dbModel.IsNsfw = nsfw.GetBoolean();
-            dirty = true;
-        }
-
-        // CivitaiId / CivitaiModelPageId from top-level "id"
-        if (root.TryGetProperty("id", out var modelIdProp) && modelIdProp.TryGetInt32(out var civitaiModelId))
-        {
-            dbModel.CivitaiModelPageId = civitaiModelId;
-
-            var civitaiIdTaken = await modelRepo.IsCivitaiIdTakenAsync(civitaiModelId, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModelId;
-            }
-
-            dirty = true;
-        }
-
-        // ── Find the matching version in modelVersions[] by filename ──
-        if (dbVersion is not null
-            && root.TryGetProperty("modelVersions", out var versions)
-            && versions.ValueKind == System.Text.Json.JsonValueKind.Array)
-        {
-            foreach (var versionElement in versions.EnumerateArray())
-            {
-                // Match by filename in the "files" array
-                var matchedByFile = false;
-                if (versionElement.TryGetProperty("files", out var vFiles) && vFiles.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    foreach (var fileElement in vFiles.EnumerateArray())
-                    {
-                        if (fileElement.TryGetProperty("name", out var fName)
-                            && string.Equals(fName.GetString(), localFileName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            matchedByFile = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!matchedByFile) continue;
-
-                // Found the matching version — extract all data
-                if (versionElement.TryGetProperty("id", out var vIdProp) && vIdProp.TryGetInt32(out var civitaiVersionId))
-                {
-                    var versionIdTaken = await modelRepo.IsVersionCivitaiIdTakenAsync(civitaiVersionId, dbVersion.Id);
-                    if (!versionIdTaken)
-                    {
-                        dbVersion.CivitaiId = civitaiVersionId;
-                        dirty = true;
-                    }
-                }
-
-                if (versionElement.TryGetProperty("name", out var vName) && vName.GetString() is { } vNameStr)
-                {
-                    dbVersion.Name = vNameStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-                {
-                    dbVersion.BaseModelRaw = baseModelStr;
-                    dirty = true;
-                }
-
-                if (versionElement.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dbVersion.TriggerWords.Clear();
-                    var order = 0;
-                    foreach (var wordElement in trained.EnumerateArray())
-                    {
-                        if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                        {
-                            dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                            dirty = true;
-                        }
-                    }
-                }
-
-                if (versionElement.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-                {
-                    dbVersion.DownloadUrl = dlUrlStr;
-                    dirty = true;
-                }
-
-                // Images from this version
-                if (versionElement.TryGetProperty("images", out var images) && images.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyImagesFromJson(dbVersion, images);
-                }
-
-                // File hashes from this version
-                if (versionElement.TryGetProperty("files", out var filesArr) && filesArr.ValueKind == System.Text.Json.JsonValueKind.Array)
-                {
-                    dirty |= ApplyFileHashesFromJson(dbVersion, filesArr, localPath);
-                }
-
-                break; // Only match one version per file
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies metadata from a simple .json sidecar (has "sd version", "type", "tags" — not a full Civitai response).
-    /// </summary>
-    private static bool ApplySimpleJsonFormat(
-        System.Text.Json.JsonElement root,
-        Model dbModel,
-        ModelVersion? dbVersion)
-    {
-        var dirty = false;
-
-        if (root.TryGetProperty("model", out var modelProp))
-        {
-            if (modelProp.TryGetProperty("name", out var name) && name.GetString() is { } nameStr)
-            {
-                dbModel.Name = nameStr;
-                dirty = true;
-            }
-
-            if (modelProp.TryGetProperty("nsfw", out var nsfw)
-                && nsfw.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
-            {
-                dbModel.IsNsfw = nsfw.GetBoolean();
-                dirty = true;
-            }
-        }
-
-        if (dbVersion is not null)
-        {
-            if (root.TryGetProperty("baseModel", out var baseModel) && baseModel.GetString() is { } baseModelStr)
-            {
-                dbVersion.BaseModelRaw = baseModelStr;
-                dirty = true;
-            }
-
-            // Fallback: "sd version" for very old sidecar format
-            if (dbVersion.BaseModelRaw is null or "???"
-                && root.TryGetProperty("sd version", out var sdVer) && sdVer.GetString() is { } sdVerStr)
-            {
-                dbVersion.BaseModelRaw = sdVerStr;
-                dirty = true;
-            }
-
-            if (root.TryGetProperty("trainedWords", out var trained) && trained.ValueKind == System.Text.Json.JsonValueKind.Array)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var wordElement in trained.EnumerateArray())
-                {
-                    if (wordElement.ValueKind == System.Text.Json.JsonValueKind.String && wordElement.GetString() is { } word)
-                    {
-                        dbVersion.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-                        dirty = true;
-                    }
-                }
-            }
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Creates <see cref="ModelImage"/> entities from a JSON "images" array found in sidecar files.
-    /// Skips images that already exist by CivitaiId or URL.
-    /// </summary>
-    private static bool ApplyImagesFromJson(ModelVersion dbVersion, System.Text.Json.JsonElement imagesArray)
-    {
-        var dirty = false;
-        var existingUrls = dbVersion.Images
-            .Select(i => i.Url)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var sortOrder = dbVersion.Images.Count;
-
-        foreach (var imgEl in imagesArray.EnumerateArray())
-        {
-            var url = imgEl.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
-            if (string.IsNullOrEmpty(url)) continue;
-
-            // Skip if we already have this URL
-            if (existingUrls.Contains(url)) continue;
-
-            var image = new ModelImage
-            {
-                ModelVersionId = dbVersion.Id,
-                Url = url,
-                SortOrder = sortOrder++,
-            };
-
-            if (imgEl.TryGetProperty("width", out var w) && w.TryGetInt32(out var width)) image.Width = width;
-            if (imgEl.TryGetProperty("height", out var h) && h.TryGetInt32(out var height)) image.Height = height;
-            if (imgEl.TryGetProperty("hash", out var hash) && hash.GetString() is { } hashStr) image.BlurHash = hashStr;
-            if (imgEl.TryGetProperty("type", out var type) && type.GetString() is { } typeStr) image.MediaType = typeStr;
-
-            if (imgEl.TryGetProperty("nsfwLevel", out var nsfwLvl) && nsfwLvl.TryGetInt32(out var nsfwLevel))
-            {
-                image.IsNsfw = nsfwLevel > 1;
-            }
-
-            dbVersion.Images.Add(image);
-            existingUrls.Add(url);
-            dirty = true;
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Applies file hashes from a JSON "files" array to the matching <see cref="ModelFile"/> entity.
-    /// Matches by filename comparison with the local file.
-    /// </summary>
-    private static bool ApplyFileHashesFromJson(
-        ModelVersion dbVersion,
-        System.Text.Json.JsonElement filesArray,
-        string localPath)
-    {
-        var dirty = false;
-        var localFileName = Path.GetFileName(localPath);
-
-        foreach (var fileEl in filesArray.EnumerateArray())
-        {
-            var fileName = fileEl.TryGetProperty("name", out var fName) ? fName.GetString() : null;
-            if (!string.Equals(fileName, localFileName, StringComparison.OrdinalIgnoreCase)) continue;
-
-            var dbFile = dbVersion.Files.FirstOrDefault(f =>
-                string.Equals(f.FileName, localFileName, StringComparison.OrdinalIgnoreCase))
-                ?? dbVersion.PrimaryFile;
-
-            if (dbFile is null) break;
-
-            // File CivitaiId
-            if (fileEl.TryGetProperty("id", out var fId) && fId.TryGetInt32(out var fileId))
-            {
-                dbFile.CivitaiId = fileId;
-                dirty = true;
-            }
-
-            // File size
-            if (fileEl.TryGetProperty("sizeKB", out var sizeKb) && sizeKb.TryGetDouble(out var sizeVal))
-            {
-                dbFile.SizeKB = sizeVal;
-                dirty = true;
-            }
-
-            // Hashes
-            if (fileEl.TryGetProperty("hashes", out var hashes))
-            {
-                if (hashes.TryGetProperty("SHA256", out var sha256) && sha256.GetString() is { } sha256Str)
-                { dbFile.HashSHA256 ??= sha256Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV2", out var autoV2) && autoV2.GetString() is { } autoV2Str)
-                { dbFile.HashAutoV2 ??= autoV2Str; dirty = true; }
-
-                if (hashes.TryGetProperty("CRC32", out var crc32) && crc32.GetString() is { } crc32Str)
-                { dbFile.HashCRC32 ??= crc32Str; dirty = true; }
-
-                if (hashes.TryGetProperty("BLAKE3", out var blake3) && blake3.GetString() is { } blake3Str)
-                { dbFile.HashBLAKE3 ??= blake3Str; dirty = true; }
-
-                if (hashes.TryGetProperty("AutoV1", out var autoV1) && autoV1.GetString() is { } autoV1Str)
-                { dbFile.HashAutoV1 ??= autoV1Str; dirty = true; }
-            }
-
-            // Download URL
-            if (fileEl.TryGetProperty("downloadUrl", out var dlUrl) && dlUrl.GetString() is { } dlUrlStr)
-            {
-                dbFile.DownloadUrl ??= dlUrlStr;
-                dirty = true;
-            }
-
-            break; // Only match one file entry per local file
-        }
-
-        return dirty;
-    }
-
-    /// <summary>
-    /// Image extensions to search for when looking for local preview images alongside model files.
-    /// Ordered by preference (preview-specific suffixes first, then common formats).
-    /// </summary>
-    private static readonly string[] LocalPreviewExtensions =
-    [
-        ".preview.png", ".preview.jpg", ".preview.jpeg", ".preview.webp",
-        ".thumb.jpg",
-        ".png", ".jpg", ".jpeg", ".webp"
-    ];
-
-    /// <summary>
-    /// Searches for a local preview image next to the model file (same base name, image extension)
-    /// and stores it as a thumbnail BLOB on the primary image entity.
-    /// </summary>
-    /// <returns>True if a local thumbnail was found and applied.</returns>
-    private async Task<bool> TryApplyLocalThumbnailAsync(ModelTileViewModel tile, DirectoryInfo directory, string baseName)
-    {
-        try
-        {
-            // Search for local preview images by base name + known image extensions
-            string? localImagePath = null;
-            foreach (var ext in LocalPreviewExtensions)
-            {
-                var candidate = Path.Combine(directory.FullName, baseName + ext);
-                if (File.Exists(candidate))
-                {
-                    localImagePath = candidate;
-                    break;
-                }
-            }
-
-            if (localImagePath is null) return false;
-
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Found local preview for '{tile.DisplayName}': {Path.GetFileName(localImagePath)}");
-
-            // Read and transcode the local image to JPEG for BLOB storage
-            var imageBytes = await File.ReadAllBytesAsync(localImagePath);
-            if (imageBytes.Length == 0) return false;
-
-            byte[] thumbnailBytes;
-            using (var skBitmap = SKBitmap.Decode(imageBytes))
-            {
-                if (skBitmap is null) return false;
-
-                // Resize to thumbnail width (340px) to keep BLOB small
-                var targetWidth = 340;
-                var scale = (float)targetWidth / skBitmap.Width;
-                var targetHeight = (int)(skBitmap.Height * scale);
-                using var resized = skBitmap.Resize(new SKImageInfo(targetWidth, targetHeight), new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
-                if (resized is null) return false;
-
-                using var skImage = SKImage.FromBitmap(resized);
-                using var encoded = skImage.Encode(SKEncodedImageFormat.Jpeg, 85);
-                thumbnailBytes = encoded.ToArray();
-            }
-
-            if (thumbnailBytes.Length == 0) return false;
-
-            // Store in DB on the primary image (create one if needed)
-            var version = tile.SelectedVersion;
-            if (version is null) return false;
-
-            using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var modelId = tile.ModelEntity?.Id;
-            if (modelId is null or 0) return false;
-            var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(modelId.Value);
-            var dbVersion = dbModel?.Versions.FirstOrDefault(v =>
-                v.Files.Any(f => string.Equals(f.LocalPath, tile.SelectedVersion?.PrimaryFile?.LocalPath, StringComparison.OrdinalIgnoreCase)));
-
-            if (dbVersion is null) return false;
-
-            var primaryImage = dbVersion.Images.FirstOrDefault();
-            if (primaryImage is null)
-            {
-                // Create a new image entity for the local thumbnail
-                primaryImage = new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    Url = $"file://{localImagePath}",
-                    SortOrder = 0,
-                };
-                dbVersion.Images.Add(primaryImage);
-            }
-
-            primaryImage.ThumbnailData = thumbnailBytes;
-            primaryImage.ThumbnailMimeType = "image/jpeg";
-
-            await unitOfWork.SaveChangesAsync();
-
-            // Display the thumbnail immediately
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                try
-                {
-                    using var stream = new MemoryStream(thumbnailBytes);
-                    tile.ThumbnailImage = new Avalonia.Media.Imaging.Bitmap(stream);
-                }
-                catch
-                {
-                    // Decode failure — not critical
-                }
-            });
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger?.Debug(LogCategory.General, "LocalFallback",
-                $"Failed to apply local thumbnail for '{tile.DisplayName}': {ex.Message}");
-            return false;
-        }
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(_scopeFactory);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>
@@ -2015,241 +1844,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         {
             _logger?.Warn(LogCategory.General, "Backfill",
                 $"CivitaiModelPageId backfill failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Updates a model entity from Civitai API response data.
-    /// </summary>
-    private async Task UpdateModelFromCivitaiAsync(
-        ModelTileViewModel tile,
-        CivitaiModelVersion civitaiVersion,
-        string? apiKey)
-    {
-        // Fetch the full model to get all versions (richer data including images)
-        CivitaiModel? civitaiModel = null;
-        if (civitaiVersion.ModelId > 0)
-        {
-            civitaiModel = await _civitaiClient!.GetModelAsync(civitaiVersion.ModelId, apiKey);
-        }
-
-        // Resolve the best image source: the full model response is more reliable than
-        // the hash-lookup response which often returns an empty images array.
-        var bestCivitaiVersion = civitaiModel?.ModelVersions
-            .FirstOrDefault(v => v.Id == civitaiVersion.Id) ?? civitaiVersion;
-
-        // Use a fresh DI scope for DB writes to avoid concurrent DbContext access
-        using var scope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope();
-        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-        var model = tile.ModelEntity;
-        if (model is null) return;
-
-        // Load ONLY the target model — not the entire database (was the #1 cause of OOM)
-        var dbModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-        if (dbModel is null) return;
-
-        // Update model-level fields from Civitai
-        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
-        var preserveModelEdits = dbModel.IsUserEdited;
-        if (civitaiModel is not null)
-        {
-            // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
-            dbModel.CivitaiModelPageId = civitaiModel.Id;
-
-            // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
-            var civitaiIdTaken = await unitOfWork.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id);
-            if (!civitaiIdTaken)
-            {
-                dbModel.CivitaiId = civitaiModel.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
-                    "already assigned to another model");
-            }
-
-            if (!preserveModelEdits)
-            {
-                dbModel.Name = civitaiModel.Name;
-                dbModel.Description = civitaiModel.Description;
-            }
-            dbModel.IsNsfw = civitaiModel.Nsfw;
-            dbModel.IsPoi = civitaiModel.Poi;
-            dbModel.Source = DataSource.CivitaiApi;
-            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
-            // Capture version-availability data from the same response so the
-            // "+N more versions" badge can be shown without an additional HTTP call.
-            dbModel.TotalVersionCount = civitaiModel.ModelVersions?.Count ?? 0;
-            dbModel.LastCheckedForUpdatesUtc = DateTime.UtcNow;
-            dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
-            dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
-            dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
-
-            // Update or create creator — reuse existing Creator entity by
-            // Username to avoid UNIQUE constraint violations.
-            if (civitaiModel.Creator is not null)
-            {
-                if (dbModel.Creator is not null)
-                {
-                    dbModel.Creator.Username = civitaiModel.Creator.Username;
-                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
-                }
-                else
-                {
-                    var existingCreator = await unitOfWork.Models
-                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
-
-                    dbModel.Creator = existingCreator ?? new Creator
-                    {
-                        Username = civitaiModel.Creator.Username,
-                        AvatarUrl = civitaiModel.Creator.Image,
-                    };
-                }
-            }
-        }
-
-        // Update version-level fields for the matched version
-        var dbVersion = dbModel.Versions.FirstOrDefault(v =>
-            v.Files.Any(f => f.Id == tile.SelectedVersion?.PrimaryFile?.Id));
-
-        if (dbVersion is not null)
-        {
-            // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
-            var versionIdTaken = await unitOfWork.Models
-                .IsVersionCivitaiIdTakenAsync(bestCivitaiVersion.Id, dbVersion.Id);
-            if (!versionIdTaken)
-            {
-                dbVersion.CivitaiId = bestCivitaiVersion.Id;
-            }
-            else
-            {
-                _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                    $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
-                    "already assigned to another version");
-            }
-
-            dbVersion.Name = bestCivitaiVersion.Name;
-            dbVersion.Description = bestCivitaiVersion.Description;
-            dbVersion.BaseModelRaw = bestCivitaiVersion.BaseModel;
-            dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
-            dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
-            dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
-            dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
-
-            // Update trigger words — skip when this version was user-edited
-            if (!dbVersion.IsUserEdited)
-            {
-                dbVersion.TriggerWords.Clear();
-                var order = 0;
-                foreach (var word in bestCivitaiVersion.TrainedWords)
-                {
-                    dbVersion.TriggerWords.Add(new TriggerWord
-                    {
-                        Word = word,
-                        Order = order++
-                    });
-                }
-            }
-
-            // Add images from Civitai (use the version with the richest data)
-            var existingImageIds = dbVersion.Images
-                .Where(i => i.CivitaiId.HasValue)
-                .Select(i => i.CivitaiId!.Value)
-                .ToHashSet();
-            var sortOrder = dbVersion.Images.Count;
-            foreach (var civImage in bestCivitaiVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url))
-                    continue;
-
-                if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value))
-                    continue;
-
-                dbVersion.Images.Add(new ModelImage
-                {
-                    ModelVersionId = dbVersion.Id,
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
-
-            // Update file hashes from Civitai data
-            var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
-            if (civFile?.Hashes is not null)
-            {
-                var dbFile = dbVersion.PrimaryFile;
-                if (dbFile is not null)
-                {
-                    dbFile.CivitaiId = civFile.Id;
-                    dbFile.HashSHA256 ??= civFile.Hashes.SHA256;
-                    dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
-                    dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
-                    dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;
-                }
-            }
-        }
-
-        // Sync tags from Civitai model response (skip when user has edited tags)
-        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
-        {
-            var tagLookup = await unitOfWork.Models.GetAllTagsLookupAsync();
-            SyncTagsFromCivitai(dbModel, civitaiTags, tagLookup);
-        }
-
-        await unitOfWork.SaveChangesAsync();
-
-        // Reload ONLY this model after save to get generated IDs on new images
-        var refreshedModel = await unitOfWork.Models.GetByIdWithIncludesAsync(model.Id);
-
-        // Refresh tile on UI thread with updated data — use RefreshModelData to
-        // properly update _allGroupedModels and re-pick the primary entity.
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            tile.RefreshModelData(refreshedModel ?? dbModel);
-        });
-    }
-
-    /// <summary>
-    /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
-    /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
-    /// </summary>
-    private static void SyncTagsFromCivitai(
-        Model dbModel,
-        IReadOnlyList<string> civitaiTags,
-        Dictionary<string, Tag> knownTags)
-    {
-        dbModel.Tags.Clear();
-
-        foreach (var tagName in civitaiTags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-            var normalized = tagName.Trim().ToLowerInvariant();
-
-            if (!knownTags.TryGetValue(normalized, out var tag))
-            {
-                tag = new Tag { Name = tagName, NormalizedName = normalized };
-                knownTags[normalized] = tag;
-            }
-
-            dbModel.Tags.Add(new ModelTag { Tag = tag });
         }
     }
 
@@ -2340,7 +1934,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
-            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
             DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
@@ -2356,15 +1949,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             _baseModelCatalog,
             sp?.GetService<IServiceScopeFactory>(),
             sp?.GetService<IDialogService>(),
-            sp?.GetService<LoraDownloadService>(),
-            sp?.GetService<IDownloadCoordinator>(),
-            sp?.GetService<ITaskTracker>(),
-            sp?.GetService<IActivityLogService>(),
             sp?.GetService<DiffusionNexus.Installer.SDK.Shared.Services.IClipboardService>(),
-            sp?.GetService<IUiScheduler>());
+            sp?.GetService<IUiScheduler>(),
+            apiKeyProvider: _apiKeyProvider,
+            modelDownloader: _modelDownloader,
+            apiCache: sp?.GetService<ICivitaiApiCache>(),
+            // The browser tab's instance, never a new one — the waitlist persists a JSON
+            // snapshot per instance, so a second copy would clobber the first's file.
+            waitlist: BrowserViewModel.Waitlist);
 
         detailVm.CloseRequested += OnDetailCloseRequested;
-        detailVm.DownloadCompleted += OnDetailDownloadCompleted;
         detailVm.MetadataDeleted += OnDetailMetadataDeleted;
         detailVm.MetadataDownloadRequested += OnDetailMetadataDownloadRequested;
         DetailViewModel = detailVm;
@@ -2382,7 +1976,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         if (DetailViewModel is not null)
         {
             DetailViewModel.CloseRequested -= OnDetailCloseRequested;
-            DetailViewModel.DownloadCompleted -= OnDetailDownloadCompleted;
             DetailViewModel.MetadataDeleted -= OnDetailMetadataDeleted;
             DetailViewModel.MetadataDownloadRequested -= OnDetailMetadataDownloadRequested;
         }
@@ -2396,10 +1989,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         CloseDetail();
     }
 
-    private async void OnDetailDownloadCompleted(object? sender, EventArgs e)
-    {
-        await RebuildTilesFromDatabaseAsync();
-    }
 
     /// <summary>
     /// Handles <see cref="ModelDetailViewModel.MetadataDownloadRequested"/> (the
@@ -2420,18 +2009,44 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         try
         {
-            var applied = await DownloadMetadataForTileAsync(tile);
+            var outcome = await DownloadMetadataForTileAsync(tile);
 
-            if (applied)
+            if (outcome.Applied)
             {
-                // UpdateModelFromCivitaiAsync already refreshed the in-memory tile (it now
+                // DownloadMetadataForTileAsync already refreshed the in-memory tile (it now
                 // carries a CivitaiId), so reloading the detail re-fetches the full version
                 // list and repaints description/tags/images.
                 await detail.LoadAsync(tile);
+                // LoadAsync ends by clearing StatusMessage, so a successful refresh used to
+                // leave no trace at all — the bar just closed. Say what happened — including
+                // when the run also hit a bug partway: what was applied is real, but silence
+                // about the rest would claim a complete refresh (#535).
+                detail.StatusMessage = outcome.Faulted
+                    ? "Metadata partially refreshed — the run hit an error, see the log."
+                    : "Metadata refreshed.";
+            }
+            else if (outcome.Faulted)
+            {
+                // The run hit a bug — it aborted, or the item died on an exception no step
+                // claimed. Neither is an answer from Civitai, so neither of the verdicts below
+                // may be spoken over it (#535).
+                detail.StatusMessage = $"Metadata download failed: {outcome.FaultReason}";
+            }
+            else if (outcome.Refused)
+            {
+                // The single-flight gate turned it down (#532). Nothing was asked and nothing is
+                // wrong, so this is neither a failure nor a verdict about this model — it is
+                // "try again in a moment", in the words the status line already uses.
+                detail.StatusMessage = AlreadyRunningStatus;
             }
             else
             {
-                detail.StatusMessage = "No metadata found on Civitai for this file.";
+                // "Nothing found" is a claim about Civitai, so it may only be made when we
+                // actually asked. A forced run that planned no identify item asked nobody —
+                // saying "not on Civitai" there is how a selection bug reads as a verdict.
+                detail.StatusMessage = outcome.IdentifyPlanned > 0
+                    ? "No metadata found on Civitai for this file."
+                    : "Nothing to refresh for this model.";
             }
         }
         catch (Exception ex)
@@ -2448,56 +2063,121 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     }
 
     /// <summary>
-    /// Downloads Civitai metadata for a single LoRA (the detail-view "Download Metadata"
-    /// button). Mirrors Phase 1 of <see cref="DownloadMissingMetadataAsync"/> scoped to one
-    /// tile: hashes the primary file, looks it up on Civitai by hash, and persists the
-    /// returned metadata via <see cref="UpdateModelFromCivitaiAsync"/> (which also refreshes
-    /// the in-memory tile). Falls back to local <c>.civitai.info</c>/<c>.json</c> sidecars on
-    /// a 404. Unlike the bulk flow this runs even for already-synced models, so the user can
-    /// force a re-fetch. Returns <c>true</c> when metadata (remote or local) was applied.
+    /// Downloads metadata for a single LoRA (the detail-view "Download Metadata" button) by
+    /// running the same <see cref="ILibrarySyncService"/> pipeline as the bulk flow, scoped to
+    /// this one model: identify (hash → Civitai by hash → sidecar), then tags and images.
+    /// Discovery is not part of it — the file is already in the library.
     /// </summary>
-    public async Task<bool> DownloadMetadataForTileAsync(ModelTileViewModel tile)
+    /// <remarks>
+    /// <c>ForceIdentify</c> is set because pressing the button IS the user asking for another
+    /// look, and a forced step ignores both the stored verdict and the retry window: neither a
+    /// "checked, not on Civitai" outcome nor an already-matched model may make the button appear
+    /// to do nothing.
+    /// </remarks>
+    /// <returns>
+    /// Whether anything was applied — which is what tells the detail view to reload — together
+    /// with the report it came from, so the caller can tell "we asked and Civitai has nothing"
+    /// apart from "there was nothing to ask about".
+    /// </returns>
+    public async Task<TileMetadataSyncResult> DownloadMetadataForTileAsync(ModelTileViewModel tile)
     {
-        if (_civitaiClient is null)
+        if (_librarySync is null)
         {
-            SyncStatus = "Civitai client not available.";
-            return false;
+            SyncStatus = "Library sync not available.";
+            return TileMetadataSyncResult.NotRun;
         }
 
-        var file = tile.SelectedVersion?.PrimaryFile;
-        var localPath = file?.LocalPath;
-        if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
+        var modelId = tile.ModelEntity?.Id ?? 0;
+        if (modelId == 0)
         {
             _logger?.Warn(LogCategory.Network, "CivitaiSync",
-                $"Cannot download metadata for '{tile.DisplayName}': no local file on disk.");
-            return false;
+                $"Cannot download metadata for '{tile.DisplayName}': the tile has no persisted model.");
+            return TileMetadataSyncResult.NotRun;
         }
 
-        // Fresh DI scope so we read the latest API key from the database, not a stale
-        // tracked entity (same approach as the bulk DownloadMissingMetadataAsync).
-        string? apiKey;
-        using (var keyScope = App.Services!.GetRequiredService<IServiceScopeFactory>().CreateScope())
+        // The service admits one run at a time (R10): while this one is going, the bulk button is
+        // off too, and the detail panel's own button is off from the moment the flag flips.
+        // Refused, not a bare NotRun (#532): this is the same answer the gate gives below, and the
+        // detail panel must not turn "the button is busy" into "nothing to refresh for this model".
+        if (SyncInFlight)
         {
-            var freshSettings = keyScope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-            apiKey = await freshSettings.GetCivitaiApiKeyAsync();
+            SyncStatus = AlreadyRunningStatus;
+            return TileMetadataSyncResult.AlreadyRunning;
         }
 
-        var hash = await Task.Run(() => ComputeFullSha256(localPath));
-        _logger?.Info(LogCategory.Network, "CivitaiSync",
-            $"Metadata download for '{tile.DisplayName}'",
-            $"SHA256: {hash}\nPath: {localPath}\nURL: https://civitai.com/api/v1/model-versions/by-hash/{hash}");
+        // Discovery is left out — one tile is not a reason to rescan every LoRA source — but the
+        // thumbnail is in: "download metadata for this model" is, to the person pressing it, a
+        // request for the picture too. Both Force flags are set for the same reason: the press is
+        // an explicit re-fetch, so a stored "already checked" or "already failed" verdict must not
+        // make the button do nothing. Forcing thumbnails only retries failures, because selection
+        // still skips any image that already has bytes.
+        // The retry policy AND the thumbnail fan-out are the user's here too (Plan E). The forces
+        // make most windows moot, but the tags and images fetches are not forced and are judged by
+        // the windows — and one model can easily have a dozen due images, which this path fetches
+        // through exactly the bounded gate the bulk run uses. Leaving the concurrency at the record
+        // default meant a user who asked for one parallel download still got four.
+        var options = new SyncOptions(
+            new HashSet<SyncStepKind>
+            {
+                SyncStepKind.IdentifyModel, SyncStepKind.FetchTags, SyncStepKind.FetchImages,
+                SyncStepKind.Thumbnails,
+            },
+            ForceIdentify: true,
+            ForceThumbnails: true,
+            RetryPolicy: _scrollRetryPolicy,
+            ThumbnailConcurrency: _thumbnailConcurrency);
 
-        var civitaiVersion = await _civitaiClient.GetModelVersionByHashAsync(hash, apiKey);
-        if (civitaiVersion is null)
+        SyncPlan plan;
+        SyncReport report;
+        _localSyncActive = true;
+        RefreshSyncRunning();
+        try
         {
-            // 404 on Civitai — try the local .civitai.info / .json sidecar, then mark
-            // synced so the bulk flow doesn't keep retrying it.
-            var localApplied = await TryApplyLocalMetadataFallbackAsync(tile, localPath);
-            await MarkModelSyncedAsync(tile.ModelEntity);
-            return localApplied;
+            // Off the UI thread for the same reason the bulk run is (see DownloadMissingMetadataAsync):
+            // the selection queries and the file hash both run inline until the first real yield.
+            plan = await Task.Run(() => _librarySync.PlanAsync(SyncScope.ForModels(modelId), options));
+            report = await Task.Run(() => _librarySync.ExecuteAsync(plan));
+        }
+        catch (SyncAlreadyRunningException ex)
+        {
+            // The entry guard above reads OUR flag; the gate is the service's, and a download's
+            // completion sync can take it in between (#532). Refusing is not failing: unhandled,
+            // this reached the detail panel's generic catch as "Metadata download failed: …" with
+            // an Error log and a stack trace, for a run that simply has to wait its turn. Same
+            // answer as the bulk path, in the same words — and Refused so the panel can say it too,
+            // rather than falling through to "Nothing to refresh for this model."
+            ReportServiceAlreadyRunning(ex);
+            return TileMetadataSyncResult.AlreadyRunning;
+        }
+        finally
+        {
+            _localSyncActive = false;
+            RefreshSyncRunning();
         }
 
-        await UpdateModelFromCivitaiAsync(tile, civitaiVersion, apiKey);
+        var applied = report.Steps.Any(s => s.Succeeded > 0);
+        if (!applied)
+        {
+            _logger?.Info(LogCategory.Network, "CivitaiSync",
+                $"No metadata applied for '{tile.DisplayName}': {report.Summary}");
+            return new TileMetadataSyncResult(Applied: false, report);
+        }
+
+        // Re-read the one model the run touched so the tile (and the detail view behind it)
+        // shows what was just written, without rebuilding the whole grid.
+        //
+        // The read is on the pool (R7): it is five split queries and the version's thumbnail BLOBs,
+        // and SQLite has no true async, so on the UI thread it blocks the frame. Only the tile
+        // update goes back to the UI thread, where it belongs.
+        var refreshedModel = await Task.Run(async () =>
+        {
+            using var scope = RequireScopeFactory().CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            return await unitOfWork.Models.GetByIdWithIncludesAsync(modelId);
+        });
+
+        if (refreshedModel is not null)
+            await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
@@ -2513,7 +2193,51 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             }
         }
 
-        return true;
+        return new TileMetadataSyncResult(Applied: true, report);
+    }
+
+    /// <summary>
+    /// The outcome of one per-tile metadata fetch. <paramref name="Report"/> is null only when the
+    /// run never started (no sync service, or a tile with no persisted model).
+    /// </summary>
+    public sealed record TileMetadataSyncResult(bool Applied, SyncReport? Report, bool Refused = false)
+    {
+        /// <summary>A fetch that never reached the service.</summary>
+        public static readonly TileMetadataSyncResult NotRun = new(Applied: false, Report: null);
+
+        /// <summary>
+        /// The service's single-flight gate turned this press down — a bulk run or a download's
+        /// completion sync holds the slot (#532). Distinct from <see cref="NotRun"/>'s other
+        /// causes: nothing is wrong, nothing was asked, and the answer is "try again in a moment"
+        /// rather than "nothing to refresh for this model".
+        /// </summary>
+        public static readonly TileMetadataSyncResult AlreadyRunning =
+            new(Applied: false, Report: null, Refused: true);
+
+        /// <summary>
+        /// How many models the identify step planned. Zero means it asked Civitai nothing at all,
+        /// so nothing it reports is a verdict about Civitai.
+        /// </summary>
+        public int IdentifyPlanned
+            => Report?.Steps.FirstOrDefault(s => s.Kind == SyncStepKind.IdentifyModel)?.Planned ?? 0;
+
+        /// <summary>
+        /// Whether the run hit a failure rather than an answer: it aborted midway
+        /// (<see cref="SyncReport.AbortReason"/>), items failed with exceptions no step claimed
+        /// (<see cref="SyncReport.UnexpectedFailures"/>), or the ask itself failed in a way the
+        /// step did claim — an HTTP 500, a timeout, a disk error recorded as an ordinary
+        /// <see cref="SyncFailure"/> (#536). "No metadata found on Civitai" may not be said over
+        /// any of these — a failed ask is not an answer (#535). The honest no keeps its case:
+        /// identify records "checked, not on Civitai" as a completed item, never as a failure,
+        /// so <see cref="SyncReport.Failures"/> and not-founds are disjoint.
+        /// </summary>
+        public bool Faulted
+            => Report is not null
+               && (Report.AbortReason is not null || Report.UnexpectedFailures > 0 || Report.Failures.Count > 0);
+
+        /// <summary>The failure to show for a <see cref="Faulted"/> outcome, best reason first.</summary>
+        public string? FaultReason
+            => Report?.AbortReason ?? Report?.FirstUnexpectedError ?? Report?.Failures.FirstOrDefault()?.Reason;
     }
 
     /// <summary>
@@ -2672,7 +2396,217 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     partial void OnShowNsfwChanged(bool value)
     {
-        ApplyFilters();
+        // With everything shown nothing is hidden for want of a rating; leaving that view filters again.
+        if (value && ShowUnratedOnly) ShowUnratedOnly = false;
+        else ApplyFilters();
+
+        // Once per switch to "off", not per filter pass: the count follows the search box, and a
+        // line per keystroke would bury the Unified Console.
+        if (!value) LogHiddenInView();
+    }
+
+    /// <summary>
+    /// Whether the grid lists only the unrated LoRAs in the current view (#647) — pictures
+    /// covered, each with an Unrated badge saying why and the SFW / NSFW buttons.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUnratedHint))]
+    private bool _showUnratedOnly;
+
+    partial void OnShowUnratedOnlyChanged(bool value) => ApplyFilters();
+
+    [RelayCommand]
+    private void ShowUnrated() => ShowUnratedOnly = true;
+
+    [RelayCommand]
+    private void BackToAll() => ShowUnratedOnly = false;
+
+    /// <summary>
+    /// How many LoRAs in the current view — what the search and base-model filters let through —
+    /// are hidden because they have no rating at all. Counted in models, the toolbar's unit ("N of
+    /// M models"), and exactly what <see cref="ShowUnratedCommand"/> lists (#647).
+    /// </summary>
+    public int UnratedCount { get; private set; }
+
+    /// <summary>How many LoRAs in the current view "Show NSFW" off hides, for any reason (models).</summary>
+    internal int HiddenCount { get; private set; }
+
+    /// <summary>Whether the hint under the toolbar shows: unrated LoRAs are hidden and the list is not open.</summary>
+    public bool ShowUnratedHint => UnratedCount > 0 && !ShowUnratedOnly;
+
+    /// <summary>The hint under the toolbar.</summary>
+    public string UnratedHint => UnratedCount == 1
+        ? "1 LoRA in this view has no NSFW rating and is hidden."
+        : FormattableString.Invariant($"{UnratedCount} LoRAs in this view have no NSFW rating and are hidden.");
+
+    /// <summary>The hint's button.</summary>
+    public string ShowUnratedButtonText => FormattableString.Invariant($"Show unrated ({UnratedCount})");
+
+    /// <summary>The bar above the unrated list.</summary>
+    public string UnratedViewTitle => UnratedCount == 1
+        ? "Showing the 1 unrated LoRA in this view — rate it SFW or NSFW"
+        : FormattableString.Invariant($"Showing the {UnratedCount} unrated LoRAs in this view — rate them SFW or NSFW");
+
+    /// <summary>
+    /// What the empty grid says. "Add LoRA source folders" only when there are no LoRAs at all — a
+    /// library whose every tile is filtered out is not an empty library.
+    /// </summary>
+    public string EmptyStateMessage =>
+        AllTiles.Count == 0 ? "Add LoRA source folders in Settings, then click Refresh."
+        : HiddenCount > 0 && !ShowUnratedOnly
+            ? (HiddenCount == 1
+                ? "The only LoRA in this view is hidden by Show NSFW. Turn Show NSFW on to see it."
+                : FormattableString.Invariant($"All {HiddenCount} LoRAs in this view are hidden by Show NSFW. Turn Show NSFW on to see them."))
+            : "No LoRAs match the current filters.";
+
+    /// <summary>The hidden tiles of the last filter pass, for the Unified Console breakdown.</summary>
+    private List<ModelTileViewModel> _hiddenInView = [];
+
+    /// <summary>Publishes the counts the hint, its button, the list's title and the empty state show.</summary>
+    private void ReportHidden(List<ModelTileViewModel> hidden)
+    {
+        _hiddenInView = hidden;
+        HiddenCount = hidden.Sum(t => t.ModelCount);
+        var unrated = hidden.Where(t => t.IsUnrated).Sum(t => t.ModelCount);
+        if (unrated == UnratedCount) return;
+        UnratedCount = unrated;
+        OnPropertyChanged(nameof(UnratedCount));
+        OnPropertyChanged(nameof(ShowUnratedHint));
+        OnPropertyChanged(nameof(UnratedHint));
+        OnPropertyChanged(nameof(ShowUnratedButtonText));
+        OnPropertyChanged(nameof(UnratedViewTitle));
+    }
+
+    /// <summary>One Unified Console line: how many are hidden in this view, by reason (models).</summary>
+    private void LogHiddenInView()
+    {
+        if (HiddenCount == 0) return;
+        var byReason = string.Join(", ", _hiddenInView
+            .GroupBy(t => t.NsfwVerdict.Reason)
+            .Select(g => (g.Key, Models: g.Sum(t => t.ModelCount)))
+            .OrderByDescending(r => r.Models)
+            .Select(r => FormattableString.Invariant($"{r.Models} {r.Key}")));
+        _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+            $"Show NSFW off hides {HiddenCount} LoRA(s) in this view ({UnratedCount} unrated): {byReason}"));
+    }
+
+    /// <summary>
+    /// Records the user's rating for every model of <paramref name="tile"/> (#647): SFW or NSFW —
+    /// the LoRA's rating from then on. What Civitai says now is kept as the original, unless an
+    /// earlier change kept one already. Saved first; the tile changes once the database has it.
+    /// </summary>
+    internal async Task SetUserNsfwRatingAsync(ModelTileViewModel tile, bool isNsfw)
+    {
+        // One rating at a time: two quick clicks (SFW, then NSFW) must land in the database and on
+        // screen in the same order, or the tile shows one rating while the row holds the other.
+        await _ratingGate.WaitAsync();
+        try
+        {
+            await SetUserNsfwRatingCoreAsync(tile, isNsfw);
+        }
+        finally
+        {
+            _ratingGate.Release();
+        }
+    }
+
+    private readonly SemaphoreSlim _ratingGate = new(1, 1);
+
+    private async Task SetUserNsfwRatingCoreAsync(ModelTileViewModel tile, bool isNsfw)
+    {
+        // Every tile of this LoRA, the clicked one first: one per source folder, possibly over
+        // duplicate model rows that share the Civitai model page. Each tile's rows keep what Civitai
+        // says about the picture that tile shows; a row two tiles share goes with the first.
+        var sameLora = AllTiles.Where(t => t != tile && IsSameLora(t, tile)).Prepend(tile).ToList();
+        var claimed = new HashSet<int>();
+        var writes = sameLora
+            .Select(t => (Tile: t, Ids: t.GetRatingModelIds().Where(claimed.Add).ToList(), Original: CivitaiRatingLabel(t)))
+            .ToList();
+        var modelIds = claimed.ToList();
+        var label = isNsfw ? "NSFW" : "SFW";
+        var original = writes[0].Original;
+        try
+        {
+            if (_scopeFactory is not null && modelIds.Count > 0)
+            {
+                var updated = await Task.Run(async () =>
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    // All or nothing: the screen shows the rating only when every row has it.
+                    await unitOfWork.BeginTransactionAsync().ConfigureAwait(false);
+                    try
+                    {
+                        var rows = 0;
+                        foreach (var write in writes.Where(w => w.Ids.Count > 0))
+                            rows += await unitOfWork.Models.SetUserNsfwRatingAsync(write.Ids, isNsfw, write.Original).ConfigureAwait(false);
+                        await unitOfWork.CommitTransactionAsync().ConfigureAwait(false);
+                        return rows;
+                    }
+                    catch
+                    {
+                        await unitOfWork.RollbackTransactionAsync().ConfigureAwait(false);
+                        throw;
+                    }
+                });
+                if (updated == 0 && modelIds.Any(id => id > 0))
+                {
+                    // The rows are gone (deleted or rebuilt meanwhile): showing a rating that is not
+                    // stored would vanish on the next start.
+                    _logger?.Warn(LogCategory.General, "LoraViewerNsfw",
+                        $"Could not rate '{tile.DisplayName}' {label}: no model row was found to save it in");
+                    SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: it is no longer in the library — click Refresh.";
+                    return;
+                }
+                _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+                    $"Rated '{tile.DisplayName}' {label} (Civitai: {original}; {updated} model row(s))"));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "LoraViewerNsfw",
+                $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}", ex);
+            // On screen too: a click that silently does nothing invites clicking again.
+            SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}";
+            return;
+        }
+
+        foreach (var write in writes)
+            write.Tile.ApplyUserNsfwRating(isNsfw, write.Original);
+        ApplyFilters(ratingsChanged: true);
+    }
+
+    /// <summary>What Civitai says about the picture <paramref name="tile"/> shows, in words.</summary>
+    private static string CivitaiRatingLabel(ModelTileViewModel tile) =>
+        tile.ModelEntity is { } entity ? NsfwPolicy.CivitaiRatingLabel(entity, tile.SelectedVersion) : "unrated";
+
+    /// <summary>
+    /// Whether two tiles show the same LoRA: the same model object, a shared saved row (id), or
+    /// the same Civitai model page (duplicate rows of one LoRA in different source folders).
+    /// </summary>
+    private static bool IsSameLora(ModelTileViewModel a, ModelTileViewModel b)
+    {
+        if (a == b) return true;
+        if (a.ModelEntity is null || b.ModelEntity is null) return false;
+        if (ReferenceEquals(a.ModelEntity, b.ModelEntity)) return true;
+        if (a.ModelEntity.CivitaiModelPageId is { } page && page == b.ModelEntity.CivitaiModelPageId) return true;
+        var ids = b.GetAllModelIds().Where(id => id > 0).ToHashSet();
+        return a.GetAllModelIds().Any(ids.Contains);
+    }
+
+    private async void OnTileNsfwRatingRequested(object? sender, bool isNsfw)
+    {
+        // async void: an exception here would take the app down. Log it and say so instead.
+        if (sender is not ModelTileViewModel tile) return;
+        try
+        {
+            await SetUserNsfwRatingAsync(tile, isNsfw);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "LoraViewerNsfw", $"Rating '{tile.DisplayName}' failed: {ex.Message}", ex);
+            SyncStatus = $"Rating '{tile.DisplayName}' failed: {ex.Message}";
+        }
     }
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
@@ -2683,6 +2617,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
     #region Private Methods
 
+    /// <summary>Adds a tile to the library and listens to it.</summary>
+    internal void AddTile(ModelTileViewModel tile)
+    {
+        tile.Deleted += OnTileDeleted;
+        tile.DetailRequested += OnTileDetailRequested;
+        tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged += OnTileNsfwVerdictChanged;
+        AllTiles.Add(tile);
+    }
+
+    /// <summary>Stops listening to a tile that left the library (replaced, refreshed or deleted).</summary>
+    private void DetachTile(ModelTileViewModel tile)
+    {
+        tile.Deleted -= OnTileDeleted;
+        tile.DetailRequested -= OnTileDetailRequested;
+        tile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged -= OnTileNsfwVerdictChanged;
+    }
+
+    private void OnTileNsfwVerdictChanged(object? sender, EventArgs e) => ApplyFilters(ratingsChanged: true);
+
     /// <summary>
     /// Handles the <see cref="ModelTileViewModel.Deleted"/> event by removing the tile
     /// from both <see cref="AllTiles"/> and <see cref="FilteredTiles"/>, then updating counts.
@@ -2691,7 +2646,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
     {
         if (sender is not ModelTileViewModel tile) return;
 
-        tile.Deleted -= OnTileDeleted;
+        DetachTile(tile);
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -2701,7 +2656,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             FilteredTiles.Remove(tile);
             TotalModelCount = AllTiles.Count;
             FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
+            // Deleting the last LoRA turns "no match" into "add source folders".
+            OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
+            // A hidden tile is counted by the unrated hint and may be the unrated list's last one.
+            if (_hiddenInView.Contains(tile)) ApplyFilters(ratingsChanged: true);
         });
     }
 
@@ -3102,7 +3061,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         return ordered.ToList();
     }
 
-    private void ApplyFilters()
+    /// <param name="ratingsChanged">
+    /// The pass follows a change of ratings — a rating, a refresh, a delete, a reload — rather than
+    /// of the search or filters: an unrated list it emptied closes (#647).
+    /// </param>
+    private void ApplyFilters(bool ratingsChanged = false)
     {
         // A direct apply supersedes any pending debounced search pass.
         _searchDebounceCts?.Cancel();
@@ -3122,11 +3085,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 t.TagNames.Any(tag => tag.Contains(search, StringComparison.OrdinalIgnoreCase)));
         }
 
-        if (!ShowNsfw)
-        {
-            query = query.Where(t => !t.IsNsfw);
-        }
-
         var activeBaseModels = AvailableBaseModels
             .Where(f => f.IsSelected)
             .Select(f => f.BaseModelRaw)
@@ -3142,7 +3100,39 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                      activeBaseModels.Contains(v.BaseModelRaw))));
         }
 
-        var filtered = SortTiles(query.ToList());
+        // Nothing NSFW on screen with the toggle off (#631): not the creator's flag alone, but the
+        // picture each tile shows too. Applied last, in one pass, so the "hidden for want of a
+        // rating" count covers only the LoRAs the search and base-model filters let through.
+        var candidates = query.ToList();
+        foreach (var tile in AllTiles) tile.HideNsfwPreviews = !ShowNsfw;
+        var hidden = new List<ModelTileViewModel>();
+        if (!ShowNsfw)
+        {
+            var shown = new List<ModelTileViewModel>(candidates.Count);
+            foreach (var tile in candidates)
+                (tile.HasNsfwContent ? hidden : shown).Add(tile);
+            // The unrated list (#647) shows exactly the tiles the hint counts.
+            candidates = ShowUnratedOnly ? hidden.Where(t => t.IsUnrated).ToList() : shown;
+        }
+        foreach (var tile in AllTiles) tile.IsInUnratedView = ShowUnratedOnly && !ShowNsfw;
+        ReportHidden(hidden);
+
+        // Once ratings changed and no unrated LoRA is left in this view — the last one rated by the
+        // user or by Download Metadata, or deleted — the unrated list closes instead of showing "the
+        // 0 unrated LoRAs", even when unrated LoRAs outside the view remain. Not on a search or
+        // filter change: a search that matches none for a moment must not close it under the user.
+        // Closing it runs this pass again through OnShowUnratedOnlyChanged.
+        if (ratingsChanged && ShowUnratedOnly && UnratedCount == 0)
+        {
+            ShowUnratedOnly = false;
+            return;
+        }
+
+        var filtered = SortTiles(candidates);
+
+        // Before the early return below: the grid can stay empty while the reason it is empty
+        // changes (an empty library loading only unrated LoRAs, say).
+        OnPropertyChanged(nameof(EmptyStateMessage));
 
         // Unchanged result set AND order (e.g. the extra keystroke matched the same
         // tiles): keep the current tiles and scroll position, skip the rebuild. A sort
@@ -3256,12 +3246,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
 
         // Use the same grouping pipeline as real data
         var tiles = GroupModelsIntoTiles(allDemoModels);
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Count;
         RebuildAvailableBaseModels();
@@ -3301,7 +3286,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 CivitaiId = Random.Shared.Next(100000, 9999999),
                 Name = baseModels.Length > 1 ? $"{name} - {baseModel}" : $"{name} v{versionNum}.0",
                 BaseModelRaw = baseModel,
-                BaseModel = ParseBaseModel(baseModel),
                 DownloadCount = downloads / baseModels.Length + Random.Shared.Next(-1000, 1000),
                 Rating = 4.0 + Random.Shared.NextDouble(),
                 RatingCount = Random.Shared.Next(10, 500),
@@ -3326,6 +3310,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
                 Width = 512,
                 Height = 768,
                 SortOrder = 0,
+                NsfwLevel = NsfwLevel.PG, // rated, so "Show NSFW" off still shows the demo
                 ModelVersion = version
             });
 
@@ -3393,7 +3378,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             CivitaiId = Random.Shared.Next(100000, 9999999),
             Name = $"{name} - {baseModel}",
             BaseModelRaw = baseModel,
-            BaseModel = ParseBaseModel(baseModel),
             DownloadCount = downloads + Random.Shared.Next(-1000, 1000),
             Rating = 4.0 + Random.Shared.NextDouble(),
             RatingCount = Random.Shared.Next(10, 500),
@@ -3416,6 +3400,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase
             Width = 512,
             Height = 768,
             SortOrder = 0,
+            NsfwLevel = NsfwLevel.PG,
             ModelVersion = version,
         });
 
@@ -3429,9 +3414,6 @@ public partial class LoraViewerViewModel : BusyViewModelBase
         model.Versions.Add(version);
         return model;
     }
-
-    private static BaseModelType ParseBaseModel(string baseModelRaw)
-        => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
 
     #endregion
 }

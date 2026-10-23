@@ -1,9 +1,12 @@
+using System.Net.Http;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.ImageEditor.Services;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Vision;
 using Serilog;
 
 namespace DiffusionNexus.UI.ViewModels;
@@ -25,7 +28,8 @@ public enum OutpaintWarningLevel
 /// but supports two modes:
 /// <list type="bullet">
 ///   <item><description>nonVision – uses the user-supplied positive prompt.</description></item>
-///   <item><description>Vision – uses a Qwen3-VL VQA node to auto-describe the surroundings/background.</description></item>
+///   <item><description>Vision – Qwen3-VL first describes the surroundings/background in a job of its own
+///   (<see cref="ImageDescriber"/>), then the same workflow runs with that description as the prompt (#616).</description></item>
 /// </list>
 /// </summary>
 public partial class OutpaintingViewModel : ObservableObject
@@ -33,20 +37,23 @@ public partial class OutpaintingViewModel : ObservableObject
     private static readonly ILogger Logger = Log.ForContext<OutpaintingViewModel>();
 
     private readonly Func<bool> _hasImage;
-    private readonly Func<int> _getImageWidth;
-    private readonly Func<int> _getImageHeight;
     private readonly Action<string> _deactivateOtherTools;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _clientProvider;
+    private readonly IDatasetEventAggregator? _eventAggregator;
 
-    private const string OutpaintNonVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-nonVision.json";
-    private const string OutpaintVisionWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-Vision.json";
+    private const string OutpaintWorkflowPath = "Assets/Workflows/Qwen-Image-2512-outpaint-nonVision.json";
     private const string LoadImageNodeId = "16";
     private const string PositivePromptNodeId = "5";
     private const string NegativePromptNodeId = "8";
     private const string KSamplerNodeId = "11";
     private const string UnetLoaderNodeId = "15";
     private const string ImagePadNodeId = "26";
-    private const string ImageScaleNodeId = "17";
+
+    /// <summary>What Generate (Vision) asks Qwen3-VL: the area the outpaint extends, not the subject.</summary>
+    internal const string SurroundingsPrompt =
+        "Describe the surroundings and the background of the image, not the subject. " +
+        "Write one paragraph of plain prose, no lists and no headings.";
+
     private const string UnetLoaderGGUFNodeType = "UnetLoaderGGUF";
     private const string QwenImageGGUFPrefix = "qwen-image-2512-";
     private const string DefaultQwenImageGGUF = "qwen-image-2512-Q8_0.gguf";
@@ -78,6 +85,7 @@ public partial class OutpaintingViewModel : ObservableObject
         "Q3_K_M", "Q3_K_S", "Q2_K", "F16", "BF16"
     ];
     private readonly Random _random = new();
+    private readonly GenerationStepText _stepText = new();
 
     private bool _isPanelOpen;
     private string _outpaintResolutionText = string.Empty;
@@ -100,27 +108,24 @@ public partial class OutpaintingViewModel : ObservableObject
 
     public OutpaintingViewModel(
         Func<bool> hasImage,
-        Func<int> getImageWidth,
-        Func<int> getImageHeight,
         Action<string> deactivateOtherTools,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? comfyUiClientProvider = null,
         IFeatureReadinessService? readinessService = null,
-        IUnifiedLogger? unifiedLogger = null)
+        IUnifiedLogger? unifiedLogger = null,
+        IDatasetEventAggregator? eventAggregator = null)
     {
         ArgumentNullException.ThrowIfNull(hasImage);
-        ArgumentNullException.ThrowIfNull(getImageWidth);
-        ArgumentNullException.ThrowIfNull(getImageHeight);
         ArgumentNullException.ThrowIfNull(deactivateOtherTools);
 
         _hasImage = hasImage;
-        _getImageWidth = getImageWidth;
-        _getImageHeight = getImageHeight;
         _deactivateOtherTools = deactivateOtherTools;
-        _comfyUiService = comfyUiService;
+        _stepText.Changed += (_, _) => OnPropertyChanged(nameof(ProgressStepText));
+        _clientProvider = comfyUiClientProvider;
         _unifiedLogger = unifiedLogger;
+        _eventAggregator = eventAggregator;
 
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint);
-        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.Outpaint, eventAggregator);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.OutpaintVision, eventAggregator);
 
         ToggleCommand = new RelayCommand(ExecuteToggle, () => _hasImage());
         ResetCommand = new RelayCommand(ExecuteReset, () => _hasImage() && IsPanelOpen);
@@ -164,7 +169,44 @@ public partial class OutpaintingViewModel : ObservableObject
                 GenerateVisionCommand.NotifyCanExecuteChanged();
                 LogCanExecuteState($"after VisionReadiness.{args.PropertyName}");
             }
+
+            if (args.PropertyName is nameof(FeatureReadinessViewModel.IsReady)
+                                  or nameof(FeatureReadinessViewModel.HasChecked)
+                                  or nameof(FeatureReadinessViewModel.MissingRequirements)
+                                  or nameof(FeatureReadinessViewModel.StatusMessage))
+            {
+                OnPropertyChanged(nameof(VisionUnavailableReason));
+                OnPropertyChanged(nameof(HasVisionUnavailableReason));
+                OnPropertyChanged(nameof(VisionButtonToolTip));
+            }
         };
+
+        // The Settings dropdown decides which ComfyUI this tool runs on. Re-check when it is saved so
+        // the "Running on ..." line follows a switch without reopening the tool.
+        // Lifetime: this view model has no teardown path, so the handler stays attached to the
+        // app-wide aggregator for the life of the tab; it only does work while the panel is open.
+        if (_eventAggregator is not null)
+        {
+            // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) can
+            // arrive on a thread-pool thread (the startup backfill publishes inside Task.Run); the
+            // re-check writes bound properties, so it runs on the UI thread. With no Avalonia
+            // application (unit tests) the dispatcher has no pump, so run inline.
+            void OnReadinessInputChanged()
+            {
+                if (Avalonia.Application.Current is null || Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+                    RecheckReadinessIfOpen();
+                else
+                    Avalonia.Threading.Dispatcher.UIThread.Post(RecheckReadinessIfOpen);
+            }
+
+            _eventAggregator.SettingsSaved += (_, _) => OnReadinessInputChanged();
+            _eventAggregator.EngineChanged += (_, _) => OnReadinessInputChanged();
+        }
+    }
+
+    private void RecheckReadinessIfOpen()
+    {
+        if (IsPanelOpen) _ = RunReadinessChecksAsync();
     }
 
     /// <summary>
@@ -228,11 +270,41 @@ public partial class OutpaintingViewModel : ObservableObject
         _unifiedLogger?.Info(LogCategory.Configuration, LogSource, message);
     }
 
+    /// <summary>Same as <see cref="EmitInfo"/> for the generate path, which logs under General (spec §4.5).</summary>
+    private void EmitGenerate(string message)
+    {
+        Logger.Information("Outpaint: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
+    }
+
     /// <summary>Readiness check for the prompt-driven Outpaint workflow.</summary>
     public FeatureReadinessViewModel Readiness { get; }
 
     /// <summary>Readiness check for the Vision (Qwen3-VL auto-prompt) Outpaint workflow.</summary>
     public FeatureReadinessViewModel VisionReadiness { get; }
+
+    /// <summary>
+    /// Why Generate (Vision) is unavailable: the first missing requirement of
+    /// <see cref="VisionReadiness"/> (or its status text if none). Null when the check has not run
+    /// or the Vision workflow is ready. The main readiness panel only shows <see cref="Readiness"/>,
+    /// so without this a greyed-out Vision button would give no reason.
+    /// </summary>
+    public string? VisionUnavailableReason
+    {
+        get
+        {
+            if (!VisionReadiness.HasChecked || VisionReadiness.IsReady) return null;
+            if (VisionReadiness.MissingRequirements.Count > 0) return VisionReadiness.MissingRequirements[0];
+            return string.IsNullOrWhiteSpace(VisionReadiness.StatusMessage) ? null : VisionReadiness.StatusMessage;
+        }
+    }
+
+    /// <summary>Tooltip of Generate (Vision): the unavailable reason, else the button's description.</summary>
+    public string VisionButtonToolTip =>
+        VisionUnavailableReason ?? "Outpaint using a Qwen3-VL auto-generated description of the surroundings";
+
+    /// <summary>Whether <see cref="VisionUnavailableReason"/> has text to show.</summary>
+    public bool HasVisionUnavailableReason => VisionUnavailableReason is not null;
 
     #region Properties
 
@@ -373,9 +445,15 @@ public partial class OutpaintingViewModel : ObservableObject
         private set
         {
             if (SetProperty(ref _status, value))
+            {
                 ParseProgress(value);
+                _stepText.Update(value);
+            }
         }
     }
+
+    /// <summary>Plain status line with the elapsed time ("Generating · step 2 of 4 · 0:47"); null when idle.</summary>
+    public string? ProgressStepText => _stepText.Text;
 
     /// <summary>Progress percentage (0-100) for the current outpainting operation.</summary>
     public int OutpaintProgress
@@ -609,13 +687,14 @@ public partial class OutpaintingViewModel : ObservableObject
             return;
         }
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             ReportValidationError("ComfyUI service not available. Check ComfyUI server settings.");
             return;
         }
 
         IsBusy = true;
+        _stepText.Start();
         Status = "Preparing image...";
         NotifyGenerateCommandsCanExecuteChanged();
 
@@ -633,6 +712,12 @@ public partial class OutpaintingViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Ends a Generate the view could not hand over (no mask painted, the image export failed):
+    /// without this the panel stayed busy and Generate stayed disabled until the editor closed.
+    /// </summary>
+    public void EndWithoutRun() => OnFinished();
+
+    /// <summary>
     /// Processes the outpainting workflow via ComfyUI.
     /// Called by the View after it writes the prepared canvas image to a temp PNG file.
     /// </summary>
@@ -641,52 +726,62 @@ public partial class OutpaintingViewModel : ObservableObject
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
 
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             StatusMessageChanged?.Invoke(this, "ComfyUI service not available.");
             OnFinished();
             return;
         }
 
+        ComfyUiClientLease? lease = null;
+        if (!_stepText.IsRunning) _stepText.Start();
         try
         {
+            EmitGenerate("Generate requested.");
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => Status = msg));
+            var comfy = lease.Client;
+            EmitGenerate($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+
             Status = "Uploading image to ComfyUI...";
-            var uploadedFilename = await _comfyUiService.UploadImageAsync(imagePath);
+            var uploadedFilename = await comfy.UploadImageAsync(imagePath);
+            EmitGenerate($"Image uploaded as {uploadedFilename}.");
 
             Status = "Checking available models...";
-            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync();
+            var resolvedUnetName = await ResolveQwenImageGGUFModelAsync(comfy);
             if (resolvedUnetName is null)
             {
                 HasError = true;
                 ProgressDisplayText = "No Qwen Image GGUF model found";
-                StatusMessageChanged?.Invoke(this,
-                    "No Qwen Image 2512 GGUF model found in ComfyUI. " +
-                    "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
-                    "and place it in your ComfyUI diffusion_models folder.");
-                OnFinished();
+                StatusMessageChanged?.Invoke(this, lease.Mode == ComfyUiServerMode.Engine
+                    ? "No Qwen Image 2512 GGUF model found on the Diffusion Nexus Engine. " +
+                      "Install Inpaint & Outpaint in Installation Manager → Diffusion Nexus Engine → Features."
+                    : "No Qwen Image 2512 GGUF model found in ComfyUI. " +
+                      "Please download a qwen-image-2512 GGUF variant (e.g. Q8_0, Q4_K_M) " +
+                      "and place it in your ComfyUI diffusion_models folder.");
                 return;
             }
 
-            Status = "Queuing outpainting workflow...";
-
-            var workflowRelativePath = useVision
-                ? OutpaintVisionWorkflowPath
-                : OutpaintNonVisionWorkflowPath;
-
             var workflowPath = Path.Combine(
                 AppDomain.CurrentDomain.BaseDirectory,
-                workflowRelativePath);
+                OutpaintWorkflowPath);
 
-            if (!File.Exists(workflowPath))
+            // Vision runs the describe workflow first: a missing file must not read as "is the Engine running?".
+            var describeWorkflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ImageDescriber.WorkflowRelativePath);
+            var missingWorkflow = !File.Exists(workflowPath) ? workflowPath
+                : useVision && !File.Exists(describeWorkflowPath) ? describeWorkflowPath
+                : null;
+            if (missingWorkflow is not null)
             {
                 HasError = true;
                 ProgressDisplayText = "Outpainting workflow file missing";
-                StatusMessageChanged?.Invoke(this, $"Outpainting workflow not found: {workflowPath}");
-                OnFinished();
+                StatusMessageChanged?.Invoke(this, $"Outpainting workflow not found: {missingWorkflow}");
                 return;
             }
 
             var seed = (long)(_random.NextDouble() * long.MaxValue);
+
+            EmitGenerate($"Extending left {extendLeft}, top {extendTop}, right {extendRight}, bottom {extendBottom}.");
 
             var overrides = new Dictionary<string, Action<System.Text.Json.Nodes.JsonNode>>
             {
@@ -708,44 +803,72 @@ public partial class OutpaintingViewModel : ObservableObject
                 },
                 [ImagePadNodeId] = node =>
                 {
+                    // The workflow rescales the input to 1536 on its largest edge (ImageScaleToMaxDimension)
+                    // before padding; the receiver lays the result over a canvas computed at native size,
+                    // so the pad node reads the loaded image directly and the scale node, now unused, does
+                    // not run. (Sizing that node from the editor once sent largest_size 0: a 296x80 result.)
+                    node["inputs"]!["image"] = new System.Text.Json.Nodes.JsonArray(LoadImageNodeId, 0);
                     node["inputs"]!["left"] = extendLeft;
                     node["inputs"]!["top"] = extendTop;
                     node["inputs"]!["right"] = extendRight;
                     node["inputs"]!["bottom"] = extendBottom;
-                },
-                // Neutralize ImageScaleToMaxDimension: without this the workflow rescales
-                // the input to 1536 on its largest edge, and the receiver then non-uniformly
-                // stretches the result onto the canvas the UI computed at native resolution.
-                [ImageScaleNodeId] = node =>
-                {
-                    var origW = _getImageWidth();
-                    var origH = _getImageHeight();
-                    node["inputs"]!["largest_size"] = Math.Max(origW, origH);
                 }
             };
 
-            // Only override the positive prompt for nonVision; the Vision workflow
-            // wires positive prompt to the Qwen3_VQA node output.
-            if (!useVision)
+            var positivePrompt = _positivePrompt;
+            if (useVision)
             {
-                overrides[PositivePromptNodeId] = node =>
+                // The GGUF node takes the model files as paths; the readiness check found them. Generate
+                // is clickable before the first check finished, so a missing answer is checked once more.
+                if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out _, out _))
+                    await VisionReadiness.CheckReadinessAsync();
+                if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out var modelPath, out var projectorPath))
                 {
-                    node["inputs"]!["text"] = _positivePrompt;
-                };
+                    HasError = true;
+                    ProgressDisplayText = "Qwen3-VL model files not found";
+                    StatusMessageChanged?.Invoke(this, lease.Mode == ComfyUiServerMode.Engine
+                        ? "The Qwen3-VL GGUF model was not found. Install Outpaint Vision in Installation Manager → Diffusion Nexus Engine → Features."
+                        : "The Qwen3-VL GGUF model was not found in your ComfyUI. Open Installer Manager → Outpainting-Qwen 2512 to install it.");
+                    return;
+                }
+
+                EmitGenerate($"Vision model: {modelPath}");
+                Status = "Describing the surroundings with Qwen3-VL...";
+
+                // Its own job before the outpaint (#616): the node reports a failed inference as its text, and
+                // inside the outpaint workflow that text became the prompt of a "successful" result. A failure
+                // now throws ImageDescriptionFailedException before anything is generated.
+                var description = await DescribeSurroundingsAsync(comfy, uploadedFilename, modelPath, projectorPath);
+                if (description is not null)
+                    EmitGenerate($"Vision description: {description}");
+                else
+                {
+                    Logger.Warning("Outpaint: Vision returned no description");
+                    _unifiedLogger?.Warn(LogCategory.General, LogSource, "Vision returned no description.");
+                }
+                positivePrompt = description ?? string.Empty;
             }
 
-            var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath, overrides);
+            overrides[PositivePromptNodeId] = node =>
+            {
+                node["inputs"]!["text"] = positivePrompt;
+            };
+
+            Status = "Queuing outpainting workflow...";
+            var promptId = await comfy.QueueWorkflowAsync(workflowPath, overrides);
+            EmitGenerate($"Prompt queued ({promptId}).");
 
             Status = "Generating (this may take a while)...";
             var progress = new Progress<string>(msg => Status = msg);
-            await _comfyUiService.WaitForCompletionAsync(promptId, progress);
+            await comfy.WaitForCompletionAsync(promptId, progress);
 
             Status = "Downloading result...";
-            var result = await _comfyUiService.GetResultAsync(promptId);
+            var result = await comfy.GetResultAsync(promptId);
 
             if (result.Images.Count > 0)
             {
-                var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0]);
+                var imageBytes = await comfy.DownloadImageAsync(result.Images[0]);
+                EmitGenerate("Result received.");
                 ResultReady?.Invoke(this, imageBytes);
                 StatusMessageChanged?.Invoke(this, "Outpainting completed successfully.");
             }
@@ -754,6 +877,50 @@ public partial class OutpaintingViewModel : ObservableObject
                 StatusMessageChanged?.Invoke(this, "Outpainting completed but no output image was returned.");
             }
         }
+        catch (ComfyUiUnavailableException ex)
+        {
+            HasError = true;
+            ProgressDisplayText = ex.Message;
+            StatusMessageChanged?.Invoke(this, ex.Message);
+            _unifiedLogger?.Warn(LogCategory.General, LogSource, ex.Message);
+        }
+        catch (ImageDescriptionFailedException ex)
+        {
+            // Qwen3-VL could not describe the image (CUDA out of memory, a model file that will not load).
+            // Nothing was generated.
+            Logger.Error(ex, "Outpaint: Qwen3-VL could not describe the image");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Qwen3-VL could not describe the image: {ex.Message}", ex);
+            HasError = true;
+            ProgressDisplayText = "Qwen3-VL could not describe the image – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Qwen3-VL could not describe the image: {ex.Message}");
+        }
+        catch (ComfyUIExecutionException ex)
+        {
+            // The server ran the job and a node failed: name the node, not the server.
+            Logger.Error(ex, "Outpainting failed in node {NodeType}", ex.NodeType);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"Outpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+            HasError = true;
+            ProgressDisplayText = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Outpainting failed in the ComfyUI node {ex.NodeType}: {ex.Detail}");
+        }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            // The server answered and refused the workflow (an older build's "node X does not exist").
+            Logger.Error(ex, "Outpainting: ComfyUI rejected the workflow");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI rejected the outpainting workflow: {ex.Reason}", ex);
+            HasError = true;
+            ProgressDisplayText = "ComfyUI rejected the workflow – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"ComfyUI rejected the outpainting workflow: {ex.Reason}");
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            // The server answered (a 400 with a body that is not ComfyUI's JSON, a proxy's 502): not "is it running?".
+            Logger.Error(ex, "Outpainting: ComfyUI answered {Status}", (int)status);
+            _unifiedLogger?.Error(LogCategory.General, LogSource, $"ComfyUI answered {(int)status}: {ex.Message}", ex);
+            HasError = true;
+            ProgressDisplayText = $"ComfyUI answered {(int)status} – see the Unified Console";
+            StatusMessageChanged?.Invoke(this, $"Outpainting failed, ComfyUI answered {(int)status}: {ex.Message}");
+        }
         catch (OperationCanceledException)
         {
             StatusMessageChanged?.Invoke(this, "Outpainting was cancelled.");
@@ -761,19 +928,50 @@ public partial class OutpaintingViewModel : ObservableObject
         catch (Exception ex)
         {
             Logger.Error(ex, "Outpainting failed");
+            _unifiedLogger?.Error(LogCategory.General, LogSource, "Outpainting failed", ex);
             HasError = true;
-            ProgressDisplayText = "Generation failed – is ComfyUI running?";
+            ProgressDisplayText = lease?.Mode == ComfyUiServerMode.Engine
+                ? "Generation failed – is the Diffusion Nexus Engine running?"
+                : "Generation failed – is ComfyUI running?";
             StatusMessageChanged?.Invoke(this, $"Outpainting failed: {ex.Message}");
         }
         finally
         {
+            lease?.Dispose();
             OnFinished();
+        }
+    }
+
+    /// <summary>
+    /// What Qwen3-VL sees around the subject, or null when it wrote nothing. The job unloads ComfyUI's own
+    /// models first (llama.cpp allocates outside ComfyUI's memory manager, so the last outpaint's Qwen-Image
+    /// would not make room: #616's out-of-memory case; ComfyUI keeps them in RAM, so the outpaint moves them
+    /// back rather than reading them from disk) and unloads Qwen3-VL when it has answered (<c>direct_clean</c>).
+    /// </summary>
+    /// <exception cref="ImageDescriptionFailedException">The node reported a failed inference.</exception>
+    private async Task<string?> DescribeSurroundingsAsync(
+        IComfyUIWrapperService comfy, string uploadedImage, string modelPath, string projectorPath)
+    {
+        var describer = new ImageDescriber(comfy, modelPath, projectorPath, userPrompt: SurroundingsPrompt);
+        try
+        {
+            return await describer.DescribeAsync(uploadedImage, keepLoaded: false, CancellationToken.None, freeComfyModels: true);
+        }
+        catch (ComfyUIExecutionException ex) when (!ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType)
+                                                   && !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType))
+        {
+            // The node may have died holding Qwen3-VL, and the next run may be an Inpaint with no describe job
+            // to unload it. A direct_clean job with the same config reuses and unloads it, as Batch Upscale does.
+            Status = "Freeing Qwen3-VL after the failure...";
+            await describer.FreeAsync(uploadedImage);
+            throw;
         }
     }
 
     private void OnFinished()
     {
         IsBusy = false;
+        _stepText.Stop();
 
         if (_hasError)
         {
@@ -830,6 +1028,7 @@ public partial class OutpaintingViewModel : ObservableObject
         {
             _ when status.StartsWith("Preparing", StringComparison.OrdinalIgnoreCase) => 5,
             _ when status.StartsWith("Uploading", StringComparison.OrdinalIgnoreCase) => 10,
+            _ when status.StartsWith("Describing", StringComparison.OrdinalIgnoreCase) => 12,
             _ when status.StartsWith("Queuing", StringComparison.OrdinalIgnoreCase) => 15,
             _ when status.StartsWith("Generating", StringComparison.OrdinalIgnoreCase) => 20,
             _ when status.StartsWith("Executing", StringComparison.OrdinalIgnoreCase) => 25,
@@ -853,14 +1052,11 @@ public partial class OutpaintingViewModel : ObservableObject
         ProgressDisplayText = FunProgressMessages[index];
     }
 
-    private async Task<string?> ResolveQwenImageGGUFModelAsync()
+    private async Task<string?> ResolveQwenImageGGUFModelAsync(IComfyUIWrapperService comfy)
     {
-        if (_comfyUiService is null)
-            return null;
-
         try
         {
-            var availableModels = await _comfyUiService.GetNodeInputOptionsAsync(
+            var availableModels = await comfy.GetNodeInputOptionsAsync(
                 UnetLoaderGGUFNodeType, "unet_name");
 
             var qwenModels = availableModels

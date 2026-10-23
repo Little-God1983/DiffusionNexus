@@ -42,6 +42,10 @@ public interface IWorkloadInstallService
     /// <param name="progress">Reports per-item progress.</param>
     /// <param name="downloadProgress">Reports byte-level download progress for model files.</param>
     /// <param name="skipDownloadTokenProvider">Provides a cancellation token to skip the current download.</param>
+    /// <param name="modelsRootOverride">
+    /// Base folder for model downloads instead of the first library in the install's
+    /// extra_model_paths.yaml. The Engine passes its own models folder; null keeps the yaml rule.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Summary message.</returns>
     Task<string> InstallSelectedAsync(
@@ -53,6 +57,20 @@ public interface IWorkloadInstallService
         IProgress<WorkloadInstallProgress>? progress = null,
         IProgress<DownloadProgress>? downloadProgress = null,
         Func<CancellationToken>? skipDownloadTokenProvider = null,
+        string? modelsRootOverride = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Installs the prebuilt llama-cpp-python wheel that fits the install's own venv (its Python and
+    /// torch's CUDA, read from the venv), unless that version is there already. Node packs that run
+    /// GGUF models (Outpaint Vision's Qwen3-VL node, #607) list llama-cpp-python in their requirements,
+    /// and without a wheel pip would try to compile it from source. pip checks the download against
+    /// the catalog's hash.
+    /// </summary>
+    Task<LlamaCppWheelOutcome> EnsureLlamaCppWheelAsync(
+        string comfyUIRootPath,
+        IReadOnlyList<LamaCppWheel> wheels,
+        IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -70,4 +88,17 @@ public interface IWorkloadInstallService
         string comfyUIRootPath,
         IProgress<WorkloadInstallProgress>? progress = null,
         CancellationToken cancellationToken = default);
+}
+
+/// <summary>What <see cref="IWorkloadInstallService.EnsureLlamaCppWheelAsync"/> did.</summary>
+public enum LlamaCppWheelOutcome
+{
+    /// <summary>The wheel for this venv is in place (installed now or already there).</summary>
+    Installed,
+
+    /// <summary>The catalog has no wheel for this venv's Python and CUDA (or they could not be read); nothing was installed.</summary>
+    NoMatchingWheel,
+
+    /// <summary>A matching wheel's install ran and failed.</summary>
+    Failed,
 }

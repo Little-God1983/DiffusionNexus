@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 
@@ -59,9 +60,13 @@ public sealed class SettingsExportService : ISettingsExportService
             UseForgeStylePrompts = settings.UseForgeStylePrompts,
             MergeLoraSources = settings.MergeLoraSources,
             LoraUpdateCheckStalenessDays = settings.LoraUpdateCheckStalenessDays,
+            SyncNotIdentifiedRetryDays = settings.SyncNotIdentifiedRetryDays,
+            SyncErrorRetryDays = settings.SyncErrorRetryDays,
+            SyncThumbnailConcurrency = settings.SyncThumbnailConcurrency,
 
             LoraSortSourcePath = settings.LoraSortSourcePath,
             LoraSortTargetPath = settings.LoraSortTargetPath,
+            LoraSorterExcludedFoldersJson = settings.LoraSorterExcludedFoldersJson,
             DeleteEmptySourceFolders = settings.DeleteEmptySourceFolders,
 
             DatasetStoragePath = settings.DatasetStoragePath,
@@ -72,7 +77,8 @@ public sealed class SettingsExportService : ISettingsExportService
             AutoBackupLocation = settings.AutoBackupLocation,
             MaxBackups = settings.MaxBackups,
 
-            ComfyUiServerUrl = settings.ComfyUiServerUrl
+            ComfyUiServerUrl = settings.ComfyUiServerUrl,
+            ComfyUiServerMode = settings.ComfyUiServerMode
         };
 
         var order = 0;
@@ -160,9 +166,18 @@ public sealed class SettingsExportService : ISettingsExportService
             UseForgeStylePrompts = export.UseForgeStylePrompts,
             MergeLoraSources = export.MergeLoraSources,
             LoraUpdateCheckStalenessDays = export.LoraUpdateCheckStalenessDays,
+            SyncNotIdentifiedRetryDays = export.SyncNotIdentifiedRetryDays,
+            SyncErrorRetryDays = export.SyncErrorRetryDays,
+            SyncThumbnailConcurrency = export.SyncThumbnailConcurrency,
+            // LastLibrarySyncAt is deliberately left unset here (CLR default null):
+            // it is machine-local bookkeeping, not part of the export schema, and
+            // AppSettingsService.SaveSettingsAsync's whitelist does not touch that
+            // column — so the real, already-persisted value survives this import
+            // untouched rather than being overwritten with this snapshot's null.
 
             LoraSortSourcePath = export.LoraSortSourcePath,
             LoraSortTargetPath = export.LoraSortTargetPath,
+            LoraSorterExcludedFoldersJson = export.LoraSorterExcludedFoldersJson,
             DeleteEmptySourceFolders = export.DeleteEmptySourceFolders,
 
             DatasetStoragePath = export.DatasetStoragePath,
@@ -176,7 +191,9 @@ public sealed class SettingsExportService : ISettingsExportService
             AutoBackupLocation = export.AutoBackupLocation,
             MaxBackups = export.MaxBackups,
 
-            ComfyUiServerUrl = export.ComfyUiServerUrl
+            ComfyUiServerUrl = export.ComfyUiServerUrl,
+            // A file without the field predates the setting: its owner ran their own ComfyUI.
+            ComfyUiServerMode = export.ComfyUiServerMode ?? ComfyUiServerMode.CustomUrl
         };
 
         foreach (var s in export.LoraSources.OrderBy(x => x.Order))

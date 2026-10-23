@@ -55,6 +55,16 @@ namespace DiffusionNexus.Domain.Entities
         public bool IsDefault { get; set; } = false;
 
         /// <summary>
+        /// True when this installation is owned and maintained by the app itself
+        /// (the Diffusion Nexus Engine), not added by the user. App-managed rows are
+        /// hidden from the ordinary Installer Manager card list — the static engine
+        /// tile represents them — and offer no Remove/Delete/Edit actions. They are
+        /// ordinary ComfyUI installations in every other respect, so model-root
+        /// resolution and extra_model_paths discovery pick them up unchanged.
+        /// </summary>
+        public bool IsAppManaged { get; set; } = false;
+
+        /// <summary>
         /// The output folder (Image Gallery) linked to this installation.
         /// Every installer has one output gallery. The FK lives on ImageGallery.
         /// </summary>

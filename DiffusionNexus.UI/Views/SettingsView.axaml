@@ -30,8 +30,8 @@
     </StackPanel>
 
     <!-- Scrollable Content Area -->
-    <ScrollViewer Grid.Row="1" Padding="20">
-      <StackPanel Spacing="16" Width="700" HorizontalAlignment="Left">
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="20" Spacing="16" Width="700" HorizontalAlignment="Left">
         
         <!-- General Settings -->
         <Expander Header="General" IsExpanded="False" HorizontalAlignment="Stretch">
@@ -313,6 +313,32 @@
                                     SelectedItem="{Binding LoraUpdateCheckStalenessDays, Mode=TwoWay}"
                                     Width="80"/>
                           <TextBlock Text="Days (0 = disabled)" VerticalAlignment="Center"/>
+                        </StackPanel>
+                      </StackPanel>
+                      <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
+                      <StackPanel Spacing="8">
+                        <TextBlock Text="Metadata Sync" FontWeight="SemiBold" FontSize="14"/>
+                        <TextBlock Text="How the bulk metadata sync retries models it could not resolve, and how many thumbnails it downloads at once. Applies from the next sync run."
+                                   FontSize="12"
+                                   Opacity="0.7"
+                                   TextWrapping="Wrap"/>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncNotIdentifiedRetryDays}"
+                                    SelectedItem="{Binding SyncNotIdentifiedRetryDays, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Days before re-checking models Civitai did not identify" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncErrorRetryDays}"
+                                    SelectedItem="{Binding SyncErrorRetryDays, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Days before retrying failed lookups" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                          <ComboBox ItemsSource="{Binding AvailableSyncThumbnailConcurrency}"
+                                    SelectedItem="{Binding SyncThumbnailConcurrency, Mode=TwoWay}"
+                                    Width="80"/>
+                          <TextBlock Text="Thumbnail downloads in parallel" VerticalAlignment="Center"/>
                         </StackPanel>
                       </StackPanel>
                       <Border Height="1" Background="#40FFFFFF" Margin="0,8"/>
@@ -606,21 +632,51 @@
         </Expander>
 
         <!-- ComfyUI Server -->
-        <Expander Header="ComfyUI Server" IsExpanded="False" HorizontalAlignment="Stretch">
+        <Expander x:Name="ComfyUiServerExpander" Header="ComfyUI Server" IsExpanded="{Binding IsComfyUiServerExpanded, Mode=TwoWay}" HorizontalAlignment="Stretch">
           <Border Padding="16">
             <StackPanel Spacing="12">
 
-              <TextBlock Text="Configure the URL of your ComfyUI server instance."
-                         FontSize="12"
-                         Opacity="0.7"/>
+              <TextBlock Text="Which ComfyUI runs Inpaint and Outpaint (also with Vision) in the Image Editor, and Batch Upscale."
+                         FontSize="12" Opacity="0.7"/>
 
-              <!-- Server URL -->
+              <!-- Server -->
               <StackPanel Spacing="4">
+                <TextBlock Text="Server" FontWeight="SemiBold"/>
+                <ComboBox ItemsSource="{Binding ServerModeOptions}"
+                          SelectedItem="{Binding SelectedServerModeOption, Mode=TwoWay}"
+                          HorizontalAlignment="Stretch">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SettingsViewModel+ServerModeOption">
+                      <TextBlock Text="{Binding DisplayName}"/>
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+
+                <!-- Engine selected -->
+                <StackPanel Spacing="6" IsVisible="{Binding !IsCustomUrlMode}">
+                  <TextBlock Text="The app installs and starts this ComfyUI itself. Choose what it can do in the Installation Manager → Diffusion Nexus Engine → Features."
+                             FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="{Binding EngineStatusText}" FontSize="12" VerticalAlignment="Center"/>
+                    <Button Content="Open Engine Features" Command="{Binding OpenEngineFeaturesCommand}"/>
+                  </StackPanel>
+                </StackPanel>
+
+                <!-- Custom URL selected -->
+                <TextBlock Text="A ComfyUI you run yourself. You install the required custom nodes and models."
+                           FontSize="12" Opacity="0.7" TextWrapping="Wrap"
+                           IsVisible="{Binding IsCustomUrlMode}"/>
+              </StackPanel>
+
+              <!-- Server URL: only for Custom URL; the Engine picks its own port, so the row is hidden -->
+              <StackPanel Spacing="4" IsVisible="{Binding IsCustomUrlMode}">
                 <TextBlock Text="Server URL" FontWeight="SemiBold"/>
                 <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto">
 
-                  <!-- Status indicator: green when online, red when offline -->
+                  <!-- Status indicator: green when online, red when offline. Custom URL only:
+                       in Engine mode the stored URL is not tested, so there is no status. -->
                   <Panel Grid.Column="0"
+                         IsVisible="{Binding IsCustomUrlMode}"
                          Width="12" Height="12"
                          VerticalAlignment="Center"
                          Margin="0,0,8,0">
@@ -652,6 +708,81 @@
                 </StackPanel>
               </StackPanel>
 
+            </StackPanel>
+          </Border>
+        </Expander>
+
+        <!-- Catalog (#618) -->
+        <Expander Header="Catalog" HorizontalAlignment="Stretch" IsVisible="{Binding Catalog, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <Border Padding="16" DataContext="{Binding Catalog}" x:DataType="vm:CatalogSettingsViewModel">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Workloads and workflows come from the Diffusion Nexus catalog, shared with the installer. Preview gets new catalog content before everyone else."
+                         FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+
+              <!-- Channel -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="Channel" FontWeight="SemiBold"/>
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                  <RadioButton GroupName="CatalogChannel" Content="Stable" IsChecked="{Binding IsStable, Mode=TwoWay}" IsEnabled="{Binding CanChooseChannel}"/>
+                  <RadioButton GroupName="CatalogChannel" Content="Preview" IsChecked="{Binding IsPreview, Mode=TwoWay}" IsEnabled="{Binding CanChooseChannel}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding ChannelHint}" FontSize="12" Opacity="0.7" IsVisible="{Binding ChannelHint, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              </StackPanel>
+
+              <!-- Switch warning -->
+              <Border IsVisible="{Binding ShowWarning}" Background="#33D29922" BorderBrush="#D29922" BorderThickness="1" CornerRadius="4" Padding="12">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="{Binding WarningText}" TextWrapping="Wrap"/>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="{Binding SwitchButtonText}" Command="{Binding ConfirmSwitchCommand}" Classes="accent"/>
+                    <Button Content="{Binding KeepButtonText}" Command="{Binding KeepChannelCommand}"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+
+              <!-- Automatic updates -->
+              <StackPanel Spacing="4">
+                <ToggleSwitch IsChecked="{Binding AutoApply, Mode=TwoWay}" IsEnabled="{Binding CanToggleAutoApply}"
+                              OnContent="Apply catalog updates automatically" OffContent="Apply catalog updates automatically"/>
+                <TextBlock Text="When Diffusion Nexus starts and finds a catalog update, it applies it without asking. Never while an install is running; then the update waits here."
+                           FontSize="12" Opacity="0.7" TextWrapping="Wrap"/>
+              </StackPanel>
+
+              <!-- Status -->
+              <StackPanel Spacing="4">
+                <TextBlock Text="{Binding StatusText}" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding OutcomeText}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding LastCheckedText}" FontSize="12" Opacity="0.7" IsVisible="{Binding LastCheckedText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              </StackPanel>
+
+              <!-- Change list -->
+              <ItemsControl ItemsSource="{Binding ChangeGroups}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CatalogChangeGroup">
+                    <StackPanel Spacing="2" Margin="0,4,0,0">
+                      <TextBlock Text="{Binding Heading}" FontWeight="SemiBold" FontSize="12"/>
+                      <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="x:String">
+                            <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap"/>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <TextBlock Text="{Binding ProgressText}" IsVisible="{Binding ProgressText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <TextBlock Text="{Binding ApplyBlockedReason}" FontSize="12" Opacity="0.7" TextWrapping="Wrap"
+                         IsVisible="{Binding ApplyBlockedReason, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+              <TextBlock Text="{Binding ErrorText}" Foreground="#FF6B6B" TextWrapping="Wrap"
+                         IsVisible="{Binding ErrorText, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Check for updates" Command="{Binding CheckCommand}"/>
+                <Button Content="Apply catalog update" Command="{Binding ApplyCommand}" Classes="accent" IsVisible="{Binding ShowApply}"/>
+              </StackPanel>
             </StackPanel>
           </Border>
         </Expander>

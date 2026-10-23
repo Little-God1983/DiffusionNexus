@@ -1,21 +1,15 @@
-﻿/*
- * Licensed under the terms found in the LICENSE file in the root directory.
- * For non-commercial use only. See LICENSE for details.
- */
-
-using DiffusionNexus.Domain.Enums;
+﻿using DiffusionNexus.Domain.Enums;
 
 namespace DiffusionNexus.Service.Helper
 {
     internal static class StaticFileTypes
     {
-        public static readonly string[] ModelExtensions =
-        [
-            ".ckpt",
-            ".safetensors",
-            ".pth",
-            ".pt"
-        ];
+        /// <summary>
+        /// The shared Sortable set. This list drives discovery and folder scans, so it answers the
+        /// same question <see cref="Domain.Utilities.ModelFileExtensions.Sortable"/> does; it was
+        /// missing ".sft" for the same reason every other copy was.
+        /// </summary>
+        public static readonly string[] ModelExtensions = Domain.Utilities.ModelFileExtensions.Sortable;
 
         /// <summary>
         /// Supported video file extensions for LoRA video training datasets.

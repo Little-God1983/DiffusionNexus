@@ -28,7 +28,8 @@ public partial class InstanceTabItem : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowStartButton))]
-    [NotifyPropertyChangedFor(nameof(ShowStopButtons))]
+    [NotifyPropertyChangedFor(nameof(ShowRunningButtons))]
+    [NotifyPropertyChangedFor(nameof(ShowStopButton))]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
     private bool _isRunning;
 
@@ -56,6 +57,7 @@ public partial class InstanceTabItem : ObservableObject
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    [NotifyPropertyChangedFor(nameof(ShowStartButton))]
     private bool _isUpdating;
 
     /// <summary>
@@ -70,6 +72,19 @@ public partial class InstanceTabItem : ObservableObject
     public string InstallationPath { get; init; } = string.Empty;
 
     /// <summary>
+    /// True for the Diffusion Nexus Engine's row (app-managed): it has no executable, so Start, Stop
+    /// and Restart drive the managed engine instead of launching a process (#610).
+    /// </summary>
+    public bool IsEngine { get; init; }
+
+    /// <summary>True while the Engine starts (up to two minutes), whoever started it.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowStartButton))]
+    [NotifyPropertyChangedFor(nameof(ShowStopButton))]
+    [NotifyPropertyChangedFor(nameof(ShowUpdateButton))]
+    private bool _isStarting;
+
+    /// <summary>
     /// True when the installation folder no longer exists on disk.
     /// </summary>
     [ObservableProperty]
@@ -78,19 +93,23 @@ public partial class InstanceTabItem : ObservableObject
     private bool _isMissing;
 
     /// <summary>
-    /// Show the Start button when not running and not missing.
+    /// Show the Start button when not running, not missing, not starting and not being updated (a
+    /// start must not run from a folder an update is changing).
     /// </summary>
-    public bool ShowStartButton => !IsRunning && !IsMissing;
+    public bool ShowStartButton => !IsRunning && !IsMissing && !IsStarting && !IsUpdating;
 
     /// <summary>
-    /// Show Stop/Restart/WebUI when running.
+    /// Show Restart (and the running-only controls) when running; Stop has its own ShowStopButton.
     /// </summary>
-    public bool ShowStopButtons => IsRunning;
+    public bool ShowRunningButtons => IsRunning;
+
+    /// <summary>Show Stop when running, and while starting: a start can be aborted.</summary>
+    public bool ShowStopButton => IsRunning || IsStarting;
 
     /// <summary>
     /// Show the Update button when an update is available, not currently updating, not running, and not missing.
     /// </summary>
-    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing;
+    public bool ShowUpdateButton => IsUpdateAvailable && !IsUpdating && !IsRunning && !IsMissing && !IsStarting;
 
     /// <summary>
     /// Small logo for the tab.

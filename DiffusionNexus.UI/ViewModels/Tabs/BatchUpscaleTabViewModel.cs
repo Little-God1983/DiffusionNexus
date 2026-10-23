@@ -1,12 +1,15 @@
 using System.Collections.ObjectModel;
+using System.Net.Http;
 using System.Text.Json.Nodes;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.Vision;
 using DiffusionNexus.UI.Utilities;
 using Serilog;
 
@@ -55,8 +58,8 @@ public enum UpscalePromptMode
     FromMetadata,
 
     /// <summary>
-    /// A vision model (Qwen3-VL) analyses each image and generates the prompt automatically.
-    /// Uses the Vision-Z-Image-Turbo-Upscale workflow.
+    /// Qwen3-VL describes each image (step 1), then each image is upscaled with its description as the prompt (step 2).
+    /// Uses the Qwen3-VL-Describe workflow, then the Z-Image-Turbo-Upscale workflow.
     /// </summary>
     VisionAutoPrompt
 }
@@ -164,6 +167,29 @@ public partial class UpscaleImageItemViewModel : ObservableObject
         set => SetProperty(ref _isProcessed, value);
     }
 
+    private string? _description;
+    private bool _isDescribed;
+
+    /// <summary>What Qwen3-VL wrote for this image in step 1 of a Vision run; its upscale prompt.</summary>
+    public string? Description
+    {
+        get => _description;
+        set
+        {
+            if (SetProperty(ref _description, value))
+                OnPropertyChanged(nameof(HasDescription));
+        }
+    }
+
+    /// <summary>Step 1 is done for this image (described, or tried and failed).</summary>
+    public bool IsDescribed
+    {
+        get => _isDescribed;
+        set => SetProperty(ref _isDescribed, value);
+    }
+
+    public bool HasDescription => !string.IsNullOrWhiteSpace(_description);
+
     /// <summary>
     /// Whether this image is currently being processed.
     /// </summary>
@@ -199,9 +225,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private readonly IDatasetEventAggregator _eventAggregator;
     private readonly IDatasetState _state;
-    private readonly IComfyUIWrapperService? _comfyUiService;
+    private readonly IComfyUiClientProvider? _clientProvider;
+    private readonly IUnifiedLogger? _unifiedLogger;
+    private bool _isActive;
+    private const string LogSource = "Batch Upscale";
     private readonly IAppSettingsService? _settingsService;
     private readonly IUiScheduler _uiScheduler;
+
+    /// <summary>What the run is doing, for failure log lines ("describing image 2/5").</summary>
+    private string _runStep = "";
+
+    // The settings as the run started: they stay editable during a run (step 1 takes minutes). A switch to
+    // Overwrite mid-run replaced originals with no confirmation and no compare backup; a slider or prompt
+    // change split the batch.
+    private UpscaleSaveMode _runSaveMode;
+    private UpscalePromptMode _runPromptMode;
+    private double _runUpscaleFactor, _runDenoisingStrength;
+    private string _runPositivePrompt = string.Empty, _runNegativePrompt = string.Empty;
     private readonly Func<string, int, Bitmap?> _thumbnailDecoder;
     private CancellationTokenSource? _cts;
     private bool _disposed;
@@ -211,7 +251,6 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     // Workflow paths (relative to AppDomain.CurrentDomain.BaseDirectory)
     private const string ManualUpscaleWorkflowPath = "Assets/Workflows/Z-Image-Turbo-Upscale.json";
-    private const string VisionUpscaleWorkflowPath = "Assets/Workflows/Vision-Z-Image-Turbo-Upscale.json";
 
     // Node IDs shared by both workflows
     private const string LoadImageNodeId = "50";
@@ -260,6 +299,14 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private int _completedCount;
     private int _totalImageCount;
 
+    internal const string StepOneText = "Step 1 of 2 · Describing images with Qwen3-VL";
+    internal const string StepTwoText = "Step 2 of 2 · Upscaling";
+    internal const string StepOneExplanation =
+        "Upscaled images appear in step 2. Qwen3-VL describes every image first so it loads only once; then it is unloaded and the upscaler gets the VRAM.";
+
+    private string? _stepText;
+    private string? _stepExplanation;
+
     // Compare state
     private UpscaleImageItemViewModel? _selectedCompareItem;
 
@@ -269,21 +316,24 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Creates a new instance of BatchUpscaleTabViewModel.
     /// </summary>
-    /// <param name="comfyUiService">Optional ComfyUI wrapper service for executing upscale workflows.</param>
+    /// <param name="clientProvider">Hands out a client for the ComfyUI chosen in Settings (the Engine, started on demand, or the user's own).</param>
     /// <param name="settingsService">Optional settings service for dataset storage path resolution.</param>
     /// <param name="readinessService">Optional unified ComfyUI readiness service for prerequisite checks.</param>
+    /// <param name="unifiedLogger">Optional Unified Console logger for the run's steps.</param>
     public BatchUpscaleTabViewModel(
         IDatasetEventAggregator eventAggregator,
         IDatasetState state,
-        IComfyUIWrapperService? comfyUiService = null,
+        IComfyUiClientProvider? clientProvider = null,
         IAppSettingsService? settingsService = null,
         IFeatureReadinessService? readinessService = null,
         IUiScheduler? uiScheduler = null,
-        Func<string, int, Bitmap?>? thumbnailDecoder = null)
+        Func<string, int, Bitmap?>? thumbnailDecoder = null,
+        IUnifiedLogger? unifiedLogger = null)
     {
         _eventAggregator = eventAggregator ?? throw new ArgumentNullException(nameof(eventAggregator));
         _state = state ?? throw new ArgumentNullException(nameof(state));
-        _comfyUiService = comfyUiService;
+        _clientProvider = clientProvider;
+        _unifiedLogger = unifiedLogger;
         _settingsService = settingsService;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
         // The thumbnail decode is the other (filesystem/Skia) boundary in front of
@@ -292,8 +342,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _thumbnailDecoder = thumbnailDecoder ?? EfficientImageDecoder.DecodeThumbnail;
 
         // Create readiness ViewModels for both upscale variants
-        Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale);
-        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscaleVision);
+        Readiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscale, eventAggregator);
+        VisionReadiness = new FeatureReadinessViewModel(readinessService, Feature.BatchUpscaleVision, eventAggregator);
 
         AvailableDatasetVersions = [];
         AvailableSaveModes = Enum.GetValues<UpscaleSaveMode>();
@@ -325,6 +375,12 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             if (e.PropertyName is nameof(FeatureReadinessViewModel.IsReady))
                 StartUpscaleCommand.NotifyCanExecuteChanged();
         };
+
+        // SettingsSaved (the Server mode) and EngineChanged (an Engine or Features install) change what
+        // readiness reports; they can arrive on a thread-pool thread, and the check writes bound
+        // properties, so they reach it through the UI scheduler.
+        _eventAggregator.SettingsSaved += OnReadinessInputChanged;
+        _eventAggregator.EngineChanged += OnReadinessInputChanged;
 
         _eventAggregator.RefreshDatasetsRequested += OnRefreshDatasetsRequested;
     }
@@ -521,6 +577,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     OnPropertyChanged(nameof(PromptModeDescription));
                     OnPropertyChanged(nameof(ActiveReadiness));
                     StartUpscaleCommand.NotifyCanExecuteChanged();
+                    RecheckIfActive();
                 }
         }
     }
@@ -530,6 +587,26 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// </summary>
     public bool IsManualPromptMode => PromptMode == UpscalePromptMode.ManualPrompt;
 
+    /// <summary>The step banner of a Vision run; null when the run has one step.</summary>
+    public string? StepText
+    {
+        get => _stepText;
+        private set
+        {
+            if (SetProperty(ref _stepText, value))
+                OnPropertyChanged(nameof(HasStep));
+        }
+    }
+
+    /// <summary>Why no upscaled image has appeared yet (step 1 only).</summary>
+    public string? StepExplanation
+    {
+        get => _stepExplanation;
+        private set => SetProperty(ref _stepExplanation, value);
+    }
+
+    public bool HasStep => _stepText is not null;
+
     /// <summary>
     /// Human-readable description of the selected prompt mode.
     /// </summary>
@@ -538,7 +615,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         UpscalePromptMode.ManualPrompt => "Your prompt is sent to every image. Good when all images share a theme.",
         UpscalePromptMode.FromCaptions => "Uses each image's caption file (.txt) as the positive prompt.",
         UpscalePromptMode.FromMetadata => "Extracts the positive prompt from each image's embedded generation metadata.",
-        UpscalePromptMode.VisionAutoPrompt => "A vision model (Qwen3-VL) analyses each image and writes the prompt for you.",
+        UpscalePromptMode.VisionAutoPrompt => "Qwen3-VL describes each image (step 1), then each image is upscaled with its description as the prompt (step 2).",
         _ => string.Empty
     };
 
@@ -568,7 +645,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Whether the ComfyUI service is available.
     /// </summary>
-    public bool IsComfyUIAvailable => _comfyUiService is not null;
+    public bool IsComfyUIAvailable => _clientProvider is not null;
 
     #endregion
 
@@ -703,9 +780,50 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     #region Private Methods
 
+    /// <summary>The tab became visible: check the active mode's readiness so Start and the panel are current.</summary>
+    public void OnTabActivated()
+    {
+        _isActive = true;
+        _ = ActiveReadiness.CheckReadinessAsync();
+    }
+
+    /// <summary>The tab was left: Settings and Engine changes no longer trigger checks.</summary>
+    public void OnTabDeactivated() => _isActive = false;
+
+    private void OnReadinessInputChanged(object? sender, EventArgs e)
+    {
+        if (_uiScheduler.IsOnUiThread)
+            RecheckIfActive();
+        else
+            _uiScheduler.Post(RecheckIfActive);
+    }
+
+    private void RecheckIfActive()
+    {
+        if (_isActive) _ = ActiveReadiness.CheckReadinessAsync();
+    }
+
+    private void Info(string message)
+    {
+        Logger.Information("Batch Upscale: {Message}", message);
+        _unifiedLogger?.Info(LogCategory.General, LogSource, message);
+    }
+
+    private void Warn(string message)
+    {
+        Logger.Warning("Batch Upscale: {Message}", message);
+        _unifiedLogger?.Warn(LogCategory.General, LogSource, message);
+    }
+
+    private void Error(string message, Exception? ex)
+    {
+        Logger.Error(ex, "Batch Upscale: {Message}", message);
+        _unifiedLogger?.Error(LogCategory.General, LogSource, message, ex);
+    }
+
     private bool CanStartUpscale()
     {
-        if (IsProcessing || _comfyUiService is null) return false;
+        if (IsProcessing || _clientProvider is null) return false;
 
         // Require ComfyUI readiness for the selected workflow
         var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
@@ -719,16 +837,23 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
     private async Task StartUpscaleAsync()
     {
-        if (_comfyUiService is null)
+        if (_clientProvider is null)
         {
             CurrentProcessingStatus = "ComfyUI service not available.";
             return;
         }
 
+        _runSaveMode = SaveMode;
+        _runPromptMode = PromptMode;
+        _runUpscaleFactor = _upscaleFactor;
+        _runDenoisingStrength = _denoisingStrength;
+        _runPositivePrompt = _positivePrompt;
+        _runNegativePrompt = _negativePrompt;
+
         // Defensive short-circuit: if readiness has flipped to "not ready" between the
         // CanExecute check and the click, surface the same message the readiness panel
         // shows so the user isn't left wondering why nothing happens.
-        var requiredReadiness = PromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
+        var requiredReadiness = _runPromptMode == UpscalePromptMode.VisionAutoPrompt ? VisionReadiness : Readiness;
         if (requiredReadiness.HasChecked && !requiredReadiness.IsReady)
         {
             CurrentProcessingStatus = requiredReadiness.MissingRequirements.Count > 0
@@ -763,13 +888,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         // Gallery Selection (temp dataset): convert to persistent dataset first
         if (SelectedDataset.IsTemporary && _tempImagePaths is { Count: > 0 })
         {
-            if (SaveMode == UpscaleSaveMode.NewVersion)
+            if (_runSaveMode == UpscaleSaveMode.NewVersion)
             {
                 var persistentDataset = await ConvertTempDatasetToPersistentAsync();
                 if (persistentDataset is null)
                 {
-                    // Conversion failed (e.g., storage path not configured) — fall back to temp processing
-                    await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: false);
+                    // Conversion failed (e.g., storage path not configured). New Version promised to leave the
+                    // originals untouched, so each result goes next to its original as {name}_upscaled{ext}.
+                    Warn("No dataset could be created for the gallery selection; the upscaled images are written " +
+                         "next to the originals as *_upscaled.");
+                    await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: true);
                     return;
                 }
                 // Fall through to normal dataset processing with the newly persistent dataset
@@ -777,6 +905,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             else
             {
                 // OverwriteInPlace on temp images: process directly, no persistent dataset needed
+                if (!await ConfirmOverwriteAsync(_tempImagePaths.Count)) return;
                 await RunUpscaleLoopAsync(_tempImagePaths, newVersionPath: null, isSingleImageMode: false);
                 return;
             }
@@ -804,26 +933,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             return;
         }
 
-        // Warn when overwriting originals — this is destructive and cannot be undone.
-        if (SaveMode == UpscaleSaveMode.OverwriteInPlace && DialogService is not null)
-        {
-            var confirmed = await DialogService.ShowConfirmAsync(
-                "Overwrite Original Images?",
-                $"This will permanently replace {datasetImageFiles.Count} original image(s) with their upscaled versions. " +
-                "This action cannot be undone.\n\nDo you want to continue?");
+        if (_runSaveMode == UpscaleSaveMode.OverwriteInPlace && !await ConfirmOverwriteAsync(datasetImageFiles.Count))
+            return;
 
-            if (!confirmed)
-            {
-                CurrentProcessingStatus = "Upscale cancelled by user.";
-                return;
-            }
-        }
+        // The selector stays enabled during the run, so the run keeps its own dataset for the clean-up.
+        var dataset = SelectedDataset;
 
         // Prepare output folder for NewVersion save mode
         string? newVersionPath = null;
         int? newVersionNumber = null;
         int? branchedFromVersion = SelectedDatasetVersion?.Version;
-        if (SaveMode == UpscaleSaveMode.NewVersion && SelectedDataset.IsVersionedStructure)
+        if (_runSaveMode == UpscaleSaveMode.NewVersion && SelectedDataset.IsVersionedStructure)
         {
             var maxVersion = SelectedDataset.GetAllVersionNumbers().DefaultIfEmpty(1).Max();
             newVersionNumber = maxVersion + 1;
@@ -839,7 +959,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
             Logger.Information("Upscale: created new version folder {Path}", newVersionPath);
         }
-        else if (SaveMode == UpscaleSaveMode.NewVersion && !SelectedDataset.IsVersionedStructure)
+        else if (_runSaveMode == UpscaleSaveMode.NewVersion && !SelectedDataset.IsVersionedStructure)
         {
             // Non-versioned dataset: create v2 folder
             newVersionPath = Path.Combine(Path.GetDirectoryName(SelectedDataset.FolderPath)!,
@@ -852,8 +972,50 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         // If we created a new version, update the dataset model and publish events
         if (newVersionNumber.HasValue && CompletedCount > 0)
         {
-            FinalizeVersionCreation(newVersionNumber.Value, branchedFromVersion);
+            FinalizeVersionCreation(dataset, newVersionNumber.Value, branchedFromVersion);
         }
+        else if (newVersionPath is not null && CompletedCount == 0)
+        {
+            // Nothing was upscaled (cancel, an error, a failed Engine start): drop the version made for it. One
+            // that keeps a file (an image written before the run stopped) is shown like any new version.
+            if (DiscardEmptyVersion(dataset, newVersionPath, newVersionNumber) && newVersionNumber.HasValue)
+                FinalizeVersionCreation(dataset, newVersionNumber.Value, branchedFromVersion);
+        }
+    }
+
+    /// <summary>Warns before overwriting originals — destructive and cannot be undone. False when declined.</summary>
+    private async Task<bool> ConfirmOverwriteAsync(int imageCount)
+    {
+        if (DialogService is null) return true;
+
+        var confirmed = await DialogService.ShowConfirmAsync(
+            "Overwrite Original Images?",
+            $"This will permanently replace {imageCount} original image(s) with their upscaled versions. " +
+            "This action cannot be undone.\n\nDo you want to continue?");
+        if (!confirmed)
+            CurrentProcessingStatus = "Upscale cancelled by user.";
+        return confirmed;
+    }
+
+    /// <summary>Removes a version folder a run created but never wrote to, and its branch record. A folder
+    /// that holds a file stays, with its record; returns true then.</summary>
+    private static bool DiscardEmptyVersion(DatasetCardViewModel dataset, string versionPath, int? versionNumber)
+    {
+        try
+        {
+            if (Directory.Exists(versionPath))
+            {
+                if (Directory.EnumerateFileSystemEntries(versionPath).Any()) return true;
+                Directory.Delete(versionPath);
+            }
+            if (versionNumber is { } number && dataset.VersionBranchedFrom.Remove(number))
+                dataset.SaveMetadata();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Logger.Warning(ex, "Upscale: could not remove the empty version folder {Path}", versionPath);
+        }
+        return false;
     }
 
     /// <summary>
@@ -868,25 +1030,44 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         string? newVersionPath,
         bool isSingleImageMode)
     {
-        if (_comfyUiService is null) return;
+        if (_clientProvider is null) return;
 
+        // Reset first: the caller reads the count after an early return too (an empty new version is discarded).
+        CompletedCount = 0;
         var isSingleImage = isSingleImageMode;
 
-        // Resolve the workflow file.
-        var isVision = PromptMode == UpscalePromptMode.VisionAutoPrompt;
-        var workflowRelPath = isVision ? VisionUpscaleWorkflowPath : ManualUpscaleWorkflowPath;
-        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, workflowRelPath);
+        // Resolve the workflow file. Vision describes first (step 1), then runs the same upscale workflow.
+        var isVision = _runPromptMode == UpscalePromptMode.VisionAutoPrompt;
+        var workflowPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, ManualUpscaleWorkflowPath);
 
         if (!File.Exists(workflowPath))
         {
-            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(workflowRelPath)}";
+            CurrentProcessingStatus = $"Workflow file not found: {Path.GetFileName(ManualUpscaleWorkflowPath)}";
             Logger.Error("Upscale workflow not found at {Path}", workflowPath);
             return;
         }
 
+        string modelPath = "", projectorPath = "";
+        if (isVision)
+        {
+            // The GGUF node takes the files as paths; readiness found them. Re-check once when unknown.
+            if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out _, out _))
+                await VisionReadiness.CheckReadinessAsync();
+            if (!QwenVlGguf.TryGetPaths(VisionReadiness.ModelPaths, out modelPath, out projectorPath))
+            {
+                CurrentProcessingStatus = VisionReadiness.IsEngineBackend
+                    ? "The Qwen3-VL GGUF model was not found. Install Batch Upscale Vision in " +
+                      "Installation Manager → Diffusion Nexus Engine → Features."
+                    : "The Qwen3-VL GGUF model was not found in your ComfyUI. Open Installer Manager → " +
+                      "Upscaling-Z-Image-Turbo Vision to install it.";
+                Warn(CurrentProcessingStatus);
+                return;
+            }
+        }
+
         // Clean up any previous temp originals and prepare for OverwriteInPlace comparison
         CleanupCompareOriginalsTempDir();
-        if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace)
+        if (!isSingleImage && _runSaveMode == UpscaleSaveMode.OverwriteInPlace)
         {
             _compareOriginalsTempDir = Path.Combine(Path.GetTempPath(), "DiffusionNexus", "upscale-compare", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_compareOriginalsTempDir);
@@ -909,33 +1090,53 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         IsProcessing = true;
-        CompletedCount = 0;
         TotalImageCount = imageFiles.Count;
         TotalProgress = 0;
 
+        ComfyUiClientLease? lease = null;
+        _runStep = "connecting to ComfyUI";
         try
         {
+            // Engine start-up text ("Starting Diffusion Nexus Engine…") lands on the status line.
+            lease = await _clientProvider.AcquireAsync(new Progress<string>(msg => CurrentProcessingStatus = msg), ct);
+            var comfy = lease.Client;
+            Info($"Running on {(lease.Mode == ComfyUiServerMode.Engine ? "the Diffusion Nexus Engine" : "your own ComfyUI")} at {lease.BaseUrl}.");
+            Info($"{TotalImageCount} image(s), prompt mode {_runPromptMode.GetDisplayName()}.");
+
+            var undescribed = 0;
+            if (isVision)
+            {
+                undescribed = await DescribeAllAsync(comfy, new ImageDescriber(comfy, modelPath, projectorPath), ct);
+                StepText = StepTwoText;
+                StepExplanation = null;
+                TotalProgress = 0;
+                Info("Step 2 of 2: upscaling.");
+            }
+
             for (var i = 0; i < UpscaleItems.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
                 var item = UpscaleItems[i];
                 item.IsProcessing = true;
+                _runStep = $"upscaling image {i + 1}/{TotalImageCount}";
+
+                // 1. Upload image to ComfyUI, right before its job: ComfyUI stores an upload under its plain
+                // file name and overwrites on a clash, so a step-1 upload of a same-named image from another
+                // folder may have replaced it since.
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Uploading {item.FileName}…";
+                var uploadedFilename = await comfy.UploadImageAsync(item.OriginalPath, ct);
 
-                // 1. Upload image to ComfyUI
-                var uploadedFilename = await _comfyUiService.UploadImageAsync(item.OriginalPath, ct);
-
-                // 2. Resolve the positive prompt for this image
-                var imagePositivePrompt = ResolvePositivePrompt(item.OriginalPath);
+                // 2. Resolve the positive prompt for this image (Vision: what Qwen3-VL wrote; none when it failed)
+                var imagePositivePrompt = isVision ? item.Description ?? string.Empty : ResolvePositivePrompt(item.OriginalPath);
 
                 // 3. Build node modifiers
                 var seed = (long)(_random.NextDouble() * long.MaxValue);
-                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, isVision, imagePositivePrompt);
+                var nodeModifiers = BuildNodeModifiers(uploadedFilename, seed, imagePositivePrompt);
 
                 // 4. Queue the workflow
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Queuing workflow for {item.FileName}…";
-                var promptId = await _comfyUiService.QueueWorkflowAsync(workflowPath, nodeModifiers, ct);
+                var promptId = await comfy.QueueWorkflowAsync(workflowPath, nodeModifiers, ct);
 
                 // 5. Wait for completion with progress
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] {FunProgressMessages[_random.Next(FunProgressMessages.Length)]}";
@@ -943,15 +1144,15 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 {
                     CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] {msg}";
                 });
-                await _comfyUiService.WaitForCompletionAsync(promptId, progress, ct);
+                await comfy.WaitForCompletionAsync(promptId, progress, ct);
 
                 // 6. Download result
                 CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Downloading result…";
-                var result = await _comfyUiService.GetResultAsync(promptId, ct);
+                var result = await comfy.GetResultAsync(promptId, ct);
 
                 if (result.Images.Count > 0)
                 {
-                    var imageBytes = await _comfyUiService.DownloadImageAsync(result.Images[0], ct);
+                    var imageBytes = await comfy.DownloadImageAsync(result.Images[0], ct);
 
                     // 7. Save based on mode
                     var outputPath = isSingleImage
@@ -960,19 +1161,33 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
 
                     // Preserve the original in a temp dir before overwriting so
                     // ImageCompareControl can still show a before/after comparison.
-                    if (!isSingleImage && SaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
+                    if (!isSingleImage && _runSaveMode == UpscaleSaveMode.OverwriteInPlace && _compareOriginalsTempDir is not null)
                     {
-                        var tempOriginal = Path.Combine(_compareOriginalsTempDir, item.FileName);
+                        // Numbered: gallery images from different folders can share a name.
+                        var tempOriginal = Path.Combine(_compareOriginalsTempDir, $"{i + 1}_{item.FileName}");
                         File.Copy(item.OriginalPath, tempOriginal, overwrite: true);
                         item.OriginalPath = tempOriginal;
                     }
 
-                    await File.WriteAllBytesAsync(outputPath, imageBytes, ct);
+                    // Written whole, without the run's token: a Cancel mid-write truncated the target, which in
+                    // Overwrite mode is the original. The move replaces the target only once the bytes are complete.
+                    var partialPath = outputPath + ".upscaling";
+                    try
+                    {
+                        await File.WriteAllBytesAsync(partialPath, imageBytes, CancellationToken.None);
+                        File.Move(partialPath, outputPath, overwrite: true);
+                    }
+                    catch
+                    {
+                        try { File.Delete(partialPath); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                        throw;
+                    }
 
                     item.UpscaledPath = outputPath;
 
                     // Copy caption files when creating a new version (dataset mode only)
-                    if (!isSingleImage && SaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
+                    if (!isSingleImage && _runSaveMode == UpscaleSaveMode.NewVersion && newVersionPath is not null)
                     {
                         CopyCaptionFiles(item.OriginalPath, newVersionPath);
                     }
@@ -980,11 +1195,11 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                     // Load the upscaled thumbnail
                     await LoadThumbnailAsync(item, outputPath, isOriginal: false);
 
-                    Logger.Information("Upscaled {File} -> {Output}", item.FileName, outputPath);
+                    Info($"Upscaled {item.FileName} → {outputPath}.");
                 }
                 else
                 {
-                    Logger.Warning("No output image returned for {File}", item.FileName);
+                    Warn($"ComfyUI returned no image for {item.FileName}.");
                 }
 
                 item.IsProcessing = false;
@@ -993,17 +1208,48 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 TotalProgress = (double)(i + 1) / TotalImageCount * 100;
             }
 
-            CurrentProcessingStatus = $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled.";
+            CurrentProcessingStatus = undescribed > 0
+                ? $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled; {undescribed} without a description (see the Unified Console)."
+                : $"Done – {CompletedCount}/{TotalImageCount} image(s) upscaled.";
+            Info(CurrentProcessingStatus);
         }
-        catch (OperationCanceledException)
+        catch (ComfyUiUnavailableException ex)
+        {
+            CurrentProcessingStatus = ex.Message;
+            Warn(ex.Message);
+        }
+        catch (ComfyUIExecutionException ex)
+        {
+            CurrentProcessingStatus = $"Failed in the ComfyUI node {ex.NodeType} – see the Unified Console";
+            Error($"Failed while {_runStep} in the ComfyUI node {ex.NodeType}: {ex.Detail}", ex);
+        }
+        catch (ComfyUIWorkflowRejectedException ex)
+        {
+            CurrentProcessingStatus = "ComfyUI rejected the workflow – see the Unified Console";
+            Error($"ComfyUI rejected the workflow while {_runStep}: {ex.Reason}", ex);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } status)
+        {
+            CurrentProcessingStatus = $"ComfyUI answered {(int)status} – see the Unified Console";
+            Error($"ComfyUI answered {(int)status} while {_runStep}: {ex.Message}", ex);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             CurrentProcessingStatus = $"Cancelled after {CompletedCount}/{TotalImageCount} images.";
-            Logger.Information("Batch upscale cancelled by user after {Count} images", CompletedCount);
+            Info(CurrentProcessingStatus);
+        }
+        catch (HttpRequestException ex)
+        {
+            // No status code: the server did not answer at all.
+            CurrentProcessingStatus = lease?.Mode == ComfyUiServerMode.Engine
+                ? $"Error: {ex.Message} – is the Diffusion Nexus Engine running?"
+                : $"Error: {ex.Message}";
+            Error($"Batch upscale failed while {_runStep}", ex);
         }
         catch (Exception ex)
         {
             CurrentProcessingStatus = $"Error: {ex.Message}";
-            Logger.Error(ex, "Batch upscale failed at image {Count}/{Total}", CompletedCount, TotalImageCount);
+            Error($"Batch upscale failed while {_runStep}", ex);
         }
         finally
         {
@@ -1013,14 +1259,109 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
                 item.IsProcessing = false;
             }
 
+            StepText = null;
+            StepExplanation = null;
+            lease?.Dispose();
             IsProcessing = false;
             _cts?.Dispose();
             _cts = null;
         }
     }
 
+    /// <summary>
+    /// Step 1 of a Vision run: uploads and describes every image with Qwen3-VL kept loaded, the last one
+    /// freeing it. When the model may still be loaded at the end (cancel, an error, a last job that failed
+    /// before the node ran), one extra job with the last described image frees it, so it does not stay in
+    /// the server's VRAM. A description that fails for one image is a warning: that image is upscaled
+    /// without a prompt. Returns how many images got no description.
+    /// </summary>
+    private async Task<int> DescribeAllAsync(IComfyUIWrapperService comfy, ImageDescriber describer, CancellationToken ct)
+    {
+        StepText = StepOneText;
+        StepExplanation = StepOneExplanation;
+        TotalProgress = 0;
+        Info("Step 1 of 2: describing every image with Qwen3-VL.");
+
+        // Whether Qwen3-VL may be loaded on the server: a keep_vram job ran, or still runs there (a cancelled
+        // wait does not stop it), and no later job unloaded it. The free-up job needs an image the server can
+        // read: the last one described, else the one in flight.
+        var mayBeLoaded = false;
+        string? lastDescribed = null, inFlight = null;
+        var undescribed = 0;
+        try
+        {
+            for (var i = 0; i < UpscaleItems.Count; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+                var item = UpscaleItems[i];
+                item.IsProcessing = true;
+                CurrentProcessingStatus = $"[{i + 1}/{TotalImageCount}] Describing {item.FileName}…";
+
+                _runStep = $"describing image {i + 1}/{TotalImageCount}";
+                var uploaded = inFlight = await comfy.UploadImageAsync(item.OriginalPath, ct);
+                var keepLoaded = i < UpscaleItems.Count - 1;
+                // A keep_vram job loads the model; a direct_clean job unloads it once it ran, and the server
+                // runs a queued job to the end even after a cancel.
+                var wasLoaded = mayBeLoaded;
+                mayBeLoaded = keepLoaded;
+                try
+                {
+                    // The first description also unloads ComfyUI's own models (the last run's upscaler):
+                    // llama.cpp allocates outside ComfyUI's memory manager, which would not make room.
+                    item.Description = await describer.DescribeAsync(uploaded, keepLoaded, ct, freeComfyModels: i == 0);
+                    if (keepLoaded) lastDescribed = uploaded;
+                    if (item.Description is null)
+                    {
+                        undescribed++;
+                        Warn($"Qwen3-VL returned no description for {item.FileName}; it is upscaled without a prompt.");
+                    }
+                    else
+                        Info($"Description of {item.FileName}: {item.Description}");
+                }
+                catch (ComfyUIExecutionException ex)
+                {
+                    // Before the node (LoadImage, the scale node): what earlier jobs left. In the node: it may have
+                    // died holding the model. After it (ShowText): what the node's mode left.
+                    // A node ComfyUI could not name may be the describer.
+                    mayBeLoaded = ImageDescriber.NodesBeforeTheDescriber.Contains(ex.NodeType) ? wasLoaded
+                        : !ImageDescriber.NodesAfterTheDescriber.Contains(ex.NodeType) || keepLoaded;
+                    undescribed++;
+                    Warn($"Could not describe {item.FileName} (node {ex.NodeType}: {ex.Detail}); it is upscaled without a prompt.");
+                }
+                catch (ImageDescriptionFailedException ex)
+                {
+                    // The node unloads everything after a failed inference.
+                    mayBeLoaded = false;
+                    undescribed++;
+                    Warn($"Qwen3-VL could not describe {item.FileName} ({ex.Message}); it is upscaled without a prompt.");
+                }
+                catch (ComfyUIWorkflowRejectedException)
+                {
+                    // Never queued.
+                    mayBeLoaded = wasLoaded;
+                    throw;
+                }
+
+                item.IsProcessing = false;
+                item.IsDescribed = true;
+                TotalProgress = (double)(i + 1) / TotalImageCount * 100;
+            }
+
+            // The last job frees the model itself; when it failed before the node ran, it did not.
+            if (mayBeLoaded)
+                await describer.FreeAsync(lastDescribed ?? inFlight!);
+            return undescribed;
+        }
+        catch (Exception) when (mayBeLoaded)
+        {
+            Info("Freeing Qwen3-VL on the server after step 1 stopped early.");
+            await describer.FreeAsync(lastDescribed ?? inFlight!);
+            throw;
+        }
+    }
+
     private Dictionary<string, Action<JsonNode>> BuildNodeModifiers(
-        string uploadedFilename, long seed, bool isVision, string positivePrompt)
+        string uploadedFilename, long seed, string positivePrompt)
     {
         var modifiers = new Dictionary<string, Action<JsonNode>>
         {
@@ -1030,29 +1371,24 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
             },
             [NegativePromptNodeId] = node =>
             {
-                node["inputs"]!["text"] = _negativePrompt;
+                node["inputs"]!["text"] = _runNegativePrompt;
             },
             [UltimateSDUpscaleNodeId] = node =>
             {
-                node["inputs"]!["upscale_by"] = _upscaleFactor;
-                node["inputs"]!["denoise"] = _denoisingStrength;
+                node["inputs"]!["upscale_by"] = _runUpscaleFactor;
+                node["inputs"]!["denoise"] = _runDenoisingStrength;
                 node["inputs"]!["seed"] = seed;
             },
             [SaveImageNodeId] = node =>
             {
                 node["inputs"]!["filename_prefix"] = "DiffNexus_Upscale";
-            }
-        };
-
-        // In vision mode, node 17 is wired to the Qwen3_VQA output chain, so we leave it alone.
-        // All other modes set the prompt text explicitly on node 17.
-        if (!isVision)
-        {
-            modifiers[PositivePromptNodeId] = node =>
+            },
+            // Every mode sets the prompt text; Vision passes the description step 1 wrote.
+            [PositivePromptNodeId] = node =>
             {
                 node["inputs"]!["text"] = positivePrompt;
-            };
-        }
+            }
+        };
 
         return modifiers;
     }
@@ -1060,7 +1396,7 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     private string GetOutputPath(string originalPath, string? newVersionPath)
     {
         var fileName = Path.GetFileName(originalPath);
-        return SaveMode switch
+        return _runSaveMode switch
         {
             UpscaleSaveMode.NewVersion when newVersionPath is not null
                 => Path.Combine(newVersionPath, fileName),
@@ -1201,18 +1537,16 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     /// <summary>
     /// Updates the dataset model and publishes events after a new version is successfully created.
     /// </summary>
-    private void FinalizeVersionCreation(int newVersion, int? branchedFromVersion)
+    private void FinalizeVersionCreation(DatasetCardViewModel dataset, int newVersion, int? branchedFromVersion)
     {
-        if (SelectedDataset is null) return;
-
-        SelectedDataset.CurrentVersion = newVersion;
-        SelectedDataset.IsVersionedStructure = true;
-        SelectedDataset.TotalVersions = SelectedDataset.GetAllVersionNumbers().Count();
-        SelectedDataset.RefreshImageInfo();
+        dataset.CurrentVersion = newVersion;
+        dataset.IsVersionedStructure = true;
+        dataset.TotalVersions = dataset.GetAllVersionNumbers().Count();
+        dataset.RefreshImageInfo();
 
         _eventAggregator.PublishVersionCreated(new VersionCreatedEventArgs
         {
-            Dataset = SelectedDataset,
+            Dataset = dataset,
             NewVersion = newVersion,
             BranchedFromVersion = branchedFromVersion ?? 1
         });
@@ -1246,16 +1580,17 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
     }
 
     /// <summary>
-    /// Resolves the positive prompt for a single image based on the current <see cref="PromptMode"/>.
+    /// Resolves the positive prompt for a single image from the prompt mode the run started with.
+    /// Vision runs use the description step 1 wrote and do not come here.
     /// </summary>
     private string ResolvePositivePrompt(string imagePath)
     {
-        return PromptMode switch
+        return _runPromptMode switch
         {
-            UpscalePromptMode.ManualPrompt => _positivePrompt,
-            UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _positivePrompt,
-            UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _positivePrompt,
-            _ => string.Empty // VisionAutoPrompt — prompt is generated by the vision model node
+            UpscalePromptMode.ManualPrompt => _runPositivePrompt,
+            UpscalePromptMode.FromCaptions => ReadCaptionForImage(imagePath) ?? _runPositivePrompt,
+            UpscalePromptMode.FromMetadata => ReadMetadataPrompt(imagePath) ?? _runPositivePrompt,
+            _ => string.Empty
         };
     }
 
@@ -1545,6 +1880,8 @@ public partial class BatchUpscaleTabViewModel : ViewModelBase, IDialogServiceAwa
         CleanupCompareOriginalsTempDir();
         ClearGallerySelection();
         _eventAggregator.RefreshDatasetsRequested -= OnRefreshDatasetsRequested;
+        _eventAggregator.SettingsSaved -= OnReadinessInputChanged;
+        _eventAggregator.EngineChanged -= OnReadinessInputChanged;
         GC.SuppressFinalize(this);
     }
 

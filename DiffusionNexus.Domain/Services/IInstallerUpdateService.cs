@@ -9,11 +9,17 @@ namespace DiffusionNexus.Domain.Services;
 /// <param name="CurrentHash">Short hash of the current HEAD commit.</param>
 /// <param name="RemoteHash">Short hash of the latest remote commit (null if check failed).</param>
 /// <param name="Summary">Human-readable summary (e.g. "3 commits behind origin/main").</param>
+/// <param name="ConfirmationMessage">
+/// Set when applying the update is not a plain move forward (e.g. it switches to an older
+/// release and sets the database aside). The UI must get the user's agreement to this exact
+/// text before calling <see cref="IInstallerUpdateService.UpdateAsync"/>.
+/// </param>
 public sealed record UpdateCheckResult(
     bool IsUpdateAvailable,
     string? CurrentHash,
     string? RemoteHash,
-    string? Summary);
+    string? Summary,
+    string? ConfirmationMessage = null);
 
 /// <summary>
 /// Result of performing an update operation.

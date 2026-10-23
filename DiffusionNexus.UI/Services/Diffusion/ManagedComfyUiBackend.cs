@@ -1,0 +1,509 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Text.Json.Nodes;
+using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Inference.Abstractions;
+using DiffusionNexus.Inference.Models;
+using DiffusionNexus.Inference.StableDiffusionCpp;
+using DiffusionNexus.Service.Services;
+using DiffusionNexus.UI.Services.Engine;
+using Serilog;
+// ComfyUiPathDiscovery lives in DiffusionNexus.UI.Services (not .Diffusion or .Engine) — it is
+// shared by the configuration checker and the captioning model manager as well.
+using DiffusionNexus.UI.Services;
+
+namespace DiffusionNexus.UI.Services.Diffusion;
+
+/// <summary>Supplies the API-format workflow the engine submits for a text2image request.</summary>
+public interface IWorkflowTemplateSource
+{
+    /// <summary>True when a template is available.</summary>
+    bool HasTemplate { get; }
+
+    /// <summary>The template JSON, or null when none is configured.</summary>
+    string? LoadTemplateJson();
+}
+
+/// <summary>
+/// The Diffusion Canvas's second backend: the app-owned ComfyUI engine. Implements the same
+/// <see cref="IDiffusionBackend"/> seam as the local sd.cpp backend, so the Canvas never learns
+/// which engine it is talking to.
+///
+/// Generation is submitted as an API-format workflow. Until a template is supplied, the backend
+/// says so honestly through the seam's error-as-data contract rather than pretending to work.
+/// </summary>
+public sealed class ManagedComfyUiBackend : IDiffusionBackend
+{
+    private static readonly ILogger Logger = Log.ForContext<ManagedComfyUiBackend>();
+
+    /// <summary>
+    /// Empty <see cref="IModelCatalog"/> used before the engine's models root is known.
+    /// <see cref="ComfyUiModelCatalog"/> requires at least one non-empty root and throws otherwise,
+    /// so it cannot represent "nothing discovered yet" itself.
+    /// </summary>
+    private sealed class EmptyModelCatalog : IModelCatalog
+    {
+        public static readonly EmptyModelCatalog Instance = new();
+        public IReadOnlyList<ModelDescriptor> ListAvailable() => [];
+        public ModelDescriptor? TryGet(string key) => null;
+    }
+
+    /// <summary>
+    /// The one model the shipped workflow (<see cref="Krea2WorkflowPatcher"/>) can currently
+    /// generate. It carries no on-disk file paths because the engine backend never loads it the
+    /// way <c>StableDiffusionCppLoader</c> loads a local model — ComfyUI resolves its own files
+    /// from the graph. Width/height mirror the workflow's own default aspect ratio node.
+    /// </summary>
+    public static readonly ModelDescriptor Krea2Model = new()
+    {
+        Key = "krea2",
+        DisplayName = "Krea 2 Turbo",
+        Kind = ModelKind.Krea2,
+        DefaultSteps = 8,
+        DefaultCfg = 1.0f,
+        DefaultSampler = "euler",
+        DefaultScheduler = "simple",
+        DefaultWidth = 1024,
+        DefaultHeight = 1024,
+    };
+
+    /// <summary>
+    /// Unions the fixed <see cref="Krea2Model"/> descriptor with whatever the generic
+    /// <see cref="ComfyUiModelCatalog"/> disk scan finds under the engine's install root.
+    ///
+    /// This exists to close a gap the Canvas would otherwise hit silently: <c>ComfyUiModelCatalog</c>
+    /// (see <c>Discover()</c>) only recognizes the four models the local stable-diffusion.cpp backend
+    /// can load — it has no notion of Krea 2 at all, since Krea 2 only runs through this engine's
+    /// ComfyUI workflow. Without this wrapper, <c>Catalog.TryGet("krea2")</c> would always return
+    /// null even on a fully installed engine, and generation could never resolve its own model.
+    /// </summary>
+    private sealed class EngineModelCatalog(ModelDescriptor fixedDescriptor, IModelCatalog discovered) : IModelCatalog
+    {
+        public IReadOnlyList<ModelDescriptor> ListAvailable() =>
+            new[] { fixedDescriptor }.Concat(discovered.ListAvailable()).ToList();
+
+        public ModelDescriptor? TryGet(string key) =>
+            string.Equals(key, fixedDescriptor.Key, StringComparison.Ordinal)
+                ? fixedDescriptor
+                : discovered.TryGet(key);
+    }
+
+    private readonly IManagedComfyUiEngine _engine;
+    private readonly Func<Task<string?>> _resolveInstallRootAsync;
+    private readonly IWorkflowTemplateSource? _templateSource;
+    private readonly List<string> _missingRequirements = [];
+    private readonly UploadedInitImageCache _uploadCache = new();
+
+    /// <summary>The inpaint mask's own upload cache: the cache holds one file, and a masked run uploads two.</summary>
+    private readonly UploadedInitImageCache _maskUploadCache = new();
+
+    /// <summary>The install root the last readiness probe accepted; null until the engine looks installed.</summary>
+    private string? _installRoot;
+
+    public ManagedComfyUiBackend(
+        IManagedComfyUiEngine engine,
+        Func<Task<string?>> resolveInstallRootAsync,
+        IWorkflowTemplateSource? templateSource)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(resolveInstallRootAsync);
+
+        _engine = engine;
+        _resolveInstallRootAsync = resolveInstallRootAsync;
+        _templateSource = templateSource;
+    }
+
+    public string DisplayName => "Diffusion Nexus Engine";
+
+    /// <summary>
+    /// Models this backend can generate. Always includes <see cref="Krea2Model"/> — the workflow
+    /// is fixed regardless of install state — plus whatever else is discovered under the engine's
+    /// install root once known (empty before the engine is installed).
+    /// </summary>
+    public IModelCatalog Catalog { get; private set; } = new EngineModelCatalog(Krea2Model, EmptyModelCatalog.Instance);
+
+    public IReadOnlyList<string> MissingRequirements => _missingRequirements;
+
+    public IReadOnlyList<string> Warnings => [];
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The engine submits one fixed workflow graph, so what it honours is decided by which nodes
+    /// <see cref="Krea2WorkflowPatcher"/> actually writes. Prompt, negative prompt, size, seed, steps
+    /// and cfg are patched; the sampler and scheduler are baked into the template's KSampler and the
+    /// graph's LoRA loader is never touched, so both are reported as unsupported rather than accepted
+    /// and dropped. An inpaint mask is honoured: the patcher puts a <c>SetLatentNoiseMask</c> in front
+    /// of the sampler (#595). Interrupting mid-sample is the one thing this backend can do that the local one
+    /// cannot.
+    /// </remarks>
+    public BackendCapabilities Capabilities => EngineCapabilities;
+
+    /// <summary>
+    /// <see cref="Capabilities"/> without needing an instance, so a UI can gate its controls the moment
+    /// the backend is selected rather than after a readiness probe.
+    /// </summary>
+    public static BackendCapabilities EngineCapabilities { get; } = new(new Dictionary<BackendFeature, string>
+    {
+        [BackendFeature.SamplerSelection] =
+            "The Diffusion Nexus Engine's workflow fixes the sampler and scheduler. Switch to Diffusion Nexus Core to choose them.",
+        [BackendFeature.Loras] =
+            "The Diffusion Nexus Engine cannot load LoRAs yet. Switch to Diffusion Nexus Core to use them.",
+        [BackendFeature.ControlNet] =
+            "Control layers are not wired into the engine's workflow yet.",
+    });
+
+    public async Task<bool> IsAvailableAsync(CancellationToken ct = default)
+    {
+        // The Canvas resolves its backend with this probe, and a cold start makes it up to two minutes
+        // long: a generation getting under way, so Stop on the console's Engine tile asks first.
+        using var preparing = _engine.BeginPreparing();
+        return (await ProbeAsync(ct).ConfigureAwait(false)).Available;
+    }
+
+    // The availability probe; on success also the URL its start returned, kept by the caller in a
+    // local: the console's Stop or a crash's release can clear _engine.BaseUrl at any moment.
+    private async Task<(bool Available, string? BaseUrl)> ProbeAsync(CancellationToken ct)
+    {
+        _missingRequirements.Clear();
+
+        var installRoot = await _resolveInstallRootAsync().ConfigureAwait(false);
+
+        if (!ManagedEngineLocator.LooksInstalled(installRoot))
+        {
+            _installRoot = null;
+            _missingRequirements.Add(
+                "The Diffusion Nexus Engine is not installed. Install it from the Installation Manager.");
+            return (false, null);
+        }
+
+        _installRoot = installRoot;
+        var searchPaths = ComfyUiPathDiscovery.EnumerateModelSearchPaths(installRoot!);
+        var discovered = searchPaths.Count > 0 ? (IModelCatalog)new ComfyUiModelCatalog(searchPaths) : EmptyModelCatalog.Instance;
+        Catalog = new EngineModelCatalog(Krea2Model, discovered);
+
+        if (_templateSource is null || !_templateSource.HasTemplate)
+        {
+            _missingRequirements.Add(
+                "No text2image workflow is configured for the engine yet, so it cannot generate.");
+            return (false, null);
+        }
+
+        var start = await _engine.EnsureRunningAsync(installRoot!, ct).ConfigureAwait(false);
+        if (!start.IsRunning || start.BaseUrl is null)
+        {
+            _missingRequirements.Add(start.FailureReason ?? "The engine could not be started.");
+            return (false, null);
+        }
+
+        // The base engine install deliberately excludes every custom node (see
+        // ManagedEngineInstaller) — only the Krea 2 Turbo workload installs the ones this
+        // template hard-requires. "Engine installed + running" alone does not mean "ready to
+        // generate": install engine, select it, press Generate is the most likely first-run
+        // sequence for a user who hasn't installed the workload yet, and without this check it
+        // would fail with whatever raw text ComfyUI returns instead of a fixable message.
+        using var wrapper = new ComfyUIWrapperService(start.BaseUrl);
+        var missingNodes = await wrapper
+            .CheckRequiredNodesAsync(Krea2WorkflowPatcher.RequiredCustomNodeTypes, ct)
+            .ConfigureAwait(false);
+        if (missingNodes.Count > 0)
+        {
+            _missingRequirements.Add(
+                "The Krea 2 Turbo workload is not installed in the engine (missing: " +
+                string.Join(", ", missingNodes) +
+                "). Install the Krea 2 Turbo workload from the Diffusion Nexus Engine tile.");
+            return (false, null);
+        }
+
+        return (true, start.BaseUrl);
+    }
+
+    public async IAsyncEnumerable<DiffusionStreamItem> GenerateAsync(
+        DiffusionRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // This backend submits ONE graph — the Krea 2 workflow — regardless of what is asked of it, and
+        // it never reads the descriptor. Meanwhile its catalog unions Krea 2 with a real disk scan of the
+        // engine's models root (EngineModelCatalog), so after one readiness probe the caller's model
+        // dropdown can legitimately offer Z-Image-Turbo, FLUX.2-klein or Qwen. Without this guard,
+        // picking one of those ran the Krea 2 GGUF and reported the result under the other model's name:
+        // a wrong image, labelled convincingly. Refused as data, matching this seam's error contract.
+        if (!string.Equals(request.ModelKey, Krea2Model.Key, StringComparison.Ordinal))
+        {
+            var refusal =
+                $"The Diffusion Nexus Engine can only generate with {Krea2Model.DisplayName}; " +
+                $"'{request.ModelKey}' runs on Diffusion Nexus Core. Switch the backend or the model.";
+
+            Logger.Warning("Engine generation refused: {Reason}", refusal);
+
+            yield return new DiffusionStreamItem(new DiffusionProgress
+            {
+                Phase = DiffusionPhase.Completed,
+                Message = refusal
+            });
+            yield break;
+        }
+
+        // TODO(canvas-batch-readiness): this full probe runs per request, and the canvas calls
+        // GenerateAsync once per candidate — so a batch of 8 pays install-root resolution, a models-path
+        // disk walk, a whole /object_info fetch and a /models query eight times over. Worth memoising the
+        // success case, but only with an invalidation that cannot mask a genuinely stopped engine, which
+        // is why it is not done here (issue #518 follow-up).
+        // A generation getting under way: Stop on the console's Engine tile asks first while the probe
+        // starts the engine and checks it, until the job begins (then the job counts instead). From the
+        // job on until the result is downloaded (or the run fails), a pending restart (new node packs or
+        // model folders) waits for it. Availability checks alone begin no job.
+        bool available;
+        string? baseUrl;
+        IDisposable? job = null;
+        using (_engine.BeginPreparing())
+        {
+            (available, baseUrl) = await ProbeAsync(cancellationToken).ConfigureAwait(false);
+            if (available) job = _engine.BeginJob();
+        }
+
+        if (!available)
+        {
+            var reason = _missingRequirements.Count > 0
+                ? string.Join(" ", _missingRequirements)
+                : "The Diffusion Nexus Engine is not ready.";
+
+            Logger.Warning("Engine generation refused: {Reason}", reason);
+
+            yield return new DiffusionStreamItem(new DiffusionProgress
+            {
+                Phase = DiffusionPhase.Completed,
+                Message = reason
+            });
+            yield break;
+        }
+
+        using var jobScope = job;
+
+        var seed = request.Seed ?? Random.Shared.NextInt64(0, int.MaxValue);
+        var startedAt = Stopwatch.GetTimestamp();
+
+        yield return new DiffusionStreamItem(new DiffusionProgress
+        {
+            Phase = DiffusionPhase.Loading,
+            Message = "Submitting to the Diffusion Nexus Engine…"
+        });
+
+        using var wrapper = new ComfyUIWrapperService(baseUrl!);
+
+        // NOTE(progress): IComfyUIWrapperService.WaitForCompletionAsync reports raw WebSocket event
+        // text ("Executing node 62...", "Progress: 3/8") via IProgress<string>, not a typed
+        // step/total pair. Parsing that string to synthesize DiffusionPhase.Sampling items would be
+        // guessing at a stable format the wrapper doesn't promise, so v1 leaves the stream at
+        // Loading -> Completed for the engine path, same as the seam's other honesty rules.
+        // TODO(v2-engine-progress): revisit if/when the wrapper exposes structured step progress.
+
+        DiffusionResult? result = null;
+        string? failure = null;
+
+        // Declared outside the try so the cancellation path knows whether anything was actually queued.
+        string? promptId = null;
+        try
+        {
+            var gguf = await ResolveInstalledKreaGgufAsync(wrapper, cancellationToken).ConfigureAwait(false);
+            var templateJson = _templateSource!.LoadTemplateJson()
+                ?? throw new InvalidOperationException("The Krea 2 workflow template could not be loaded.");
+
+            // The canvas hands us the pixels under its bounding box as a file. ComfyUI can only read
+            // images from its own input folder, so upload first and patch the graph with the name the
+            // server chose — it may differ from ours when a file of that name already exists.
+            var initImageFileName = await UploadInitImageAsync(wrapper, request, cancellationToken)
+                .ConfigureAwait(false);
+            // A lost init image degrades a plain image-to-image run to text-to-image, but a masked run
+            // cannot degrade: dropping the mask with it would repaint what the user meant to keep.
+            if (initImageFileName is null && request.MaskImage is not null)
+                throw new InvalidOperationException(
+                    "The canvas region for this inpaint run could not be read, so the mask has nothing to keep. Generate again.");
+
+            var maskImageFileName = await UploadMaskImageAsync(wrapper, request, cancellationToken)
+                .ConfigureAwait(false);
+
+            var workflowJson = Krea2WorkflowPatcher.Patch(
+                templateJson, request, seed, gguf, initImageFileName, maskImageFileName);
+
+            // QueueWorkflowAsync loads its workflow from a file path and applies per-node modifiers
+            // itself (it's shared with the inpaint/outpaint/caption flows, which patch node-by-node).
+            // Krea2WorkflowPatcher already produced the fully patched graph in memory, so hand it a
+            // scratch file and no modifiers instead of re-deriving per-node patches here.
+            var scratchWorkflowPath = Path.Combine(Path.GetTempPath(), $"dn-engine-krea2-{Guid.NewGuid():N}.json");
+            try
+            {
+                await File.WriteAllTextAsync(scratchWorkflowPath, workflowJson, cancellationToken).ConfigureAwait(false);
+                promptId = await wrapper.QueueWorkflowAsync(
+                    scratchWorkflowPath, new Dictionary<string, Action<JsonNode>>(), cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                try { File.Delete(scratchWorkflowPath); }
+                catch (IOException) { /* best-effort scratch cleanup */ }
+                catch (UnauthorizedAccessException) { /* best-effort scratch cleanup */ }
+            }
+
+            await wrapper.WaitForCompletionAsync(promptId, ct: cancellationToken).ConfigureAwait(false);
+
+            var comfyResult = await wrapper.GetResultAsync(promptId, cancellationToken).ConfigureAwait(false);
+            var image = comfyResult.Images.FirstOrDefault();
+            if (image is null)
+            {
+                failure = "The engine finished but returned no image.";
+            }
+            else
+            {
+                var bytes = await wrapper.DownloadImageAsync(image, cancellationToken).ConfigureAwait(false);
+                result = new DiffusionResult(bytes, request.Width, request.Height, seed,
+                    Stopwatch.GetElapsedTime(startedAt));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A cancelled canvas batch must stop work on the engine, not merely stop waiting for it —
+            // otherwise the sampler runs to completion server-side and burns the GPU on a result nobody
+            // reads. Issued here, on the unwind, rather than from a CancellationToken.Register callback:
+            // that callback can only fire-and-forget, and the same cancellation tears down this method's
+            // `using var wrapper` moments later. Disposing the wrapper disposes the HttpClient it owns,
+            // which aborts every request still in flight — including the interrupt that was supposed to
+            // stop the GPU. Awaiting it here keeps the client alive until the POST lands.
+            // InterruptAsync swallows its own failures, so this cannot mask the cancellation.
+            //
+            // Gated on having queued: /interrupt is not prompt-scoped, it abandons whatever the server is
+            // executing right now. A cancel during pre-flight (GGUF lookup, template load, init-image
+            // upload — up to two minutes on a cold engine) has queued nothing, and firing it then would
+            // tear down some other feature's prompt on the same server.
+            if (promptId is not null)
+                await wrapper.InterruptAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error(ex, "Engine generation failed.");
+            failure = ex.Message;
+        }
+
+        yield return new DiffusionStreamItem(
+            new DiffusionProgress { Phase = DiffusionPhase.Completed, Message = failure },
+            result);
+    }
+
+    /// <summary>
+    /// Uploads the request's init image to the engine's input folder, or returns null for a plain
+    /// text2image run.
+    /// </summary>
+    /// <remarks>
+    /// A missing or unreadable file is not fatal: the run degrades to text2image with a warning rather
+    /// than failing outright, because the file is a temp scratch file the canvas owns and losing it
+    /// should not cost the user their generation.
+    /// </remarks>
+    private async Task<string?> UploadInitImageAsync(
+        ComfyUIWrapperService wrapper, DiffusionRequest request, CancellationToken ct)
+    {
+        if (request.InitImage is not { } init || string.IsNullOrWhiteSpace(init.FilePath))
+            return null;
+
+        if (!File.Exists(init.FilePath))
+        {
+            Logger.Warning(
+                "The init image {Path} no longer exists; generating text-to-image instead.", init.FilePath);
+            return null;
+        }
+
+        // The canvas composites the region once per Generate and hands every candidate in the batch the
+        // same file, but this runs once per candidate. Without the cache a batch of 8 reads and POSTs the
+        // same multi-megabyte PNG eight times to produce a byte-identical file on the server.
+        if (_uploadCache.TryGet(init.FilePath, StoredInputStillExists, out var cached))
+        {
+            Logger.Debug("Reusing the already uploaded canvas region {StoredName}.", cached);
+            return cached;
+        }
+
+        var stored = await wrapper.UploadImageAsync(init.FilePath, ct).ConfigureAwait(false);
+        _uploadCache.Remember(init.FilePath, stored);
+        Logger.Information(
+            "Uploaded the canvas region as {StoredName}; generating image-to-image at denoise {Strength}.",
+            stored, init.Strength);
+        return stored;
+    }
+
+    /// <summary>
+    /// Uploads the request's inpaint mask, or returns null when the request has none.
+    /// </summary>
+    /// <remarks>
+    /// Unlike the init image, a mask that cannot be read is fatal. Running without it would repaint the
+    /// whole region, including everything the user left unpainted to keep.
+    /// </remarks>
+    private async Task<string?> UploadMaskImageAsync(
+        ComfyUIWrapperService wrapper, DiffusionRequest request, CancellationToken ct)
+    {
+        if (request.MaskImage is not { } mask || string.IsNullOrWhiteSpace(mask.FilePath))
+            return null;
+
+        if (!File.Exists(mask.FilePath))
+            throw new FileNotFoundException(
+                "The inpaint mask file is gone, so the run would repaint the whole region. Generate again.",
+                mask.FilePath);
+
+        if (_maskUploadCache.TryGet(mask.FilePath, StoredInputStillExists, out var cached))
+        {
+            Logger.Debug("Reusing the already uploaded inpaint mask {StoredName}.", cached);
+            return cached;
+        }
+
+        var stored = await wrapper.UploadImageAsync(mask.FilePath, ct).ConfigureAwait(false);
+        _maskUploadCache.Remember(mask.FilePath, stored);
+        Logger.Information("Uploaded the inpaint mask as {StoredName}; the sampler is confined to it.", stored);
+        return stored;
+    }
+
+    /// <summary>
+    /// Whether a previously uploaded input file is still in the engine's <c>input/</c> folder. The cache
+    /// must never mask a file that has gone (a reinstall, a manual clean-up): the graph would then name a
+    /// file the server cannot open. When the folder cannot be located the answer is "no", which costs one
+    /// redundant upload rather than a failed generation.
+    /// </summary>
+    private bool StoredInputStillExists(string storedName)
+    {
+        var mainPy = ManagedEngineLocator.ResolveMainPy(_installRoot);
+        var comfyRoot = mainPy is null ? null : Path.GetDirectoryName(mainPy);
+        if (comfyRoot is null)
+            return false;
+
+        // The engine is launched without --input-directory (see ManagedComfyUiEngine.BuildArguments), so
+        // ComfyUI's default of <ComfyUI>/input applies.
+        return File.Exists(Path.Combine(comfyRoot, "input", storedName));
+    }
+
+    /// <summary>
+    /// The Krea 2 GGUF present on this machine. The template names the Q8_0 quant, but the
+    /// workload downloads whichever quant matches the card's VRAM tier, so submitting the
+    /// template unchanged fails on every machine below the top tier. Returns null when the
+    /// engine cannot be asked, in which case the template's own name is kept.
+    /// </summary>
+    /// <remarks>
+    /// The folder key <c>"diffusion_models"</c> is ComfyUI's conventional UNet/DiT folder name but
+    /// is not independently confirmed against a running engine here — flagged for the manual
+    /// engine-generation smoke. If it's wrong, <c>GetModelsInFolderAsync</c> returns an empty list
+    /// (logged, not thrown) and this falls back to the template's own Q8_0 name.
+    /// </remarks>
+    private static async Task<string?> ResolveInstalledKreaGgufAsync(
+        ComfyUIWrapperService wrapper, CancellationToken ct)
+    {
+        try
+        {
+            var models = await wrapper.GetModelsInFolderAsync("diffusion_models", ct).ConfigureAwait(false);
+            return models.FirstOrDefault(m =>
+                m.Contains("krea2", StringComparison.OrdinalIgnoreCase) &&
+                m.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Could not resolve the installed Krea 2 GGUF; keeping the template's name.");
+            return null;
+        }
+    }
+}

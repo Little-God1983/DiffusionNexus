@@ -3,10 +3,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.ViewModels.Tabs;
+using DiffusionNexus.Service.Services.Imaging;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.UI.ViewModels.Dialogs;
 
@@ -50,6 +49,32 @@ public partial class ColorFixerImageItem : ObservableObject
 
     /// <summary>Whether this image has fixable color issues (not just an outlier).</summary>
     public bool IsFixable => HasColorCast || HasBrightnessIssue;
+
+    /// <summary>
+    /// Whether a fixed image can be written back in its own format. GIF cannot (no encoder in the
+    /// image library) and neither can an animation (only the first frame is decoded), so such
+    /// files are listed but never touched. Decided once when the list is loaded.
+    /// </summary>
+    public bool CanSave { get; init; } = true;
+
+    private string? _fixError;
+
+    /// <summary>
+    /// Why this image cannot be fixed, or why its last fix or preview failed; null when nothing
+    /// went wrong. Shown under the item so a failure is not only in the log.
+    /// </summary>
+    public string? FixError
+    {
+        get => _fixError;
+        set
+        {
+            if (SetProperty(ref _fixError, value))
+                OnPropertyChanged(nameof(HasFixError));
+        }
+    }
+
+    /// <summary>Whether <see cref="FixError"/> has a message to show.</summary>
+    public bool HasFixError => !string.IsNullOrEmpty(_fixError);
 
     /// <summary>Color hex for the score.</summary>
     public string ScoreColor => Score switch
@@ -297,7 +322,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <summary>Skips the selected image without fixing.</summary>
     public IRelayCommand SkipSelectedCommand { get; }
 
-    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    /// <summary>Marks the selected outlier image as trash in the folder's ratings file.</summary>
     public IRelayCommand RejectSelectedCommand { get; }
 
     /// <summary>Auto-fixes all remaining (unfixed, unskipped) images.</summary>
@@ -360,22 +385,29 @@ public partial class ColorFixerViewModel : ObservableObject
 
         foreach (var src in items)
         {
+            bool writableFormat = ImageFileWriter.CanWrite(src.FilePath);
+            bool animated = writableFormat && SkiaPixels.IsAnimated(src.FilePath);
             var item = new ColorFixerImageItem
             {
                 FilePath = src.FilePath,
                 Score = src.Score,
-                Detail = src.Detail
+                Detail = src.Detail,
+                CanSave = writableFormat && !animated
             };
 
-            // Detect pre-existing .rating sidecar marking the image as rejected
-            var ratingPath = Path.ChangeExtension(src.FilePath, ".rating");
-            if (File.Exists(ratingPath))
+            if (!writableFormat)
             {
-                var rating = File.ReadAllText(ratingPath).Trim();
-                if (string.Equals(rating, "Rejected", StringComparison.OrdinalIgnoreCase))
-                {
-                    item.IsRejected = true;
-                }
+                item.FixError = $"Can't save {Path.GetExtension(src.FilePath).ToLowerInvariant()} files, so this image is left as it is. Convert it to PNG to fix it.";
+            }
+            else if (animated)
+            {
+                item.FixError = "This image is animated; saving a fix would keep only the first frame, so it is left as it is.";
+            }
+
+            // An image already marked as trash needs no attention
+            if (ImageRatingStore.Shared.Get(src.FilePath) == ImageRatingStatus.Rejected)
+            {
+                item.IsRejected = true;
             }
 
             Images.Add(item);
@@ -393,9 +425,17 @@ public partial class ColorFixerViewModel : ObservableObject
             return;
 
         IsOptimizing = true;
+        var item = _selectedImage;
         try
         {
-            await OptimizeSliderValuesAsync(_selectedImage);
+            await OptimizeSliderValuesAsync(item);
+            if (item.CanSave)
+                item.FixError = null;
+        }
+        catch (Exception ex)
+        {
+            ReportFailure(item, "fix", ex);
+            Logger.Error(ex, "Failed to find slider values for {FilePath}", item.FilePath);
         }
         finally
         {
@@ -433,6 +473,10 @@ public partial class ColorFixerViewModel : ObservableObject
             var remaining = Images.Where(i => !i.IsResolved).ToList();
             foreach (var image in remaining)
             {
+                // A format that cannot be written back stays untouched; its FixError says why.
+                if (!image.CanSave)
+                    continue;
+
                 // Skip pure outliers — they need manual review, not color correction
                 if (image.IsOutlier && !image.IsFixable)
                 {
@@ -442,7 +486,18 @@ public partial class ColorFixerViewModel : ObservableObject
                     continue;
                 }
 
-                await OptimizeSliderValuesAsync(image);
+                // One unreadable image must not abort the rest of the batch.
+                try
+                {
+                    await OptimizeSliderValuesAsync(image);
+                }
+                catch (Exception ex)
+                {
+                    ReportFailure(image, "fix", ex);
+                    Logger.Error(ex, "Failed to prepare the color fix for {FilePath}", image.FilePath);
+                    continue;
+                }
+
                 await ApplyColorFixAsync(image);
             }
         }
@@ -452,25 +507,15 @@ public partial class ColorFixerViewModel : ObservableObject
         }
     }
 
-    /// <summary>Marks the selected outlier image as trash by writing a .rating sidecar file.</summary>
+    /// <summary>Marks the selected outlier image as trash in the folder's ratings file.</summary>
     private void RejectSelected()
     {
         if (_selectedImage is null || _selectedImage.IsResolved)
             return;
 
-        var ratingPath = Path.ChangeExtension(_selectedImage.FilePath, ".rating");
-        try
+        if (!ImageRatingStore.Shared.Set(_selectedImage.FilePath, ImageRatingStatus.Rejected))
         {
-            File.WriteAllText(ratingPath, "Rejected");
-        }
-        catch (IOException ex)
-        {
-            Logger.Warning(ex, "Failed to write rating file for {FilePath}", _selectedImage.FilePath);
-            return;
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            Logger.Warning(ex, "No permission to write rating file for {FilePath}", _selectedImage.FilePath);
+            Logger.Warning("Failed to save the trash rating for {FilePath}", _selectedImage.FilePath);
             return;
         }
 
@@ -502,7 +547,7 @@ public partial class ColorFixerViewModel : ObservableObject
 
         var (bestTint, bestBright, bestContrast) = await Task.Run(() =>
         {
-            using var image = Image.Load<Rgba32>(item.FilePath);
+            using var image = SkiaPixels.LoadRgba(item.FilePath);
 
             // Score that accounts for both quality and amount of correction applied.
             // Penalizes high slider values so the optimizer prefers gentle fixes.
@@ -526,7 +571,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 {
                     for (int co = 0; co <= 100; co += 20)
                     {
-                        using var clone = image.Clone();
+                        using var clone = image.Copy();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
                         double raw = EstimateScore(clone);
                         double effective = EffectiveScore(raw, t, br, co);
@@ -551,7 +596,7 @@ public partial class ColorFixerViewModel : ObservableObject
                 {
                     for (int co = (int)Math.Max(0, bContrast - 15); co <= Math.Min(100, bContrast + 15); co += 5)
                     {
-                        using var clone = image.Clone();
+                        using var clone = image.Copy();
                         ApplyColorCorrection(clone, item.Detail, t / 100.0, br / 100.0, co / 100.0);
                         double raw = EstimateScore(clone);
                         double effective = EffectiveScore(raw, t, br, co);
@@ -576,21 +621,25 @@ public partial class ColorFixerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Applies automated color correction to a single image using ImageSharp.
+    /// Applies automated color correction to a single image using SkiaSharp.
     /// Routes to issue-specific algorithms based on the detail string from the analyzer.
     /// </summary>
     private async Task ApplyColorFixAsync(ColorFixerImageItem item)
     {
+        if (!item.CanSave)
+            return;
+
         item.IsProcessing = true;
         try
         {
             await Task.Run(() =>
             {
-                using var image = Image.Load<Rgba32>(item.FilePath);
+                using var image = SkiaPixels.LoadRgba(item.FilePath);
                 ApplyColorCorrection(image, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
-                image.Save(item.FilePath);
+                ImageFileWriter.Write(image, item.FilePath, metadataSource: item.FilePath);
             });
 
+            item.FixError = null;
             item.IsFixed = true;
             FixedCount++;
             OnPropertyChanged(nameof(ProgressText));
@@ -600,6 +649,7 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            ReportFailure(item, "fix", ex);
             Logger.Error(ex, "Failed to auto-fix color for {FilePath}", item.FilePath);
         }
         finally
@@ -622,20 +672,24 @@ public partial class ColorFixerViewModel : ObservableObject
         {
             var (previewPath, estimatedScore) = await Task.Run<(string, double)>(() =>
             {
-                using var image = Image.Load<Rgba32>(item.FilePath);
+                using var image = SkiaPixels.LoadRgba(item.FilePath);
 
-                using var corrected = image.Clone();
+                using var corrected = image.Copy();
                 ApplyColorCorrection(corrected, item.Detail, _tintRemoval / 100.0, _brightness / 100.0, _contrast / 100.0);
 
+                // The preview is a throwaway file for display only: plain PNG, no metadata, so
+                // it works for every source format, GIF and animations included.
                 var tempPath = Path.Combine(Path.GetTempPath(), "DiffusionNexus_ColorFixer",
-                    $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}{Path.GetExtension(item.FilePath)}");
+                    $"{Path.GetFileNameWithoutExtension(item.FilePath)}_preview_{DateTime.UtcNow.Ticks}.png");
                 Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
-                corrected.Save(tempPath);
+                SkiaPixels.SavePng(corrected, tempPath);
 
                 double score = EstimateScore(corrected);
                 return (tempPath, score);
             });
 
+            if (item.CanSave)
+                item.FixError = null;
             item.AfterPreviewPath = previewPath;
             item.NotifyPreviewChanged();
             EstimatedScore = estimatedScore;
@@ -643,12 +697,32 @@ public partial class ColorFixerViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            ReportFailure(item, "preview", ex);
             Logger.Error(ex, "Failed to generate preview for {FilePath}", item.FilePath);
         }
         finally
         {
             item.IsGeneratingPreview = false;
         }
+    }
+
+    /// <summary>
+    /// The text shown under an item when its fix or preview failed. A refusal from the writer
+    /// (unsupported or animated format) is already a sentence for the user; anything else gets
+    /// the exception message after a short lead-in.
+    /// </summary>
+    private static string DescribeFailure(string what, Exception ex)
+        => ex is NotSupportedException ? ex.Message : $"Could not {what} this image: {ex.Message}";
+
+    /// <summary>
+    /// Shows a failure under the item, except on an image that cannot be saved: there the
+    /// explanation why it is left alone stays, since a later preview or Auto Set failure (which
+    /// runs in the background when the item is selected) says nothing the user can act on.
+    /// </summary>
+    private static void ReportFailure(ColorFixerImageItem item, string what, Exception ex)
+    {
+        if (item.CanSave)
+            item.FixError = DescribeFailure(what, ex);
     }
 
     /// <summary>
@@ -659,7 +733,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <param name="tintRemoval">Tint removal strength 0.0–1.0.</param>
     /// <param name="brightness">Brightness adjustment strength 0.0–1.0.</param>
     /// <param name="contrast">Contrast adjustment strength 0.0–1.0.</param>
-    private static void ApplyColorCorrection(Image<Rgba32> image, string detail, double tintRemoval, double brightness, double contrast)
+    private static void ApplyColorCorrection(SKBitmap image, string detail, double tintRemoval, double brightness, double contrast)
     {
         if (tintRemoval > 0.001)
         {
@@ -681,7 +755,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// then applying per-pixel white balance that specifically targets the cast color.
     /// Unlike gray-world, this preserves natural color variation while neutralizing the tint.
     /// </summary>
-    private static void ApplyColorCastCorrection(Image<Rgba32> image, double strength)
+    private static void ApplyColorCastCorrection(SKBitmap image, double strength)
     {
         // Step 1: Build hue histogram to find the dominant cast hue
         const int hueBins = 12;
@@ -689,29 +763,23 @@ public partial class ColorFixerViewModel : ObservableObject
         long totalR = 0, totalG = 0, totalB = 0, pixelCount = 0;
         long saturatedPixelCount = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    totalR += p.R;
-                    totalG += p.G;
-                    totalB += p.B;
-                    pixelCount++;
+            byte r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            totalR += r;
+            totalG += g;
+            totalB += b;
+            pixelCount++;
 
-                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out _);
-                    if (s > 0.15f)
-                    {
-                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
-                        hueCounts[bin]++;
-                        saturatedPixelCount++;
-                    }
-                }
+            RgbToHsv(r, g, b, out float h, out float s, out _);
+            if (s > 0.15f)
+            {
+                int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                hueCounts[bin]++;
+                saturatedPixelCount++;
             }
-        });
+        }
 
         if (pixelCount == 0) return;
 
@@ -746,38 +814,31 @@ public partial class ColorFixerViewModel : ObservableObject
         const float maxEffect = 0.4f;
         float userStrength = (float)strength * maxEffect;
 
-        image.ProcessPixelRows(accessor =>
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
+            byte r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+
+            RgbToHsv(r, g, b, out float pixelHue, out float pixelSat, out _);
+
+            // Only correct pixels near the cast hue; leave others mostly untouched
+            float hueProximity = 1.0f;
+            if (pixelSat > 0.15f)
             {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    ref var pixel = ref row[x];
-
-                    RgbToHsv(pixel.R, pixel.G, pixel.B, out float pixelHue, out float pixelSat, out _);
-
-                    // Only correct pixels near the cast hue; leave others mostly untouched
-                    float hueProximity = 1.0f;
-                    if (pixelSat > 0.15f)
-                    {
-                        float hueDist = HueDistance(pixelHue, dominantHue);
-                        // Full correction within 45° of cast; tapers to 10% at 180°
-                        hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.9f, 0.1f, 1.0f);
-                    }
-
-                    float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance, 1.0);
-
-                    float newR = pixel.R * (1f + pixelStrength * (scaleR - 1f));
-                    float newG = pixel.G * (1f + pixelStrength * (scaleG - 1f));
-                    float newB = pixel.B * (1f + pixelStrength * (scaleB - 1f));
-
-                    pixel.R = ClampByte(newR);
-                    pixel.G = ClampByte(newG);
-                    pixel.B = ClampByte(newB);
-                }
+                float hueDist = HueDistance(pixelHue, dominantHue);
+                // Full correction within 45° of cast; tapers to 10% at 180°
+                hueProximity = Math.Clamp(1.0f - hueDist / 180f * 0.9f, 0.1f, 1.0f);
             }
-        });
+
+            float pixelStrength = userStrength * hueProximity * (float)Math.Min(castDominance, 1.0);
+
+            float newR = r * (1f + pixelStrength * (scaleR - 1f));
+            float newG = g * (1f + pixelStrength * (scaleG - 1f));
+            float newB = b * (1f + pixelStrength * (scaleB - 1f));
+
+            pixels[i] = ClampByte(newR);
+            pixels[i + 1] = ClampByte(newG);
+            pixels[i + 2] = ClampByte(newB);
+        }
     }
 
     /// <summary>
@@ -788,26 +849,19 @@ public partial class ColorFixerViewModel : ObservableObject
     /// <param name="brightnessStrength">Brightness adjustment 0.0–1.0.</param>
     /// <param name="contrastStrength">Contrast stretch strength 0.0–1.0.</param>
     /// <param name="brighten">True to brighten dark images, false to darken bright images.</param>
-    private static void ApplyBrightnessCorrection(Image<Rgba32> image, double brightnessStrength, double contrastStrength, bool brighten)
+    private static void ApplyBrightnessCorrection(SKBitmap image, double brightnessStrength, double contrastStrength, bool brighten)
     {
         // Build luminance histogram
         var histogram = new int[256];
         long pixelCount = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    int lum = (int)(0.299 * p.R + 0.587 * p.G + 0.114 * p.B);
-                    histogram[Math.Clamp(lum, 0, 255)]++;
-                    pixelCount++;
-                }
-            }
-        });
+            int lum = (int)(0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2]);
+            histogram[Math.Clamp(lum, 0, 255)]++;
+            pixelCount++;
+        }
 
         if (pixelCount == 0) return;
 
@@ -851,20 +905,12 @@ public partial class ColorFixerViewModel : ObservableObject
         }
 
         // Apply LUT
-        image.ProcessPixelRows(accessor =>
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    ref var pixel = ref row[x];
-                    pixel.R = lut[pixel.R];
-                    pixel.G = lut[pixel.G];
-                    pixel.B = lut[pixel.B];
-                }
-            }
-        });
+            pixels[i] = lut[pixels[i]];
+            pixels[i + 1] = lut[pixels[i + 1]];
+            pixels[i + 2] = lut[pixels[i + 2]];
+        }
     }
 
     /// <summary>Converts RGB (0-255) to HSV (H: 0-360, S: 0-1, V: 0-1).</summary>
@@ -911,7 +957,7 @@ public partial class ColorFixerViewModel : ObservableObject
     /// Estimates the color distribution score for a corrected image using the same
     /// thresholds as <c>ColorDistributionAnalyzer</c>: color cast (−25), very dark (−10), very bright (−10).
     /// </summary>
-    private static double EstimateScore(Image<Rgba32> image)
+    private static double EstimateScore(SKBitmap image)
     {
         const int hueBins = 12;
         const double grayscaleThreshold = 0.1;
@@ -921,28 +967,21 @@ public partial class ColorFixerViewModel : ObservableObject
         double satSum = 0, valSum = 0;
         long totalPixels = 0, saturatedPixels = 0;
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        for (int i = 0; i < pixels.Length; i += 4)
         {
-            for (int y = 0; y < accessor.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (int x = 0; x < row.Length; x++)
-                {
-                    var p = row[x];
-                    RgbToHsv(p.R, p.G, p.B, out float h, out float s, out float v);
-                    satSum += s;
-                    valSum += v;
-                    totalPixels++;
+            RgbToHsv(pixels[i], pixels[i + 1], pixels[i + 2], out float h, out float s, out float v);
+            satSum += s;
+            valSum += v;
+            totalPixels++;
 
-                    if (s >= minSatForHue)
-                    {
-                        int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
-                        hueCounts[bin]++;
-                        saturatedPixels++;
-                    }
-                }
+            if (s >= minSatForHue)
+            {
+                int bin = Math.Clamp((int)(h / 360f * hueBins), 0, hueBins - 1);
+                hueCounts[bin]++;
+                saturatedPixels++;
             }
-        });
+        }
 
         if (totalPixels == 0) return 100;
 

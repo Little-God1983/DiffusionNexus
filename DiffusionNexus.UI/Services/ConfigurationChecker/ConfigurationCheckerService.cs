@@ -186,12 +186,35 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
 
     /// <summary>
     /// Reads the <c>extra_model_paths.yaml</c> from the repository root and extracts
-    /// all <c>base_path</c> values plus paths listed under model type keys.
+    /// all <c>base_path</c> values plus paths listed under model type keys — every
+    /// directory a model file might sit in, which is what searching needs.
+    ///
+    /// This is NOT a list of model <em>roots</em>: a <c>loras: Lora/</c> entry resolves to
+    /// a single category folder, not a directory that holds the ComfyUI category
+    /// subfolders. Use <see cref="ParseExtraModelPathRoots"/> when you need roots.
     /// Uses simple line-by-line parsing to avoid adding a YAML library dependency.
     /// </summary>
     public static List<string> ParseExtraModelPathsYaml(string repositoryPath)
+        => [.. EnumerateExtraModelPathEntries(repositoryPath).Select(entry => entry.Path)];
+
+    /// <summary>
+    /// The <c>base_path</c> values only — the shared model libraries an installation
+    /// points at, each of which holds the per-category subfolders. These are model roots
+    /// in the sense <see cref="Domain.Entities.BaseModelFolder"/> means it; the per-category
+    /// entries that <see cref="ParseExtraModelPathsYaml"/> also returns are not.
+    /// </summary>
+    public static List<string> ParseExtraModelPathRoots(string repositoryPath)
+        => [.. EnumerateExtraModelPathEntries(repositoryPath)
+                .Where(entry => entry.IsBasePath)
+                .Select(entry => entry.Path)];
+
+    /// <summary>
+    /// Every path the YAML resolves to, each flagged with whether it came from a
+    /// <c>base_path</c> key (a root) or from a model-type key (a category folder).
+    /// </summary>
+    private static List<(bool IsBasePath, string Path)> EnumerateExtraModelPathEntries(string repositoryPath)
     {
-        var results = new List<string>();
+        var results = new List<(bool IsBasePath, string Path)>();
 
         var yamlPath = Path.Combine(repositoryPath, ExtraModelPathsFileName);
         if (!File.Exists(yamlPath))
@@ -228,7 +251,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                     currentBasePath = NormalizeYamlPath(value);
                     if (Path.IsPathRooted(currentBasePath) && Directory.Exists(currentBasePath))
                     {
-                        results.Add(currentBasePath);
+                        results.Add((IsBasePath: true, Path: currentBasePath));
                     }
                 }
                 else if (!string.IsNullOrWhiteSpace(value) && !key.Contains('#'))
@@ -239,7 +262,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                     {
                         if (Directory.Exists(resolvedPath))
                         {
-                            results.Add(resolvedPath);
+                            results.Add((IsBasePath: false, Path: resolvedPath));
                         }
                     }
                     else if (currentBasePath is not null)
@@ -247,7 +270,7 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
                         var fullPath = Path.Combine(currentBasePath, resolvedPath);
                         if (Directory.Exists(fullPath))
                         {
-                            results.Add(fullPath);
+                            results.Add((IsBasePath: false, Path: fullPath));
                         }
                     }
                 }
@@ -309,70 +332,29 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
         var (fileNames, isVramScoped, scopedProfile) = ResolveExpectedFileNames(model, options.SelectedVramGb);
 
         var searchedPaths = new List<string>();
-        var foundPath = string.Empty;
+        var found = new List<string>();
 
         foreach (var fileName in fileNames)
         {
-            if (!string.IsNullOrEmpty(foundPath))
+            foreach (var candidate in CandidatePaths(configuration, model, repositoryPath, modelSearchPaths, options, fileName))
             {
-                break;
-            }
-
-            // 1. Check model's explicit destination
-            if (!string.IsNullOrWhiteSpace(model.Destination))
-            {
-                var destinationDir = ModelDestinationResolver.Resolve(
-                    configuration, model, repositoryPath, options.ModelBaseFolder, options.FolderPathOverrides);
-                var explicitPath = Path.Combine(destinationDir, fileName);
-                searchedPaths.Add(explicitPath);
-
-                if (File.Exists(explicitPath))
-                {
-                    foundPath = explicitPath;
-                    break;
-                }
-            }
-
-            // 2. Search all model search paths
-            foreach (var basePath in modelSearchPaths)
-            {
-                var directPath = Path.Combine(basePath, fileName);
-                searchedPaths.Add(directPath);
-                if (File.Exists(directPath))
-                {
-                    foundPath = directPath;
-                    break;
-                }
-
-                if (!Directory.Exists(basePath))
-                {
+                searchedPaths.Add(candidate);
+                if (!File.Exists(candidate))
                     continue;
-                }
 
-                try
-                {
-                    foreach (var subDir in Directory.EnumerateDirectories(basePath))
-                    {
-                        var subPath = Path.Combine(subDir, fileName);
-                        searchedPaths.Add(subPath);
-                        if (File.Exists(subPath))
-                        {
-                            foundPath = subPath;
-                            break;
-                        }
-                    }
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    // Skip inaccessible directories
-                }
+                var full = Path.GetFullPath(candidate);
+                if (!found.Contains(full, StringComparer.OrdinalIgnoreCase))
+                    found.Add(full);
 
-                if (!string.IsNullOrEmpty(foundPath))
-                {
+                if (!options.CollectAllMatches)
                     break;
-                }
             }
+
+            if (found.Count > 0 && !options.CollectAllMatches)
+                break;
         }
+
+        var foundPath = found.Count > 0 ? found[0] : string.Empty;
 
         var hasVramProfiles = model.DownloadLinks?.Any(l => l.Enabled && l.VramProfile.HasValue) ?? false;
 
@@ -382,12 +364,64 @@ public sealed class ConfigurationCheckerService : IConfigurationCheckerService
             Name = model.Name,
             IsInstalled = model.IsPlaceholder || !string.IsNullOrEmpty(foundPath),
             IsPlaceholder = model.IsPlaceholder,
+            IsFindableByName = fileNames.Any(Path.HasExtension),
+            Category = CategoryOf(model.Destination),
             IsVramProfileScoped = isVramScoped,
             ScopedVramProfile = scopedProfile,
             HasVramProfiles = hasVramProfiles,
             SearchedPaths = searchedPaths,
-            FoundAtPath = foundPath
+            FoundAtPath = foundPath,
+            AllFoundPaths = found
         };
+    }
+
+    /// <summary>The last segment of a model destination (<c>models/vae</c> → <c>vae</c>); null when there is none.</summary>
+    private static string? CategoryOf(string? destination)
+    {
+        if (string.IsNullOrWhiteSpace(destination)) return null;
+        var category = Path.GetFileName(destination.Replace('/', '\\').TrimEnd('\\'));
+        return string.IsNullOrWhiteSpace(category) ? null : category;
+    }
+
+    /// <summary>
+    /// Where a file named <paramref name="fileName"/> may sit, in search order: the model's explicit
+    /// destination, then each search folder and its direct subfolders.
+    /// </summary>
+    private static IEnumerable<string> CandidatePaths(
+        InstallationConfiguration configuration,
+        ModelDownload model,
+        string repositoryPath,
+        List<string> modelSearchPaths,
+        ConfigurationCheckOptions options,
+        string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(model.Destination))
+        {
+            var destinationDir = ModelDestinationResolver.Resolve(
+                configuration, model, repositoryPath, options.ModelBaseFolder, options.FolderPathOverrides);
+            yield return Path.Combine(destinationDir, fileName);
+        }
+
+        foreach (var basePath in modelSearchPaths)
+        {
+            yield return Path.Combine(basePath, fileName);
+
+            if (!Directory.Exists(basePath))
+                continue;
+
+            List<string> subDirs;
+            try
+            {
+                subDirs = Directory.EnumerateDirectories(basePath).ToList();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue; // Skip inaccessible directories
+            }
+
+            foreach (var subDir in subDirs)
+                yield return Path.Combine(subDir, fileName);
+        }
     }
 
     /// <summary>

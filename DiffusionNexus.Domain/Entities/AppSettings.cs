@@ -79,6 +79,26 @@ public class AppSettings
     /// </summary>
     public int LoraUpdateCheckStalenessDays { get; set; } = 3;
 
+    // --- Metadata Sync Settings (issue #521 Plan E) ---
+
+    /// <summary>
+    /// Days before the bulk sync re-checks a model whose identity attempt found nothing
+    /// (NotIdentified/Sidecar/Header/Heuristic outcomes). Default 30 (spec §4.1 retry policy).
+    /// </summary>
+    public int SyncNotIdentifiedRetryDays { get; set; } = 30;
+
+    /// <summary>Days before the bulk sync retries a model whose last attempt errored. Default 1.</summary>
+    public int SyncErrorRetryDays { get; set; } = 1;
+
+    /// <summary>
+    /// How many thumbnail CDN downloads the bulk sync runs in parallel (1–8, default 4).
+    /// Applies to the Thumbnails step only; API steps are paced, never parallel.
+    /// </summary>
+    public int SyncThumbnailConcurrency { get; set; } = 4;
+
+    /// <summary>When the last user-started library-wide metadata sync completed uncancelled, if ever.</summary>
+    public DateTimeOffset? LastLibrarySyncAt { get; set; }
+
     #endregion
 
     #region LoRA Sort Settings
@@ -117,9 +137,24 @@ public class AppSettings
     public string? LoraViewerFilterJson { get; set; }
 
     /// <summary>
+    /// The Civitai Browser's saved filter (selected base models, show-Installed/Early
+    /// Access/Paywalled/NSFW flags), serialized as JSON. Null when the user never saved
+    /// one. Owned and (de)serialized by the Civitai Browser ViewModel.
+    /// </summary>
+    public string? CivitaiBrowserFilterJson { get; set; }
+
+    /// <summary>
     /// Default target folder for LoRA Sort.
     /// </summary>
     public string? LoraSortTargetPath { get; set; }
+
+    /// <summary>
+    /// Folders the LoRA Sorter must leave alone (absolute paths, JSON string array) — utility
+    /// libraries like a hand-curated Lightning folder, whose files would otherwise be scattered by
+    /// base model or dumped into Unknown. Null when the user never excluded anything. Owned and
+    /// (de)serialized by the LoRA Sorter ViewModel.
+    /// </summary>
+    public string? LoraSorterExcludedFoldersJson { get; set; }
 
     /// <summary>
     /// Whether to delete empty source folders after sorting.
@@ -192,6 +227,25 @@ public class AppSettings
     /// The ComfyUI server URL.
     /// </summary>
     public string ComfyUiServerUrl { get; set; } = "http://127.0.0.1:8188/";
+
+    /// <summary>
+    /// Which ComfyUI runs Inpaint and Outpaint. A fresh install uses the Engine; a database that had
+    /// a settings row before this column existed is migrated to <see cref="Enums.ComfyUiServerMode.CustomUrl"/>.
+    /// </summary>
+    public Enums.ComfyUiServerMode ComfyUiServerMode { get; set; } = Enums.ComfyUiServerMode.Engine;
+
+    /// <summary>
+    /// The catalog channel this app follows ("Stable" or "Preview"), #618. Null until chosen: the first
+    /// start with this column copies the installer's saved channel once. Saved only by
+    /// <c>IAppSettingsService.SetCatalogChannelAsync</c>, never by a Settings save.
+    /// </summary>
+    public string? CatalogChannel { get; set; }
+
+    /// <summary>
+    /// Apply a catalog update the startup check finds without asking (#618). Off by default. Saved only by
+    /// <c>IAppSettingsService.SetApplyCatalogUpdatesAutomaticallyAsync</c>, never by a Settings save.
+    /// </summary>
+    public bool ApplyCatalogUpdatesAutomatically { get; set; }
 
     #endregion
 

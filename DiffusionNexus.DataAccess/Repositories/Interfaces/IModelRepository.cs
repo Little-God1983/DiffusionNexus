@@ -31,10 +31,48 @@ public interface IModelRepository : IRepository<Model>
     Task<IReadOnlyList<Model>> GetModelsWithLocalFilesLightAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Writes the user's rating (<see cref="Model.UserNsfwRating"/>) for these models in one
+    /// statement — a tile's whole group at once (#647). <paramref name="originalRating"/> — what
+    /// Civitai says now — is stored only where no original is kept yet, so it stays the rating from
+    /// before the user's first change. Returns the number of models updated.
+    /// </summary>
+    Task<int> SetUserNsfwRatingAsync(IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a single image's ThumbnailData from the database.
     /// Used for on-demand lazy loading when a tile scrolls into view.
     /// </summary>
     Task<(byte[]? Data, string? MimeType)> GetImageThumbnailDataAsync(int imageId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Loads a single <see cref="ModelImage"/> by id, <b>tracked</b> — the thumbnail step writes
+    /// the row it gets back (<c>ThumbnailData</c>, <c>ThumbnailAttemptedAt</c>,
+    /// <c>ThumbnailFailure</c>) and saves through the same unit of work.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when the row is gone, which is an ordinary outcome rather than an error: the
+    /// step selects its work in one scope and executes each item in another, and a model can be
+    /// deleted in between.
+    /// </remarks>
+    Task<ModelImage?> GetImageByIdAsync(int imageId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Loads a single <see cref="ModelVersion"/> by id, <b>tracked</b> — the identify step's
+    /// header/heuristic rungs write the base model straight onto the row they get back and save
+    /// through the same unit of work.
+    /// </summary>
+    /// <remarks>
+    /// Returns null when the row is gone, which is an ordinary outcome rather than an error: the
+    /// step selects its work in one scope and executes each item in another, and a version can be
+    /// deleted in between. Backed by <c>FindAsync</c>, which answers from the change tracker's
+    /// identity map before it ever queries — on the path where a sidecar was found and parsed, the
+    /// sidecar applier already pulled the whole model graph (<see cref="GetByIdWithIncludesAsync"/>)
+    /// onto this same unit of work moments earlier, so this call costs nothing further there. No
+    /// Includes here even so — do NOT widen <see cref="GetByIdWithIncludesAsync"/> for this instead:
+    /// on the no-sidecar path nothing has necessarily been loaded yet, and that method always runs a
+    /// query (five split queries) and drags in every version's image BLOBs, just to fetch one row by id.
+    /// </remarks>
+    Task<ModelVersion?> GetVersionByIdAsync(int versionId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Loads a single model by ID with its full navigation graph.
@@ -127,4 +165,69 @@ public interface IModelRepository : IRepository<Model>
         int totalVersionCount,
         DateTime checkedAtUtc,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Local rows still carrying discovery's old blanket <c>LORA</c> stamp that Civitai has never
+    /// identified — the cohort a library's VAEs, text encoders, ControlNets and upscalers sit in
+    /// (#527). Deliberately excludes <c>Matched</c> rows: those carry an authoritative Civitai
+    /// type, and a name guess may fill a blank but never overwrite an answer.
+    /// <para>
+    /// Also restricted to rows carrying a PICKLE — the only shape the name-only pass may act on
+    /// (design §3, "Why the extension condition is load-bearing"). That restriction is in the query
+    /// rather than left entirely to the caller because this runs on every discovery pass; see the
+    /// implementation's remarks.
+    /// </para>
+    /// <para>
+    /// Excludes <c>IsUserEdited</c> rows, matching <c>IdentifyModelStep</c>'s refusal to re-stamp
+    /// <c>Type</c> on one: a type the user set by hand is an answer, not a blank.
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<Model>> GetSupportAssetBackfillCandidatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Rows still carrying discovery's old blanket <c>LORA</c> stamp whose safetensors WEIGHTS have
+    /// never been read (#527) — the legacy cohort nothing else will ever revisit.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately filtered by neither <c>Source</c> nor sync outcome, and that is the whole point.
+    /// <c>IdentifyModelStep</c> corrects a row's kind whenever it reads that file's weights, but it
+    /// only ever reaches rows a bulk run selects, and <c>Matched</c> is terminal for the retry
+    /// policy — so a support asset Civitai happened to match is re-read by nothing, ever, and keeps
+    /// its wrong type permanently. Three real text encoders sat in exactly that state behind a
+    /// Civitai match (see the smoke notes on PR #549).
+    /// <para>
+    /// Bounded by <c>ModelSyncState.HeaderCheckedAt</c> rather than by an outcome, which makes this
+    /// one header read per file EVER rather than per run, and empties the pass as it goes. Rows with
+    /// no state row at all are excluded rather than given one here: <c>SyncStateInitializer</c> is
+    /// what creates those, deriving each from the model's own history, and a bare row Added by this
+    /// query's caller would be <c>None</c>/unstamped — i.e. immediately due for a metadata check,
+    /// which is the first-run herd <c>SyncStateDeriver</c> exists to prevent. The initializer runs
+    /// at the head of every sync plan, so such a row is simply picked up by the next pass.
+    /// </para>
+    /// <para>
+    /// Restricted to safetensors containers, the mirror image of
+    /// <see cref="GetSupportAssetBackfillCandidatesAsync"/>'s pickle restriction: this pass reads
+    /// weights and a pickle has none, that one guesses from a name and a container must never be
+    /// guessed at. Between them every legacy row is reached exactly once, by the only rung that has
+    /// any evidence for it.
+    /// </para>
+    /// <para>
+    /// Excludes <c>IsUserEdited</c> rows for the reason every rung does: a type the user set by hand
+    /// is an answer, not a blank.
+    /// </para>
+    /// </remarks>
+    Task<IReadOnlyList<Model>> GetHeaderReclassifyCandidatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The <c>LocalPath</c>, validity flag and verification timestamp of every file belonging to a
+    /// support-asset model (VAE, ControlNet, Upscaler, TextEncoder) — nothing else. Backs
+    /// <c>ModelFileSyncService.CountExcludedSupportAssetsAsync</c> (#527): that count only ever
+    /// needs these three columns, so it must not run through
+    /// <see cref="GetModelsWithLocalFilesLightAsync"/>, whose multi-include <c>AsSplitQuery</c>
+    /// over Creator/Tags/Versions/TriggerWords is the heaviest read in the Viewer's load path —
+    /// paying it twice on every refresh, for a number that never looks at any of that graph, is
+    /// exactly the query-count-vs-payload mistake the light variant exists to avoid.
+    /// </summary>
+    Task<IReadOnlyList<(string LocalPath, bool IsLocalFileValid, DateTimeOffset? LocalFileVerifiedAt)>>
+        GetSupportAssetFilePathsAsync(CancellationToken cancellationToken = default);
 }

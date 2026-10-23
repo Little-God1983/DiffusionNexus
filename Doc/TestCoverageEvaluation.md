@@ -33,7 +33,7 @@ Legend: 🟢 Good · 🟡 Mixed/Medium · 🟠 Low · 🔴 Very Low / None
 ## Projects with **Good** Test Coverage
 
 ### ✅ DiffusionNexus.Domain — core utilities & entities (added)
-- `BaseModelDisplayMapperTests`, `BaseModelTypeExtensionsTests`,
+- `BaseModelDisplayMapperTests`,
   `CaptionPostProcessorTests`, `ActivityLogExtensionsTests`,
   `PerImageQualitySummaryTests` (plus the existing `EpochFileItemTests`,
   `NoteItemTests`).
@@ -132,7 +132,7 @@ test fixture:
 ## Projects that **Need Improvement**
 
 ### ⚠️ DiffusionNexus.Domain — Medium (improved)
-New fixtures cover `BaseModelDisplayMapper`, `BaseModelTypeExtensions`,
+New fixtures cover `BaseModelDisplayMapper`,
 `CaptionPostProcessor`, `ActivityLogExtensions` and
 `QualityScoreModels`. Still **untested**:
 
@@ -327,7 +327,7 @@ captioning/inference pipelines.
 
 ## Quick wins (≤ 1 day each)
 
-- `BaseModelDisplayMapper` / `BaseModelTypeExtensions` — pure functions, trivial.
+- `BaseModelDisplayMapper` — pure functions, trivial. (`BaseModelTypeExtensions` was deleted with its enum in #553.)
 - `CaptionPostProcessor` — deterministic string transforms.
 - `CivitaiQueryParameters` — URL builder, table-driven tests.
 - `HtmlTextHelper` (UI) — pure helper.

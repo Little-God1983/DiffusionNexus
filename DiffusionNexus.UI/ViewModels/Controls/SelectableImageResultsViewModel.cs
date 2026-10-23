@@ -20,9 +20,17 @@ namespace DiffusionNexus.UI.ViewModels.Controls;
 public partial class SelectableImageResultsViewModel : ObservableObject
 {
     private ImageStatusItemViewModel? _lastClickedItem;
+    private readonly bool _clearOnNewRun;
 
     /// <summary>The result tiles (owned by the host; this VM only reads + flips <c>IsSelected</c>).</summary>
     public ObservableCollection<ImageStatusItemViewModel> Items { get; }
+
+    /// <summary>
+    /// Upper bound on retained tiles when <c>clearOnNewRun</c> is false, enforced by
+    /// <see cref="BeginRun"/> (oldest trimmed first). Each tile pins a decoded thumbnail, so an
+    /// uncapped history grows unbounded over a long session. Zero or less means no limit.
+    /// </summary>
+    public int MaxHistoryItems { get; set; } = 200;
 
     /// <summary>The reusable Add/Send actions, gated on the current selection.</summary>
     public ImageActionsViewModel Actions { get; }
@@ -40,12 +48,19 @@ public partial class SelectableImageResultsViewModel : ObservableObject
 
     public string SelectionText => SelectionCount == 1 ? "1 selected" : $"{SelectionCount} selected";
 
+    /// <param name="clearOnNewRun">
+    /// Whether <see cref="BeginRun"/> wipes the strip. True (the default) suits hosts that show only
+    /// the batch in flight; false keeps a run history that accumulates across runs, capped by
+    /// <see cref="MaxHistoryItems"/>.
+    /// </param>
     public SelectableImageResultsViewModel(
         ObservableCollection<ImageStatusItemViewModel> items,
-        ImageActionsViewModel actions)
+        ImageActionsViewModel actions,
+        bool clearOnNewRun = true)
     {
         Items = items ?? throw new ArgumentNullException(nameof(items));
         Actions = actions ?? throw new ArgumentNullException(nameof(actions));
+        _clearOnNewRun = clearOnNewRun;
 
         Actions.PathProvider = () => Task.FromResult(new ImageActionPaths(GetSelectedFilePaths()));
 
@@ -53,6 +68,57 @@ public partial class SelectableImageResultsViewModel : ObservableObject
         // state consistent when that happens.
         Items.CollectionChanged += OnItemsCollectionChanged;
         UpdateSelectionState();
+    }
+
+    /// <summary>
+    /// Prepares the strip for a run the host is about to start, then leaves it to append its tiles.
+    /// Wipes everything when the host asked to clear; otherwise keeps prior tiles as history and only
+    /// drops the carried-over selection and <see cref="PrimaryItem"/> — stale tiles must not stay
+    /// armed for Add/Send, and the comparison should follow the new run.
+    /// </summary>
+    public void BeginRun()
+    {
+        if (_clearOnNewRun)
+        {
+            var stale = Items.ToList();
+            Items.Clear();
+            DisposeThumbnails(stale);
+            return;
+        }
+
+        TrimToCap();
+        ClearSelectionSilent();
+        _lastClickedItem = null;
+        PrimaryItem = null;
+        UpdateSelectionState();
+    }
+
+    /// <summary>Drops the oldest tiles until the history fits <see cref="MaxHistoryItems"/>.</summary>
+    private void TrimToCap()
+    {
+        if (MaxHistoryItems <= 0) return;
+
+        var excess = Items.Count - MaxHistoryItems;
+        if (excess <= 0) return;
+
+        var dropped = Items.Take(excess).ToList();
+        for (var i = 0; i < excess; i++)
+            Items.RemoveAt(0);
+        DisposeThumbnails(dropped);
+    }
+
+    /// <summary>
+    /// Releases the decoded thumbnails of tiles already detached from <see cref="Items"/>. Detach
+    /// first, dispose second — disposing a bitmap still bound into the visual tree faults the render.
+    /// </summary>
+    private static void DisposeThumbnails(IEnumerable<ImageStatusItemViewModel> items)
+    {
+        foreach (var item in items)
+        {
+            var thumbnail = item.Thumbnail;
+            item.Thumbnail = null;
+            thumbnail?.Dispose();
+        }
     }
 
     private void OnItemsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)

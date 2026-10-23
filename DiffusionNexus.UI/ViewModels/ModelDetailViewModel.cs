@@ -12,9 +12,12 @@ using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Infrastructure;
+using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -38,18 +41,27 @@ public partial class ModelDetailViewModel : ViewModelBase
     // so design-time / demo construction keeps working.
     private readonly IServiceScopeFactory? _scopeFactory;
     private readonly IDialogService? _dialogService;
-    private readonly LoraDownloadService? _downloadService;
-    private readonly IDownloadCoordinator? _downloadCoordinator;
-    private readonly ITaskTracker? _taskTracker;
-    private readonly IActivityLogService? _activityLog;
+    private readonly ICivitaiModelDownloader? _modelDownloader;
+    private readonly ICivitaiApiCache? _apiCache;
     private readonly IClipboardService _clipboard = AvaloniaClipboardService.Instance;
     private readonly IUiScheduler _uiScheduler = AvaloniaUiScheduler.Instance;
+    private ICivitaiApiKeyProvider? _apiKeyProvider;
+
+    /// <summary>
+    /// Early-access waitlist shared with the Browse Civitai tab. One instance app-wide:
+    /// a second one would clobber the first's JSON snapshot on every persist.
+    /// </summary>
+    private readonly Services.CivitaiBrowser.CivitaiWaitlist? _waitlist;
 
     /// <summary>
     /// Cached Civitai model data from the initial API fetch.
     /// Reused after download to rebuild version tabs without an extra API call.
+    /// Internal so gated-download tests can stage a fetched model without a live client.
     /// </summary>
-    private CivitaiModel? _cachedCivitaiModel;
+    internal CivitaiModel? CachedCivitaiModel { get; set; }
+
+    /// <summary>Seam for "open in browser", same pattern as the browse tab's opener.</summary>
+    public Action<string> UrlOpener { get; set; } = UrlLauncher.Open;
 
     /// <summary>
     /// Cancels any in-flight Civitai thumbnail download when the selected version tab changes.
@@ -57,11 +69,23 @@ public partial class ModelDetailViewModel : ViewModelBase
     private CancellationTokenSource? _detailThumbnailCts;
 
     /// <summary>
+    /// Monotonic counter bumped on every <see cref="LoadAsync"/> call and captured by
+    /// <see cref="LoadIdentitySourceAsync"/> before it awaits. If the panel has since moved on to
+    /// a different tile (the counter no longer matches), the loader's final write is dropped
+    /// instead of stamping the previous tile's stale identity source over the current one —
+    /// guards against a slow-to-resolve model's lookup completing after a faster one for the
+    /// tile the user switched to in the meantime.
+    /// </summary>
+    private int _identityLoadGeneration;
+
+    /// <summary>
     /// Shared HttpClient for Civitai version-thumbnail downloads (see
     /// <see cref="LoadCivitaiThumbnailAsync"/>). Reusing a single instance avoids the
     /// socket exhaustion (TIME_WAIT accumulation) that a fresh <c>new HttpClient()</c> per
-    /// call caused on the tile thumbnail path — mirrors <c>ModelTileViewModel</c>'s
-    /// <c>s_thumbnailClient</c> pattern (issue #460).
+    /// call caused on the tile thumbnail path (issue #460). The tile itself no longer holds a
+    /// client of its own — it fetches through <c>IThumbnailProvider</c>'s typed client (#521
+    /// Plan B) — so this is the last hand-rolled one, and it is here because the version-tab
+    /// preview is a full-size Civitai image, not a thumbnail the pipeline knows about.
     /// </summary>
     private static readonly HttpClient s_civitaiThumbnailClient = new()
     {
@@ -169,6 +193,19 @@ public partial class ModelDetailViewModel : ViewModelBase
     private bool _isLoading;
 
     /// <summary>
+    /// Whether a library metadata sync is running somewhere else. Set by
+    /// <c>LoraViewerViewModel</c>, which owns the runs (R10).
+    /// </summary>
+    /// <remarks>
+    /// The sync service is single-flight: a second run throws rather than queueing. The button
+    /// therefore has to be off while one is going, or pressing it produces an exception message
+    /// about something the user had no way of knowing was in progress.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadMetadataCommand))]
+    private bool _isLibrarySyncRunning;
+
+    /// <summary>
     /// Status/error message.
     /// </summary>
     [ObservableProperty]
@@ -193,6 +230,19 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     [ObservableProperty]
     private string _versionIdDisplay = string.Empty;
+
+    /// <summary>
+    /// How this model's identity was last resolved ("Civitai", "sidecar file", "file header",
+    /// "guessed from filename"), or <c>null</c> when nothing meaningful can be said (never
+    /// checked, checked and nothing found, or the last check errored). See
+    /// <see cref="LoadIdentitySourceAsync"/> for the granularity caveat.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasIdentitySource))]
+    private string? _identitySourceDisplay;
+
+    /// <summary>Whether the "Identity source:" row has anything to show.</summary>
+    public bool HasIdentitySource => IdentitySourceDisplay is not null;
 
     #endregion
 
@@ -249,12 +299,12 @@ public partial class ModelDetailViewModel : ViewModelBase
         ICivitaiBaseModelCatalog? baseModelCatalog = null,
         IServiceScopeFactory? scopeFactory = null,
         IDialogService? dialogService = null,
-        LoraDownloadService? downloadService = null,
-        IDownloadCoordinator? downloadCoordinator = null,
-        ITaskTracker? taskTracker = null,
-        IActivityLogService? activityLog = null,
         IClipboardService? clipboard = null,
-        IUiScheduler? uiScheduler = null)
+        IUiScheduler? uiScheduler = null,
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        ICivitaiModelDownloader? modelDownloader = null,
+        ICivitaiApiCache? apiCache = null,
+        Services.CivitaiBrowser.CivitaiWaitlist? waitlist = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -263,12 +313,12 @@ public partial class ModelDetailViewModel : ViewModelBase
         _baseModelCatalog = baseModelCatalog;
         _scopeFactory = scopeFactory;
         _dialogService = dialogService;
-        _downloadService = downloadService;
-        _downloadCoordinator = downloadCoordinator;
-        _taskTracker = taskTracker;
-        _activityLog = activityLog;
         _clipboard = clipboard ?? AvaloniaClipboardService.Instance;
         _uiScheduler = uiScheduler ?? AvaloniaUiScheduler.Instance;
+        _apiKeyProvider = apiKeyProvider;
+        _apiCache = apiCache;
+        _modelDownloader = modelDownloader;
+        _waitlist = waitlist;
     }
 
     #endregion
@@ -280,14 +330,15 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// </summary>
     public async Task LoadAsync(ModelTileViewModel tile)
     {
-        _cachedCivitaiModel = null;
+        CachedCivitaiModel = null;
         SourceTile = tile;
 
         // Populate from local data immediately
         ModelName = tile.DisplayName;
         ModelTypeDisplay = tile.ModelTypeDisplay;
         CreatorDisplay = tile.CreatorName;
-        ThumbnailImage = tile.ThumbnailImage;
+        // A picture the tile covers (Show NSFW off, #631) is not shown here either.
+        ThumbnailImage = tile.IsPreviewHidden ? null : tile.ThumbnailImage;
 
         PopulateFromLocalVersion(tile);
 
@@ -299,6 +350,16 @@ public partial class ModelDetailViewModel : ViewModelBase
         // falls back to a bundled snapshot when offline). Fire-and-forget so a
         // slow first fetch never blocks the detail view from rendering.
         _ = LoadBaseModelCatalogAsync();
+
+        // Look up how this model was identified for the "Identity source:" row. Reset first so
+        // a stale value from the previously displayed tile never lingers while the fresh lookup
+        // is in flight, then fire-and-forget for the same reason as the catalog load above.
+        // Bump the generation counter so a still-in-flight lookup from a previous tile can tell,
+        // when it finally completes, that it is no longer the current one and must not overwrite
+        // this tile's chip.
+        IdentitySourceDisplay = null;
+        var identityLoadGeneration = ++_identityLoadGeneration;
+        _ = LoadIdentitySourceAsync(tile.ModelEntity?.Id ?? 0, identityLoadGeneration);
 
         // Try to fetch from Civitai API for the full version list
         await FetchCivitaiDataAsync(tile);
@@ -333,7 +394,8 @@ public partial class ModelDetailViewModel : ViewModelBase
     /// and persistence logic shared with the bulk "Download Metadata" flow): it hashes
     /// the LoRA file, looks it up on Civitai, persists the returned metadata, and then
     /// reloads this detail view so the new description/tags/images/versions appear.
-    /// Disabled while a load or fetch is already in flight.
+    /// Disabled while a load or fetch is already in flight, and while a library-wide sync is
+    /// running — the sync service admits one run at a time and refuses a second outright.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanDownloadMetadata))]
     private void DownloadMetadata()
@@ -341,7 +403,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         MetadataDownloadRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    private bool CanDownloadMetadata() => !IsLoading;
+    private bool CanDownloadMetadata() => !IsLoading && !IsLibrarySyncRunning;
 
     /// <summary>
     /// Copies trigger words to clipboard.
@@ -363,14 +425,24 @@ public partial class ModelDetailViewModel : ViewModelBase
         var tab = SelectedVersionTab;
         if (tab is null || tab.IsDownloaded) return;
 
+        // Gated versions can't be downloaded by the app at all — Civitai serves paid files
+        // through the website only. Mirror the Browse tab: one preflight dialog offering
+        // waitlist/website instead of letting the transfer die with a red failure line.
+        // Checked before the token prompt — no point demanding a key for a refused download.
+        if (tab.CivitaiVersion.IsEarlyAccessActive())
+        {
+            var outcome = await CreateGatedPreflight().RunAsync(GatedSubjectFor(tab));
+            if (outcome.StatusMessage is not null) StatusMessage = outcome.StatusMessage;
+            if (!outcome.Proceed) return;
+        }
+
         // Ensure a Civitai API token is configured before downloading.
         // If missing, show the token dialog so the user can paste one.
         if (!await EnsureCivitaiTokenAsync())
             return;
 
         // Resolve download URL
-        var primaryFile = tab.CivitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? tab.CivitaiVersion.Files.FirstOrDefault();
+        var primaryFile = CivitaiVersionFiles.PickPrimary(tab.CivitaiVersion);
         var downloadUrl = primaryFile?.DownloadUrl ?? tab.DownloadUrl;
         if (string.IsNullOrWhiteSpace(downloadUrl))
         {
@@ -395,206 +467,108 @@ public partial class ModelDetailViewModel : ViewModelBase
         if (!result.Confirmed || string.IsNullOrWhiteSpace(result.TargetFolder))
             return;
 
-        // Start the download in the background with progress tracking
-        var fileName = primaryFile?.Name ?? $"{ModelName}_{tab.Label}.safetensors";
-        var targetPath = Path.Combine(result.TargetFolder, fileName);
+        // The panel's own fallback name when the version carries no named file, instead of the
+        // downloader's synthesized "model_{id}.safetensors". Also the name reported back to the user.
+        var fallbackFileName = string.IsNullOrWhiteSpace(primaryFile?.Name)
+            ? $"{ModelName}_{tab.Label}.safetensors"
+            : null;
+        var fileName = fallbackFileName ?? primaryFile!.Name!;
 
         // Mark as downloading
         tab.IsDownloading = true;
 
-        _ = Task.Run(() => DownloadFileAsync(downloadUrl, targetPath, tab));
+        // The one download path owns the transfer, the collision policy, hash verification,
+        // persistence and the library-changed signal (spec §4.4) — this panel only asks.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (_modelDownloader is null)
+                {
+                    _logger?.Warn(LogCategory.Download, "LoraDownload",
+                        "Download unavailable: ICivitaiModelDownloader not provided.");
+                    return;
+                }
+
+                var request = new DownloadRequest(tab.CivitaiVersion, result.TargetFolder!, DownloadTrigger.DetailPanel)
+                {
+                    File = primaryFile,
+                    ExistingModelId = SourceTile?.ModelEntity?.Id,
+                    FileNameOverride = fallbackFileName,
+                };
+
+                var outcome = await _modelDownloader.DownloadAsync(request).ConfigureAwait(false);
+                if (outcome.Success && outcome.FinalPath is not null)
+                {
+                    await _uiScheduler.InvokeAsync(() => _ = RefreshAfterDownloadAsync(outcome.FinalPath));
+                    return;
+                }
+
+                // Without this the typed outcome had no consumer here: a 403 on a gated model just
+                // stopped the spinner — no message, no dialog, no status text — while the inline
+                // downloader this replaced reported the failure and the sibling migration in
+                // LoraViewerViewModel maps every status to a visible line.
+                if (DescribeFailedDownload(outcome, fileName) is { } message)
+                    await _uiScheduler.InvokeAsync(() => StatusMessage = message);
+            }
+            finally
+            {
+                await _uiScheduler.InvokeAsync(() => tab.IsDownloading = false);
+            }
+        });
     }
 
     /// <summary>
-    /// Streams the file download with progress tracking via the unified logger.
+    /// The shared single-version preflight (also used by the toolbar's Download-LoRA dialog
+    /// path), built per call so it always carries this panel's current <see cref="UrlOpener"/>.
     /// </summary>
-    // TODO: Linux Implementation for download task
-    private async Task DownloadFileAsync(string downloadUrl, string targetPath, CivitaiVersionTabItem tab)
+    private GatedDownloadPreflight CreateGatedPreflight()
+        => new(_waitlist, _logger) { UrlOpener = UrlOpener };
+
+    /// <summary>
+    /// This panel's facts about the gated version. The version DTO names its own model; the
+    /// cached fetch is the fallback for payloads (older sidecars) that omit it.
+    /// </summary>
+    private GatedDownloadPreflight.Subject GatedSubjectFor(CivitaiVersionTabItem tab) => new(
+        ModelId: tab.CivitaiVersion.ModelId > 0 ? tab.CivitaiVersion.ModelId : CachedCivitaiModel?.Id ?? 0,
+        ModelName: ModelName,
+        VersionLabel: tab.Label,
+        Version: tab.CivitaiVersion,
+        Category: CategoryDisplay,
+        IsNsfw: CachedCivitaiModel is { } model && Services.CivitaiBrowser.CivitaiNsfwPolicy.IsCardNsfw(model));
+
+    /// <summary>
+    /// Applies the user's choice from the gated-version dialog. Returns true only when the
+    /// download should still proceed. Thin wrapper over the shared preflight, kept so tests
+    /// can prove this panel's state (name, category, cached model) feeds the choice correctly.
+    /// </summary>
+    internal bool ApplyGatedVersionChoice(DownloadPreflightResult choice, CivitaiVersionTabItem tab)
     {
-        var taskName = $"Downloading {Path.GetFileName(targetPath)}";
-        IActivityLogService? activityLog = null;
-        ITrackedTaskHandle? taskHandle = null;
-
-        try
-        {
-            var downloadService = _downloadService;
-            if (downloadService is not null)
-            {
-                // Route through IDownloadCoordinator so this aggregates with any
-                // other downloads in flight (Civitai queue, etc.) instead of stealing
-                // the single-slot activity-log progress.
-                var coordinator = _downloadCoordinator;
-                var tcs = new TaskCompletionSource<bool>();
-
-                async Task<bool> RunAsync(IProgress<DownloadTaskProgress>? progress, CancellationToken ct)
-                {
-                    await downloadService.DownloadFileAsync(
-                        downloadUrl,
-                        targetPath,
-                        tab.CivitaiVersion,
-                        taskName,
-                        reportProgress: (pct, msg) =>
-                            progress?.Report(new DownloadTaskProgress((int)(pct * 100), msg)),
-                        completed: () => _uiScheduler.Post(async () =>
-                        {
-                            await RefreshAfterDownloadAsync(targetPath);
-                            tcs.TrySetResult(true);
-                        }),
-                        failed: () => _uiScheduler.Post(() =>
-                        {
-                            tab.IsDownloading = false;
-                            tcs.TrySetResult(false);
-                        }),
-                        existingModelId: SourceTile?.ModelEntity?.Id,
-                        externalCancellationToken: ct,
-                        reportToActivityLog: coordinator is null);
-
-                    return await tcs.Task.ConfigureAwait(false);
-                }
-
-                if (coordinator is not null)
-                    await coordinator.EnqueueAsync(taskName, RunAsync, CancellationToken.None).ConfigureAwait(false);
-                else
-                    await RunAsync(null, CancellationToken.None).ConfigureAwait(false);
-                return;
-            }
-
-            var taskTracker = _taskTracker;
-            activityLog = _activityLog;
-            taskHandle = taskTracker?.BeginTask(taskName, LogCategory.Download);
-
-            activityLog?.StartDownloadProgress(taskName);
-            taskHandle?.ReportIndeterminate("Connecting...");
-
-            // Ensure target directory exists
-            var directory = Path.GetDirectoryName(targetPath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            using var httpClient = new HttpClient(new HttpClientHandler
-            {
-                AllowAutoRedirect = true
-            });
-            httpClient.Timeout = TimeSpan.FromHours(2);
-            httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("DiffusionNexus/1.0");
-
-            // Try without auth first (works for all public models).
-            // If Civitai returns 401/403 (early access), retry with the API key as a query param.
-            var ct = taskHandle?.CancellationToken ?? CancellationToken.None;
-            var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            {
-                response.Dispose();
-                var apiKey = await GetApiKeyAsync();
-                if (!string.IsNullOrEmpty(apiKey))
-                {
-                    taskHandle?.ReportIndeterminate("Retrying with API key...");
-                    var separator = downloadUrl.Contains('?') ? "&" : "?";
-                    var authedUrl = $"{downloadUrl}{separator}token={apiKey}";
-                    response = await httpClient.GetAsync(authedUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-                }
-            }
-
-            using (response)
-            {
-                response.EnsureSuccessStatusCode();
-
-                var totalBytes = response.Content.Headers.ContentLength;
-                long totalRead = 0;
-                var tempPath = targetPath + ".tmp";
-
-                // Use explicit using blocks so streams close before File.Move
-                await using (var contentStream = await response.Content.ReadAsStreamAsync(ct))
-                await using (var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None,
-                    bufferSize: 81920, useAsync: true))
-                {
-                    var buffer = new byte[81920];
-                    int bytesRead;
-                    var lastProgressReport = Environment.TickCount64;
-
-                    while ((bytesRead = await contentStream.ReadAsync(buffer, ct)) > 0)
-                    {
-                        await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
-                        totalRead += bytesRead;
-
-                        // Throttle progress updates to ~4/sec so the UI thread
-                        // is not starved when the unified log is open.
-                        var now = Environment.TickCount64;
-                        if (now - lastProgressReport < 250) continue;
-                        lastProgressReport = now;
-
-                        if (totalBytes.HasValue && totalBytes.Value > 0)
-                        {
-                            var progress = (double)totalRead / totalBytes.Value;
-                            var mbDownloaded = totalRead / (1024.0 * 1024.0);
-                            var mbTotal = totalBytes.Value / (1024.0 * 1024.0);
-                            taskHandle?.ReportProgress(progress, $"{mbDownloaded:F1} / {mbTotal:F1} MB");
-                            activityLog?.ReportDownloadProgress((int)(progress * 100),
-                                $"{mbDownloaded:F1} / {mbTotal:F1} MB");
-                        }
-                        else
-                        {
-                            var mbDownloaded = totalRead / (1024.0 * 1024.0);
-                            taskHandle?.ReportIndeterminate($"{mbDownloaded:F1} MB downloaded");
-                        }
-                    }
-                }
-
-                // Rename temp to final
-                if (File.Exists(targetPath))
-                    File.Delete(targetPath);
-                File.Move(tempPath, targetPath);
-
-                // Build a human-readable size summary for completion messages
-                var finalMb = totalRead / (1024.0 * 1024.0);
-                var sizeText = totalBytes.HasValue && totalBytes.Value > 0
-                    ? $"{finalMb:F1} / {totalBytes.Value / (1024.0 * 1024.0):F1} MB"
-                    : $"{finalMb:F1} MB";
-
-                // Persist Model/ModelVersion/ModelFile to Diffusion_Nexus-core.db
-                // with full Civitai metadata — no legacy .civitai.info sidecar files.
-                await PersistDownloadedModelAsync(targetPath, tab.CivitaiVersion, SourceTile?.ModelEntity?.Id);
-
-                // Refresh the tile and detail panel so the downloaded version shows as blue
-                await RefreshAfterDownloadAsync(targetPath);
-
-                taskHandle?.Complete($"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
-                activityLog?.CompleteDownloadProgress(true,
-                    $"{Path.GetFileName(targetPath)} downloaded complete — {sizeText}");
-                _logger?.Info(LogCategory.Download, "LoraDownload",
-                    $"Downloaded '{Path.GetFileName(targetPath)}' successfully — {sizeText}",
-                    $"Path: {targetPath}");
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            activityLog?.CompleteDownloadProgress(false, $"Download cancelled: {Path.GetFileName(targetPath)}");
-            _logger?.Info(LogCategory.Download, "LoraDownload",
-                $"Download cancelled: {Path.GetFileName(targetPath)}");
-            CleanupTempFile(targetPath);
-        }
-        catch (Exception ex)
-        {
-            taskHandle?.Fail(ex, $"Failed to download {Path.GetFileName(targetPath)}");
-            activityLog?.CompleteDownloadProgress(false, $"Download failed: {Path.GetFileName(targetPath)}");
-            _logger?.Error(LogCategory.Download, "LoraDownload",
-                $"Download failed: {ex.Message}", ex);
-            CleanupTempFile(targetPath);
-        }
-        finally
-        {
-            taskHandle?.Dispose();
-            await _uiScheduler.InvokeAsync(() => tab.IsDownloading = false);
-        }
+        var outcome = CreateGatedPreflight().ApplyChoice(choice, GatedSubjectFor(tab));
+        if (outcome.StatusMessage is not null) StatusMessage = outcome.StatusMessage;
+        return outcome.Proceed;
     }
+
+    /// <summary>
+    /// The user-visible line for a download that did not succeed, or null when there is nothing to
+    /// report. Mirrors <c>LoraViewerViewModel.DownloadLoraAsync</c>'s switch: cancelling is not
+    /// failing, and a hash mismatch is not a clean download — Task 5 made those distinguishable, so
+    /// they must not collapse back into one red line. Internal so the mapping is testable without
+    /// standing up a dialog service and a live download.
+    /// </summary>
+    internal static string? DescribeFailedDownload(DownloadOutcome outcome, string fileName) => outcome.Status switch
+    {
+        DownloadStatus.Cancelled => $"Download cancelled: {fileName}",
+        DownloadStatus.HashMismatch => $"Downloaded {fileName} — hash mismatch, file kept for inspection",
+        DownloadStatus.Failed =>
+            $"Download failed: {fileName}{(outcome.Error is null ? "" : $" ({outcome.Error})")}",
+        _ => null,
+    };
 
     /// <summary>
     /// Reloads the model from the database and refreshes the source tile and detail panel
     /// so the newly downloaded version appears as "downloaded" (blue tab).
-    /// Uses <see cref="_cachedCivitaiModel"/> to rebuild tabs without an extra API call.
+    /// Uses <see cref="CachedCivitaiModel"/> to rebuild tabs without an extra API call.
     /// </summary>
     private async Task RefreshAfterDownloadAsync(string downloadedFilePath)
     {
@@ -626,9 +600,9 @@ public partial class ModelDetailViewModel : ViewModelBase
                                      ?? "\u2014";
                     CreatorDisplay = refreshedModel.Creator?.Username ?? "Unknown";
 
-                    if (_cachedCivitaiModel is not null)
+                    if (CachedCivitaiModel is not null)
                     {
-                        BuildCivitaiVersionTabs(_cachedCivitaiModel, sourceTile);
+                        BuildCivitaiVersionTabs(CachedCivitaiModel, sourceTile);
                     }
                     else
                     {
@@ -647,355 +621,6 @@ public partial class ModelDetailViewModel : ViewModelBase
             _logger?.Debug(LogCategory.Download, "LoraDownload",
                 $"Failed to refresh UI after download: {ex.Message}");
         }
-        finally
-        {
-            // Always notify parent to rebuild tiles with proper grouping,
-            // even if the tile-level refresh above failed.
-            DownloadCompleted?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    private static void CleanupTempFile(string targetPath)
-    {
-        try
-        {
-            var tempPath = targetPath + ".tmp";
-            if (File.Exists(tempPath))
-                File.Delete(tempPath);
-        }
-        catch
-        {
-            // Best-effort cleanup
-        }
-    }
-
-    /// <summary>
-    /// Persists the downloaded model to <c>Diffusion_Nexus-core.db</c> with full Civitai metadata.
-    /// <para>
-    /// Creates <see cref="Model"/> → <see cref="ModelVersion"/> → <see cref="ModelFile"/> entities,
-    /// enriched with trigger words, images, tags, and file hashes from the Civitai version data
-    /// we already have in memory (no extra API call needed for the version).
-    /// </para>
-    /// <para>
-    /// Only fetches the full <see cref="CivitaiModel"/> when a modelId is available, to get
-    /// model-level fields (description, tags, license) — same call the "Download Metadata"
-    /// button uses via <c>UpdateModelFromCivitaiAsync</c> in <c>LoraViewerViewModel</c>.
-    /// </para>
-    /// Uses a scoped <see cref="IUnitOfWork"/> to avoid DbContext conflicts.
-    /// </summary>
-    private async Task PersistDownloadedModelAsync(string filePath, CivitaiModelVersion civitaiVersion, int? existingModelId = null)
-    {
-        try
-        {
-            if (_scopeFactory is null)
-            {
-                _logger?.Warn(LogCategory.Download, "LoraDownload",
-                    "Cannot persist to database: IServiceScopeFactory not available");
-                return;
-            }
-
-            using var scope = _scopeFactory.CreateScope();
-            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-
-            // Skip if file is already tracked (e.g., from a prior DiscoverNewFilesAsync)
-            var existingPaths = await unitOfWork.ModelFiles.GetExistingLocalPathsAsync();
-            if (existingPaths.Contains(filePath))
-            {
-                _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"File already in database: {filePath}");
-                return;
-            }
-
-            var fileInfo = new FileInfo(filePath);
-
-            // When ModelId is 0 (local-only tab) but we have a version CivitaiId,
-            // fetch the version first to discover the parent model ID.
-            var effectiveVersion = civitaiVersion;
-            if (civitaiVersion.ModelId <= 0 && civitaiVersion.Id > 0 && _civitaiClient is not null)
-            {
-                var apiKey = await GetApiKeyAsync();
-                var fetched = await _civitaiClient.GetModelVersionAsync(civitaiVersion.Id, apiKey);
-                if (fetched is not null)
-                {
-                    effectiveVersion = fetched;
-                    _logger?.Debug(LogCategory.Download, "LoraDownload",
-                        $"Resolved ModelId={fetched.ModelId} from version {fetched.Id}");
-                }
-            }
-
-            // Fetch full model for richer data (description, tags, license).
-            // This is the same GetModelAsync call that "Download Metadata" uses.
-            CivitaiModel? civitaiModel = null;
-            if (effectiveVersion.ModelId > 0 && _civitaiClient is not null)
-            {
-                var apiKey = await GetApiKeyAsync();
-                civitaiModel = await _civitaiClient.GetModelAsync(effectiveVersion.ModelId, apiKey);
-            }
-
-            // Resolve the Civitai model page ID. civitaiModel.Id is authoritative when
-            // available; effectiveVersion.ModelId is a fallback (may be 0 for nested versions).
-            var modelPageId = civitaiModel?.Id ?? (effectiveVersion.ModelId > 0 ? effectiveVersion.ModelId : (int?)null);
-
-            // If the full model has a richer version (with images), prefer it
-            var bestVersion = civitaiModel?.ModelVersions
-                .FirstOrDefault(v => v.Id == effectiveVersion.Id) ?? effectiveVersion;
-
-            // Resolve primary file from best available data
-            var civFile = bestVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? bestVersion.Files.FirstOrDefault()
-                          ?? civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
-
-            // --- Check if a model already exists (grouping) ---
-            // Targeted query — avoids loading ALL 11K models just to find one.
-            var model = await unitOfWork.Models.FindByModelPageIdOrIdAsync(modelPageId, existingModelId);
-            bool isExistingModel = false;
-
-            if (model is not null)
-            {
-                isExistingModel = true;
-                _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"Adding version to existing model '{model.Name}' (Id={model.Id}, PageId={modelPageId})");
-
-                // Enrich existing model with Civitai metadata it was missing
-                if (civitaiModel is not null)
-                {
-                    model.CivitaiId ??= modelPageId;
-                    model.CivitaiModelPageId ??= modelPageId;
-                    model.Name = civitaiModel.Name;
-                    model.Description ??= civitaiModel.Description;
-                    model.IsNsfw = civitaiModel.Nsfw;
-                    model.IsPoi = civitaiModel.Poi;
-                    model.Source = DataSource.CivitaiApi;
-                    model.LastSyncedAt = DateTimeOffset.UtcNow;
-                    model.AllowNoCredit = civitaiModel.AllowNoCredit;
-                    model.AllowDerivatives = civitaiModel.AllowDerivatives;
-                    model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
-
-                    // Update or create creator — reuse existing Creator entity by
-                    // Username to avoid UNIQUE constraint violations.
-                    if (civitaiModel.Creator is not null)
-                    {
-                        if (model.Creator is not null)
-                        {
-                            model.Creator.Username = civitaiModel.Creator.Username;
-                            model.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
-                        }
-                        else
-                        {
-                            var existingCreator = await unitOfWork.Models
-                                .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
-
-                            model.Creator = existingCreator ?? new Creator
-                            {
-                                Username = civitaiModel.Creator.Username,
-                                AvatarUrl = civitaiModel.Creator.Image,
-                            };
-                        }
-                    }
-                }
-                else if (modelPageId.HasValue)
-                {
-                    model.CivitaiModelPageId ??= modelPageId;
-                }
-            }
-            else
-            {
-                model = new Model
-                {
-                    CivitaiId = modelPageId,
-                    CivitaiModelPageId = modelPageId,
-                    Name = civitaiModel?.Name ?? civitaiVersion.Model?.Name
-                           ?? Path.GetFileNameWithoutExtension(filePath),
-                    Description = civitaiModel?.Description,
-                    Type = ModelType.LORA,
-                    IsNsfw = civitaiModel?.Nsfw ?? civitaiVersion.Model?.Nsfw ?? false,
-                    Source = DataSource.CivitaiApi,
-                    LastSyncedAt = DateTimeOffset.UtcNow,
-                    CreatedAt = DateTimeOffset.UtcNow
-                };
-
-                if (civitaiModel is not null)
-                {
-                    model.AllowNoCredit = civitaiModel.AllowNoCredit;
-                    model.AllowDerivatives = civitaiModel.AllowDerivatives;
-                    model.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
-                    model.IsPoi = civitaiModel.Poi;
-
-                    if (civitaiModel.Creator is not null)
-                    {
-                        var existingCreator = await unitOfWork.Models
-                            .FindCreatorByUsernameAsync(civitaiModel.Creator.Username);
-
-                        model.Creator = existingCreator ?? new Creator
-                        {
-                            Username = civitaiModel.Creator.Username,
-                            AvatarUrl = civitaiModel.Creator.Image,
-                        };
-                    }
-                }
-            }
-
-            // --- Version (same fields as UpdateModelFromCivitaiAsync) ---
-
-            var version = new ModelVersion
-            {
-                CivitaiId = bestVersion.Id > 0 ? bestVersion.Id : null,
-                Name = bestVersion.Name,
-                Description = bestVersion.Description,
-                BaseModel = ParseBaseModel(bestVersion.BaseModel),
-                BaseModelRaw = bestVersion.BaseModel,
-                DownloadUrl = bestVersion.DownloadUrl,
-                PublishedAt = bestVersion.PublishedAt,
-                EarlyAccessDays = bestVersion.EarlyAccessTimeFrame,
-                DownloadCount = bestVersion.Stats?.DownloadCount ?? 0,
-                CreatedAt = bestVersion.CreatedAt != default
-                    ? bestVersion.CreatedAt
-                    : DateTimeOffset.UtcNow,
-                Model = model
-            };
-
-            // Trigger words
-            var order = 0;
-            foreach (var word in bestVersion.TrainedWords)
-            {
-                version.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
-            }
-
-            // Images (same structure as UpdateModelFromCivitaiAsync)
-            var sortOrder = 0;
-            foreach (var civImage in bestVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url)) continue;
-                version.Images.Add(new ModelImage
-                {
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
-
-            // --- File (same pattern as ModelFileSyncService.CreateModelFromFile) ---
-
-            var modelFile = new ModelFile
-            {
-                CivitaiId = civFile?.Id,
-                FileName = fileInfo.Name,
-                LocalPath = filePath,
-                SizeKB = fileInfo.Length / 1024.0,
-                FileSizeBytes = fileInfo.Length,
-                Format = GetFileFormat(fileInfo.Extension),
-                IsPrimary = true,
-                IsLocalFileValid = true,
-                LocalFileVerifiedAt = DateTimeOffset.UtcNow,
-                DownloadUrl = civFile?.DownloadUrl,
-                HashSHA256 = civFile?.Hashes?.SHA256,
-                HashAutoV2 = civFile?.Hashes?.AutoV2,
-                HashCRC32 = civFile?.Hashes?.CRC32,
-                HashBLAKE3 = civFile?.Hashes?.BLAKE3,
-                ModelVersion = version
-            };
-
-            version.Files.Add(modelFile);
-
-            // Guard: don't add a duplicate version if one with the same CivitaiId
-            // already exists on this model (e.g., re-download of an already-tracked version).
-            var duplicateVersion = version.CivitaiId.HasValue
-                ? model.Versions.FirstOrDefault(v => v.CivitaiId == version.CivitaiId)
-                : null;
-
-            if (duplicateVersion is not null)
-            {
-                _logger?.Debug(LogCategory.Download, "LoraDownload",
-                    $"Version CivitaiId={version.CivitaiId} already exists on model '{model.Name}' — skipping add");
-            }
-            else
-            {
-                model.Versions.Add(version);
-            }
-
-            // Tags from full model response — sync for both new and existing models.
-            // Must reuse existing Tag entities to avoid UNIQUE constraint violations
-            // on Tags.NormalizedName (same approach as SyncTagsFromCivitai).
-            if (civitaiModel?.Tags is { Count: > 0 } tags)
-            {
-                // Load tag lookup from DB — avoids loading all models just for tag deduplication
-                var knownTags = await unitOfWork.Models.GetAllTagsLookupAsync();
-
-                model.Tags.Clear();
-
-                foreach (var tagName in tags)
-                {
-                    if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-                    var normalized = tagName.Trim().ToLowerInvariant();
-
-                    if (!knownTags.TryGetValue(normalized, out var tag))
-                    {
-                        tag = new Tag { Name = tagName, NormalizedName = normalized };
-                        knownTags[normalized] = tag;
-                    }
-
-                    model.Tags.Add(new ModelTag { Tag = tag });
-                }
-            }
-
-            if (!isExistingModel)
-            {
-                await unitOfWork.Models.AddAsync(model);
-            }
-
-            await unitOfWork.SaveChangesAsync();
-
-            _logger?.Info(LogCategory.Download, "LoraDownload",
-                $"Persisted '{model.Name}' v'{version.Name}' to database ({(isExistingModel ? "added to existing" : "new model")})",
-                $"ModelId={model.Id}, VersionId={version.Id}, CivitaiPageId={modelPageId}");
-        }
-        catch (Exception ex)
-        {
-            // Non-critical — the file was downloaded; DB entry can be created later
-            // by the normal DiscoverNewFilesAsync + "Download Metadata" flow.
-            _logger?.Warn(LogCategory.Download, "LoraDownload",
-                $"Failed to persist model to database: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Parses a Civitai base model string to the domain enum.
-    /// Delegates to <see cref="BaseModelTypeExtensions.ParseCivitai"/> which uses convention-based
-    /// Enum.TryParse — no hardcoded list to maintain.
-    /// </summary>
-    private static BaseModelType ParseBaseModel(string? baseModelRaw)
-        => BaseModelTypeExtensions.ParseCivitai(baseModelRaw);
-
-    /// <summary>
-    /// Maps a file extension to the domain FileFormat enum.
-    /// Same mapping as <c>ModelFileSyncService.GetFileFormat</c>.
-    /// </summary>
-    private static FileFormat GetFileFormat(string extension)
-    {
-        return extension.ToLowerInvariant() switch
-        {
-            ".safetensors" => FileFormat.SafeTensor,
-            ".pt" => FileFormat.PickleTensor,
-            ".ckpt" => FileFormat.Other,
-            ".pth" => FileFormat.PickleTensor,
-            _ => FileFormat.Unknown
-        };
     }
 
     #endregion
@@ -1015,12 +640,6 @@ public partial class ModelDetailViewModel : ViewModelBase
     public event EventHandler? MetadataDownloadRequested;
 
     /// <summary>
-    /// Raised after a version download completes and is persisted to the database.
-    /// The parent LoraViewerViewModel subscribes to rebuild tiles with proper grouping.
-    /// </summary>
-    public event EventHandler? DownloadCompleted;
-
-    /// <summary>
     /// Raised after the user confirms "Delete Metadata" and all DB rows for this
     /// LoRA have been removed. The parent <see cref="LoraViewerViewModel"/>
     /// subscribes to re-discover the still-on-disk safetensors so the tile
@@ -1033,6 +652,78 @@ public partial class ModelDetailViewModel : ViewModelBase
     #endregion
 
     #region Private Methods
+
+    /// <summary>
+    /// Looks up how this model's identity was last resolved and maps it to the short display
+    /// string shown in the "Identity source:" row. Fire-and-forget from <see cref="LoadAsync"/>,
+    /// same pattern as <see cref="LoadBaseModelCatalogAsync"/> — a slow lookup must not block the
+    /// rest of the detail view from rendering. Swallow-and-log on failure, same as that loader.
+    /// </summary>
+    /// <param name="modelId">The model whose identity source is being looked up.</param>
+    /// <param name="generation">
+    /// The <see cref="_identityLoadGeneration"/> value captured by the caller at the moment this
+    /// lookup was fired. Unlike <see cref="LoadBaseModelCatalogAsync"/> (model-invariant — any
+    /// result is valid for any tile), this loader is keyed to the specific model passed in, so a
+    /// slow call for a previous tile must not stamp its result over a newer tile's chip once the
+    /// user has switched. Checked right before the final write; a mismatch means the panel has
+    /// since moved on and the result is discarded.
+    /// </param>
+    /// <remarks>
+    /// The source tracked here is <b>per model</b> — one <c>ModelSyncState</c> row — while the
+    /// base model shown just above it in the view is <b>per version</b>. On a model with several
+    /// versions this row describes how the model as a whole was identified, not necessarily how
+    /// any one version's base model value came to be.
+    /// <c>internal</c> (rather than <c>private</c>) so the cross-model race guard on
+    /// <paramref name="generation"/> is directly unit-testable — same rationale as
+    /// <see cref="DescribeIdentitySource"/>.
+    /// </remarks>
+    internal async Task LoadIdentitySourceAsync(int modelId, int generation)
+    {
+        if (modelId <= 0 || _scopeFactory is null)
+        {
+            await _uiScheduler.InvokeAsync(() =>
+            {
+                if (generation == _identityLoadGeneration) IdentitySourceDisplay = null;
+            });
+            return;
+        }
+
+        string? display;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var state = await unitOfWork.SyncStates.GetByModelIdAsync(modelId);
+            display = state is not null ? DescribeIdentitySource(state.MetadataOutcome) : null;
+        }
+        catch (Exception ex)
+        {
+            _logger?.Debug(LogCategory.General, "ModelDetail",
+                $"Failed to load identity source for model {modelId}: {ex.Message}");
+            display = null;
+        }
+
+        await _uiScheduler.InvokeAsync(() =>
+        {
+            // Drop the write if a newer LoadAsync call has since fired for a different tile —
+            // otherwise a slow lookup for the previous model could overwrite the current tile's
+            // correct chip with stale data (see _identityLoadGeneration).
+            if (generation == _identityLoadGeneration) IdentitySourceDisplay = display;
+        });
+    }
+
+    /// <summary>
+    /// Maps a <see cref="SyncOutcome"/> to the short label shown in the "Identity source:" row.
+    /// <c>internal static</c> so it is directly unit-testable.
+    /// </summary>
+    internal static string? DescribeIdentitySource(SyncOutcome outcome) => outcome switch
+    {
+        SyncOutcome.Matched => "Civitai",
+        SyncOutcome.Sidecar => "sidecar file",
+        SyncOutcome.Header => "file header",
+        SyncOutcome.Heuristic => "guessed from filename",
+        _ => null,   // None, NotIdentified, Error — say nothing rather than something scary
+    };
 
     private void PopulateFromLocalVersion(ModelTileViewModel tile)
     {
@@ -1103,50 +794,56 @@ public partial class ModelDetailViewModel : ViewModelBase
             HasTags = false;
         }
 
-        // Infer category from the first tag that matches a known CivitaiCategory enum value
-        // (same logic as MetaDataUtilService.GetCategoryFromTags). User override (Model.UserCategory)
-        // takes precedence when set.
-        string? category = null;
-        if (model?.UserCategory is { } userCat && userCat != Domain.Enums.CivitaiCategory.Unknown)
-        {
-            category = userCat == Domain.Enums.CivitaiCategory.BaseModel ? "Base Model" : userCat.ToString();
-        }
-        else
-        {
-            category = InferCategoryFromTags(model);
-        }
-        CategoryDisplay = category ?? string.Empty;
-        HasCategory = category is not null;
+        var (categoryDisplay, hasCategory) = ComputeCategoryDisplay(model);
+        CategoryDisplay = categoryDisplay;
+        HasCategory = hasCategory;
     }
 
     /// <summary>
-    /// Infers a human-readable category (e.g., "Character", "Style") from the model's tags.
-    /// Returns null when no tag matches a known <see cref="Domain.Enums.CivitaiCategory"/> value.
+    /// The category shown in the detail panel: the user's explicit override when set,
+    /// otherwise the first tag that names a <see cref="Domain.Enums.CivitaiCategory"/>.
+    /// Delegates to the one resolver the sorter and the download pipeline already use — the
+    /// private copy this replaced predated its <c>LooksLikeCategoryName</c> guard, so the real
+    /// Civitai tag "2000" showed here as a category called "2000" and "character,style" as
+    /// Celebrity. Internal so the rules can be tested without standing up a full panel load.
     /// </summary>
-    private static string? InferCategoryFromTags(Model? model)
+    internal static (string Display, bool Has) ComputeCategoryDisplay(Model? model)
     {
-        if (model?.Tags is not { Count: > 0 } tags) return null;
+        var category = model is null
+            ? Domain.Enums.CivitaiCategory.Unknown
+            : Services.Lora.Sorting.SorterCategoryResolver.ResolveForModel(model);
 
-        foreach (var mt in tags)
-        {
-            var tagName = mt.Tag?.Name;
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-
-            var normalized = tagName.Replace(" ", "_").Trim();
-            if (Enum.TryParse<Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
-                && category != Domain.Enums.CivitaiCategory.Unknown)
-            {
-                // Return a friendly display name (e.g., "BaseModel" → "Base Model")
-                return category switch
-                {
-                    Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
-                    _ => category.ToString()
-                };
-            }
-        }
-
-        return null;
+        return category == Domain.Enums.CivitaiCategory.Unknown
+            ? (string.Empty, false)
+            : (Services.Lora.Sorting.SorterCategoryResolver.ToFolderName(category), true);
     }
+
+    /// <summary>
+    /// Maps one local <see cref="ModelFile"/> row onto the Civitai DTO the one download path
+    /// (spec §4.4) consumes. The hashes are load-bearing, not decoration: a detail-panel download
+    /// of a LOCAL version hands this object straight to <c>ICivitaiModelDownloader</c>, where the
+    /// SHA256 is both what <c>DownloadCollisionPolicy</c> proves ownership of a colliding file
+    /// with and what the post-transfer verification checks against. Omitting them (as this mapping
+    /// originally did) left both blind: every such download fell through to the suffixed name
+    /// <c>{stem}_{CivitaiId ?? 0}</c>, so two local-only versions in one folder both claimed
+    /// <c>{stem}_0</c> and the second silently replaced the first model's weights.
+    /// Internal so the mapping is directly testable without standing up a panel load.
+    /// </summary>
+    internal static CivitaiModelFile ToCivitaiFile(ModelFile file) => new()
+    {
+        Id = file.CivitaiId ?? 0,
+        Name = file.FileName,
+        SizeKB = file.SizeKB,
+        Primary = file.IsPrimary,
+        DownloadUrl = file.DownloadUrl,
+        Hashes = new CivitaiFileHashes
+        {
+            SHA256 = file.HashSHA256,
+            AutoV2 = file.HashAutoV2,
+            CRC32 = file.HashCRC32,
+            BLAKE3 = file.HashBLAKE3,
+        },
+    };
 
     private void BuildLocalVersionTabs(ModelTileViewModel tile)
     {
@@ -1154,22 +851,15 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         foreach (var version in tile.Versions)
         {
-            // Map local files to CivitaiModelFile so PersistDownloadedModelAsync has data
-            var civFiles = version.Files.Select(f => new CivitaiModelFile
-            {
-                Id = f.CivitaiId ?? 0,
-                Name = f.FileName,
-                SizeKB = f.SizeKB,
-                Primary = f.IsPrimary,
-                DownloadUrl = f.DownloadUrl,
-            }).ToList();
+            // Map local files to CivitaiModelFile so a download of this version has file data
+            var civFiles = version.Files.Select(ToCivitaiFile).ToList();
 
             // Map local images to CivitaiModelImage so thumbnails/IDs carry through
             var civImages = version.Images.Select(img => new CivitaiModelImage
             {
                 Id = img.CivitaiId,
                 Url = img.Url,
-                Nsfw = img.IsNsfw,
+                NsfwLevel = img.NsfwLevel == NsfwLevel.None ? null : (int)img.NsfwLevel,
                 Width = img.Width,
                 Height = img.Height,
                 Hash = img.BlurHash,
@@ -1240,6 +930,13 @@ public partial class ModelDetailViewModel : ViewModelBase
 
         try
         {
+            // Every call here is triggered by the user opening (or re-opening) this tile's detail
+            // panel — labeled "update check" above for the same reason — so it must behave like one:
+            // the whole point of the trip is to see what Civitai has right now, not the gateway's
+            // 15-minute-old cached page for this model. Drop it first so the fetch below is a real
+            // round-trip. Scoped to just this model id, so it never disturbs the cache for any other
+            // tile, the browser's current page, or a background update sweep.
+            _apiCache?.InvalidateModel(modelId.Value);
             var apiKey = await GetApiKeyAsync();
             var civitaiModel = await _civitaiClient.GetModelAsync(modelId.Value, apiKey);
 
@@ -1251,7 +948,7 @@ public partial class ModelDetailViewModel : ViewModelBase
                 return;
             }
 
-            _cachedCivitaiModel = civitaiModel;
+            CachedCivitaiModel = civitaiModel;
 
             // Persist the remote version count so the "+N more versions" tile badge
             // reflects what Civitai reports right now, even for models whose metadata
@@ -1426,8 +1123,7 @@ public partial class ModelDetailViewModel : ViewModelBase
         }
         else
         {
-            var civFile = selected.CivitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? selected.CivitaiVersion.Files.FirstOrDefault();
+            var civFile = CivitaiVersionFiles.PickPrimary(selected.CivitaiVersion);
             FileNameDisplay = civFile?.Name ?? "\u2014";
         }
 
@@ -1446,7 +1142,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             if (matchingButton is not null)
             {
                 matchingButton.SelectCommand.Execute(null);
-                ThumbnailImage = SourceTile.ThumbnailImage;
+                ThumbnailImage = SourceTile.IsPreviewHidden ? null : SourceTile.ThumbnailImage;
             }
         }
         else if (selected.CivitaiVersion.Images.Count > 0)
@@ -1456,10 +1152,22 @@ public partial class ModelDetailViewModel : ViewModelBase
             _detailThumbnailCts?.Dispose();
             _detailThumbnailCts = new CancellationTokenSource();
 
-            // Load first image from Civitai version
-            _ = LoadCivitaiThumbnailAsync(selected.CivitaiVersion.Images[0], _detailThumbnailCts.Token);
+            // Load the version's first picture — its first safe one while Show NSFW is off.
+            var preview = PickCivitaiVersionPreview(selected.CivitaiVersion.Images, SourceTile?.HideNsfwPreviews == true);
+            if (preview is null)
+                ThumbnailImage = null;
+            else
+                _ = LoadCivitaiThumbnailAsync(preview, _detailThumbnailCts.Token);
         }
     }
+
+    /// <summary>
+    /// The picture the detail panel shows for a version that exists only on Civitai: its first,
+    /// or — while Show NSFW is off — its first rated safe (<see cref="CivitaiNsfwPolicy.IsImageSafe"/>),
+    /// or none (#631).
+    /// </summary>
+    internal static CivitaiModelImage? PickCivitaiVersionPreview(IReadOnlyList<CivitaiModelImage> images, bool hideNsfw) =>
+        hideNsfw ? images.FirstOrDefault(CivitaiNsfwPolicy.IsImageSafe) : images.FirstOrDefault();
 
     private async Task LoadCivitaiThumbnailAsync(CivitaiModelImage image, CancellationToken ct = default)
     {
@@ -1497,16 +1205,14 @@ public partial class ModelDetailViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Retrieves the Civitai API key using a fresh DI scope to avoid stale EF Core tracked entities.
-    /// The injected <c>_settingsService</c> may hold a cached <see cref="AppSettings"/> entity from
-    /// a long-lived DbContext that was loaded before the key was saved via the Settings view.
+    /// Retrieves the Civitai API key via <see cref="ICivitaiApiKeyProvider"/> — see its doc
+    /// comment for why a fresh DI scope is used instead of the constructor-injected
+    /// <c>_settingsService</c>.
     /// </summary>
-    private async Task<string?> GetApiKeyAsync()
+    private Task<string?> GetApiKeyAsync()
     {
-        if (_scopeFactory is null) return null;
-        using var scope = _scopeFactory.CreateScope();
-        var settingsService = scope.ServiceProvider.GetRequiredService<IAppSettingsService>();
-        return await settingsService.GetCivitaiApiKeyAsync();
+        _apiKeyProvider ??= CivitaiApiKeys.Resolve(_scopeFactory);
+        return _apiKeyProvider.GetApiKeyAsync();
     }
 
     /// <summary>

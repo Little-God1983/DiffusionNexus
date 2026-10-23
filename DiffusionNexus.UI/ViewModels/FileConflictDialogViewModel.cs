@@ -41,6 +41,42 @@ public sealed class FileConflictItem : INotifyPropertyChanged
     private Bitmap? _newPreview;
 
     /// <summary>
+    /// When the new file was pulled out of a dropped ZIP: the archive on disk. Null for loose files.
+    /// </summary>
+    public string? SourceArchivePath { get; init; }
+
+    /// <summary>
+    /// When the new file was pulled out of a dropped ZIP: the entry's full name inside the archive
+    /// (folders included). Null for loose files; falls back to <see cref="ConflictingName"/> when unknown.
+    /// </summary>
+    public string? SourceArchiveEntryName { get; init; }
+
+    /// <summary>
+    /// Whether the new file came from a dropped ZIP archive (drives the "ZIP" badge).
+    /// </summary>
+    public bool IsFromArchive => !string.IsNullOrEmpty(SourceArchivePath);
+
+    /// <summary>
+    /// The archive's file name, or null for loose files.
+    /// </summary>
+    public string? SourceArchiveName => IsFromArchive ? Path.GetFileName(SourceArchivePath) : null;
+
+    /// <summary>
+    /// Where the new file came from, as shown under the file name. Loose files show their full path;
+    /// archive entries show <c>archive.zip » folder/entry.jpg</c> rather than the temp extraction path.
+    /// </summary>
+    public string SourceDisplayText => IsFromArchive
+        ? $"{SourceArchiveName} » {SourceArchiveEntryName ?? ConflictingName}"
+        : NewFilePath;
+
+    /// <summary>
+    /// Full-detail variant of <see cref="SourceDisplayText"/> for the tooltip (full archive path).
+    /// </summary>
+    public string SourceToolTip => IsFromArchive
+        ? $"{SourceArchivePath} » {SourceArchiveEntryName ?? ConflictingName}"
+        : NewFilePath;
+
+    /// <summary>
     /// The conflicting filename (same for both files).
     /// </summary>
     public string ConflictingName { get; init; } = string.Empty;

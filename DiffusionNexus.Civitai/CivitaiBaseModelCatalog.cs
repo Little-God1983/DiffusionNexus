@@ -8,13 +8,15 @@ namespace DiffusionNexus.Civitai;
 /// </summary>
 /// <remarks>
 /// Source priority: in-memory cache → on-disk cache (TTL) → live fetch from the
-/// civitai/civitai GitHub repo → bundled fallback. The live fetch tries
-/// <c>src/shared/constants/basemodel.constants.ts</c> first (new layout, parses
-/// <c>baseModelRecords</c>) and then falls back to the legacy
-/// <c>src/server/common/constants.ts</c> (parses the flat <c>baseModels</c>
-/// array or the <c>baseModelLicenses</c> Record keys). Because file paths and
-/// shapes can change upstream, the catalog is intentionally defensive and
-/// silently falls back to the bundled snapshot on any error.
+/// civitai/civitai GitHub repo → bundled fallback. The live fetch walks
+/// <see cref="CandidateUrls"/> newest-home-first and parses whichever layout it
+/// finds (<c>baseModelRecords</c>, the flat <c>baseModels</c> array, or the
+/// <c>baseModelLicenses</c> Record keys). Because file paths and shapes change
+/// upstream, the catalog is intentionally defensive and falls back to the bundled
+/// snapshot on any error — but it degrades *loudly*: a source that answers 200
+/// while parsing to nothing raises
+/// <see cref="CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels"/> rather
+/// than quietly handing the job to an older, staler file.
 /// TODO: Linux Implementation for Task X — the cache directory uses
 /// <see cref="Environment.SpecialFolder.LocalApplicationData"/>, which already
 /// resolves correctly on Linux/macOS, but the bundled snapshot is the only
@@ -23,14 +25,28 @@ namespace DiffusionNexus.Civitai;
 public sealed class CivitaiBaseModelCatalog : ICivitaiBaseModelCatalog
 {
     /// <summary>
-    /// Candidate raw-GitHub URLs to try, in order. Civitai split the base-model
-    /// definitions out of <c>src/server/common/constants.ts</c> in 2026 into a
-    /// dedicated <c>src/shared/constants/basemodel.constants.ts</c>; we try the
-    /// new path first and fall back to the legacy file for older branches/forks.
+    /// Candidate raw-GitHub URLs to try, in order — newest known home first, older
+    /// homes after it for forks and stale branches.
     /// </summary>
+    /// <remarks>
+    /// The definitions have moved twice. They started in <c>src/server/common/constants.ts</c>,
+    /// were split out to <c>src/shared/constants/basemodel.constants.ts</c> in 2026-05, and
+    /// in 2026-08 moved again into the <c>@civitai/shared</c> workspace package. That last
+    /// move left a four-line <c>export * from '@civitai/shared/basemodel.constants'</c> shim
+    /// at the 2026-05 path: it still answers 200, so nothing looks broken, but it parses to
+    /// zero models and the walk falls through to the original file — whose
+    /// <c>baseModelLicenses</c> keys lag every recently added base model (real case: a
+    /// refresh returned 78 stale labels with no "MiniMax H3"). Ordering newest-first is what
+    /// keeps that from happening again; <see cref="CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels"/>
+    /// is what makes the next move visible instead of silent.
+    /// </remarks>
     private static readonly string[] CandidateUrls =
     {
+        // Current home (2026-08 →).
+        "https://raw.githubusercontent.com/civitai/civitai/main/packages/civitai-shared/src/basemodel.constants.ts",
+        // Previous home (2026-05 → 2026-08); now only a re-export shim upstream.
         "https://raw.githubusercontent.com/civitai/civitai/main/src/shared/constants/basemodel.constants.ts",
+        // Original home. Only yields the baseModelLicenses keys — stale, last resort.
         "https://raw.githubusercontent.com/civitai/civitai/main/src/server/common/constants.ts",
     };
 
@@ -286,6 +302,13 @@ public sealed class CivitaiBaseModelCatalog : ICivitaiBaseModelCatalog
                             fetched = fromUrl;
                             break;
                         }
+
+                        // Answered fine, but held nothing we could parse — upstream moved or
+                        // reshaped this file. Report it: the later candidates are older files
+                        // that will still produce a list, just an increasingly stale one, and
+                        // that combination looks exactly like a successful refresh.
+                        Raise(CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels, 0,
+                            $"No base models could be parsed from {url} — it moved or changed shape. Trying the next source.");
                     }
                     catch (Exception ex)
                     {

@@ -264,8 +264,9 @@ public sealed class CaptioningService : ICaptioningService
                 ContextSize = 16384,
                 GpuLayerCount = _isGpuAvailable ? -1 : 0, // -1 = all layers on GPU
                 // Seed = 0, // Removing Seed as it causes build error
-                UseMemorymap = true,
-                UseMemoryLock = false,
+                // LLamaSharp 0.30 folded UseMemorymap/UseMemoryLock into one enum;
+                // MemoryMap is the old "mmap on, lock off".
+                LoadMode = LLamaLoadMode.MemoryMap,
             };
 
             // Load model weights

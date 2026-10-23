@@ -54,6 +54,28 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
     /// <summary>The catalog of models discovered under the configured ComfyUI root.</summary>
     public IModelCatalog Catalog => _catalog;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Steps, guidance, sampler, scheduler, seed, LoRAs, the negative prompt and an inpaint mask all reach
+    /// the native generator. The two gaps are real native limits rather than unwired plumbing: this build
+    /// has no ControlNet path for DiT models, and no cancel hook inside <c>GenerateImage</c> — the token
+    /// can only be observed between phases.
+    /// </remarks>
+    public BackendCapabilities Capabilities => LocalCapabilities;
+
+    /// <summary>
+    /// <see cref="Capabilities"/> without needing an instance. A UI has to gate its controls the moment
+    /// the user picks this backend in a dropdown, and constructing the real backend means resolving model
+    /// roots and walking them from disk — far too much for a selection change.
+    /// </summary>
+    public static BackendCapabilities LocalCapabilities { get; } = new(new Dictionary<BackendFeature, string>
+    {
+        [BackendFeature.ControlNet] =
+            "Diffusion Nexus Core has no ControlNet path for these models. Switch to the Diffusion Nexus Engine to use control layers.",
+        [BackendFeature.MidSampleInterrupt] =
+            "Cancelling stops the batch, but the image already sampling finishes on the GPU before it is discarded.",
+    });
+
     /// <summary>Keys of the models currently resident in VRAM (empty when nothing is loaded).</summary>
     public IReadOnlyList<string> LoadedModelKeys => _host.LoadedModelKeys;
 
@@ -175,11 +197,33 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             }
         }, cancellationToken);
 
-        await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
-            yield return item;
-
-        // Surface producer-side exceptions that escaped the catch above (very rare path).
-        await producer.ConfigureAwait(false);
+        try
+        {
+            await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                yield return item;
+        }
+        finally
+        {
+            // Observe the producer on EVERY exit path, not just the happy one.
+            //
+            // On cancellation, ReadAllAsync throws before the old trailing await was ever reached, which
+            // orphaned the producer task — still inside the blocking native GenerateImage call, still
+            // holding this model's ContextLease (a SemaphoreSlim(1,1) with a single-resident policy).
+            // The caller was told the run was over while the model lock was held for another half-minute,
+            // so the next Generate silently blocked with the UI reporting Idle. Awaiting here means "the
+            // run is over" is only reported once the native call has actually released the model.
+            //
+            // This also surfaces producer-side exceptions that escaped the catch inside the producer
+            // (a very rare path), which is what the trailing await used to do.
+            try
+            {
+                await producer.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the caller cancelled; the cancellation itself propagates from ReadAllAsync.
+            }
+        }
     }
 
     /// <summary>
@@ -197,7 +241,7 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         {
             var initImage = HPPH.SkiaSharp.ImageHelper.LoadImage(init.FilePath);
             genParams = SDNet.ImageGenerationParameter.ImageToImage(req.Prompt, initImage)
-                .WithStrength(init.Strength);
+                .WithStrength(InitStrengthFor(req));
         }
         else
         {
@@ -252,9 +296,22 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
             genParams.Loras.Add(new SDNet.Lora(lora.FilePath) { Multiplier = lora.Strength });
         }
 
-        // TODO(v2-negative-prompt): apply req.NegativePrompt via .WithNegativePrompt(...) once enabled.
-        // TODO(v2-controlnet):      apply req.ControlNets via .WithControlNet(image, strength).
-        // TODO(v2-inpaint):         apply req.MaskImage via .WithMaskImage(...) for inpaint flows.
+        // A blank negative prompt is left off entirely rather than sent as "": the native default and an
+        // empty string are not guaranteed to be the same conditioning, and "the user typed nothing"
+        // should mean "unchanged", not "an empty negative".
+        if (!string.IsNullOrWhiteSpace(req.NegativePrompt))
+            genParams = genParams.WithNegativePrompt(req.NegativePrompt);
+
+        // Inpaint mask (white = repaint, black = keep), alongside the init image above. Each step blends
+        // the denoised latent back onto the encoded init image outside the mask, so a feathered edge
+        // blends and the rest of the region is kept. ValidateRequest has already refused a mask without
+        // an init image.
+        if (HasMask(req))
+            genParams = genParams.WithMaskImage(HPPH.SkiaSharp.ImageHelper.LoadImage(req.MaskImage!.FilePath));
+
+        // TODO(v2-controlnet): apply req.ControlNets via .WithControlNet(image, strength). Reported as
+        // unsupported through Capabilities, so the UI disables the control with a reason instead of
+        // offering something this backend drops.
 
         var image = model.GenerateImage(genParams)
             ?? throw new InvalidOperationException("Native generator returned a null image.");
@@ -262,6 +319,25 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         var png = image.ToPng();
         return new GenerationOutcome(png, image.Width, image.Height, seed, req.Steps ?? d.DefaultSteps);
     }
+
+    /// <summary>
+    /// Sampler names <see cref="MapSampler"/> actually recognises, in the order a UI should offer them.
+    /// </summary>
+    /// <remarks>
+    /// The mapper falls through to Euler for anything it does not know, silently and without logging, so a
+    /// dropdown built from any other list would let a user pick a sampler that never runs. This list is
+    /// the mapper's own vocabulary; extend both together.
+    /// </remarks>
+    public static IReadOnlyList<string> SupportedSamplers { get; } =
+    [
+        "euler", "euler_a", "heun", "dpm2", "dpmpp2m", "dpmpp2mv2", "lcm", "ddim",
+    ];
+
+    /// <summary>Scheduler names <see cref="MapScheduler"/> recognises. Same fall-through caveat.</summary>
+    public static IReadOnlyList<string> SupportedSchedulers { get; } =
+    [
+        "simple", "karras", "exponential", "ays", "discrete",
+    ];
 
     private static SDNet.Sampler MapSampler(string name) => name.ToLowerInvariant() switch
     {
@@ -286,7 +362,23 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         _ => SDNet.Scheduler.Simple,
     };
 
-    private static void ValidateRequest(DiffusionRequest req, ModelDescriptor d)
+    /// <summary>
+    /// Highest denoise strength a masked run is given. stable-diffusion.cpp does not encode the init
+    /// image at strength 1.0, which would leave the area outside the mask nothing to blend back onto.
+    /// </summary>
+    public const float MaxMaskedStrength = 0.99f;
+
+    private static bool HasMask(DiffusionRequest req) =>
+        req.MaskImage is { } mask && !string.IsNullOrWhiteSpace(mask.FilePath);
+
+    /// <summary>The init image's strength as sent to the native generator: capped for a masked run.</summary>
+    internal static float InitStrengthFor(DiffusionRequest req)
+    {
+        var strength = req.InitImage?.Strength ?? 1.0f;
+        return HasMask(req) ? Math.Min(strength, MaxMaskedStrength) : strength;
+    }
+
+    internal static void ValidateRequest(DiffusionRequest req, ModelDescriptor d)
     {
         if (string.IsNullOrWhiteSpace(req.Prompt))
             throw new ArgumentException("Prompt is required.", nameof(req));
@@ -295,6 +387,13 @@ public sealed class StableDiffusionCppBackend : IDiffusionBackend, IDisposable
         if (req.Width % d.DimensionAlignment != 0 || req.Height % d.DimensionAlignment != 0)
             throw new ArgumentException(
                 $"Width and height must be multiples of {d.DimensionAlignment} for {d.DisplayName}.", nameof(req));
+
+        // A mask says "keep the rest". With no init image there is no rest, and dropping the mask silently
+        // would repaint everything the user protected.
+        if (HasMask(req) && (req.InitImage is null || string.IsNullOrWhiteSpace(req.InitImage.FilePath)))
+            throw new ArgumentException(
+                "An inpaint mask needs an image to image run: without an init image there is nothing outside the mask to keep.",
+                nameof(req));
     }
 
     private static void TryWrite(Channel<DiffusionStreamItem> channel, DiffusionProgress progress)

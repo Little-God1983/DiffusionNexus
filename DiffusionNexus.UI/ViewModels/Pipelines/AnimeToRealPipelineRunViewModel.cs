@@ -33,21 +33,15 @@ public sealed partial class AnimeToRealPipelineRunViewModel : PipelineRunViewMod
     // Fixed seed for test renders so adjusting settings is directly comparable.
     private const long TestSeed = 12345L;
 
-    // FLUX.2-klein base-model labels (raw Civitai strings) the LoRA picker is filtered to.
-    private static readonly string[] FluxKleinBaseModels =
-    [
-        "Flux.2 Klein 9B",
-        "Flux.2 Klein 9B-base",
-        "Flux.2 Klein 4B",
-        "Flux.2 Klein 4B-base",
-    ];
-
     /// <summary>Sampling steps (bound to a 4–30 slider). Reference workflow uses 8.</summary>
     [ObservableProperty] private int _steps = 8;
 
     public override string Title => "Anime to Real";
 
-    protected override IReadOnlyList<string> LoraBaseModels => FluxKleinBaseModels;
+    // The labels live in ModelBaseModelLabels so this pipeline, the Image-to-Image pipeline and the
+    // Diffusion Canvas cannot drift apart; they were three copies of the same array.
+    protected override IReadOnlyList<string> LoraBaseModels =>
+        ModelBaseModelLabels.ForModelKey(ModelKeys.Flux2Klein) ?? [];
 
     protected override double DefaultLoraStrength => 0.75;
 

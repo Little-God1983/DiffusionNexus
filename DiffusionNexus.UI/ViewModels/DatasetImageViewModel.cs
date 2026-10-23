@@ -44,6 +44,7 @@ public class DatasetImageViewModel : ObservableObject
     private bool _hasUnsavedChanges;
     private bool _isSelected;
     private ImageRatingStatus _ratingStatus = ImageRatingStatus.Unrated;
+    private ImageRatingStatus _savedRatingStatus = ImageRatingStatus.Unrated;
     private string? _thumbnailPath;
     private bool _isEditorSelected;
     private bool _isVideo;
@@ -302,10 +303,21 @@ public class DatasetImageViewModel : ObservableObject
     /// <summary>Path to the caption text file.</summary>
     public string CaptionFilePath => Path.ChangeExtension(_imagePath, ".txt");
 
-    /// <summary>Path to the rating metadata file.</summary>
-    public string RatingFilePath => Path.ChangeExtension(_imagePath, ".rating");
-
     #region Commands
+
+    private IRelayCommand<DatasetImageViewModel?>? _addAsLayerCommand;
+
+    /// <summary>
+    /// "Add as Layer to Canvas" in the Image Edit tab's thumbnail context menu. The tab assigns
+    /// its own command to every thumbnail it lists; the menu binds the item's property because a
+    /// ContextMenu lives in its own Popup, where ancestor lookups toward the tab view model are
+    /// not reliable. Null outside the Image Edit tab.
+    /// </summary>
+    public IRelayCommand<DatasetImageViewModel?>? AddAsLayerCommand
+    {
+        get => _addAsLayerCommand;
+        set => SetProperty(ref _addAsLayerCommand, value);
+    }
 
     public IRelayCommand SaveCaptionCommand { get; }
     public IRelayCommand RevertCaptionCommand { get; }
@@ -415,63 +427,43 @@ public class DatasetImageViewModel : ObservableObject
         HasUnsavedChanges = false;
     }
 
-    /// <summary>Loads the rating from the associated .rating file.</summary>
+    /// <summary>
+    /// Loads the rating from the folder's ratings file, falling back to a legacy
+    /// <c>.rating</c> sidecar (see <see cref="ImageRatingStore"/>).
+    /// </summary>
     public void LoadRating()
     {
-        if (File.Exists(RatingFilePath))
-        {
-            try
-            {
-                var content = File.ReadAllText(RatingFilePath).Trim();
-                if (Enum.TryParse<ImageRatingStatus>(content, out var status))
-                {
-                    _ratingStatus = status;
-                    OnPropertyChanged(nameof(RatingStatus));
-                    OnPropertyChanged(nameof(IsApproved));
-                    OnPropertyChanged(nameof(IsRejected));
-                    OnPropertyChanged(nameof(IsUnrated));
-                }
-            }
-            catch (IOException)
-            {
-                // File may be locked or inaccessible
-                _ratingStatus = ImageRatingStatus.Unrated;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // No permission to read
-                _ratingStatus = ImageRatingStatus.Unrated;
-            }
-        }
-        else
-        {
-            _ratingStatus = ImageRatingStatus.Unrated;
-        }
+        _ratingStatus = string.IsNullOrWhiteSpace(_imagePath)
+            ? ImageRatingStatus.Unrated
+            : ImageRatingStore.Shared.Get(_imagePath);
+        _savedRatingStatus = _ratingStatus;
+        OnPropertyChanged(nameof(RatingStatus));
+        OnPropertyChanged(nameof(IsApproved));
+        OnPropertyChanged(nameof(IsRejected));
+        OnPropertyChanged(nameof(IsUnrated));
     }
 
-    /// <summary>Saves the rating to the associated .rating file.</summary>
-    public void SaveRating()
+    /// <summary>
+    /// Saves the rating to the folder's ratings file. The first change in a folder that still
+    /// has legacy <c>.rating</c> files converts the whole folder. When the store refuses (the file
+    /// is locked or cannot be written; it logs why), the rating goes back to the last saved one so
+    /// the badge never shows a rating that is not on disk, and this returns false.
+    /// </summary>
+    public bool SaveRating()
     {
-        try
+        if (string.IsNullOrWhiteSpace(_imagePath))
         {
-            if (_ratingStatus == ImageRatingStatus.Unrated)
-            {
-                if (File.Exists(RatingFilePath))
-                    File.Delete(RatingFilePath);
-            }
-            else
-            {
-                File.WriteAllText(RatingFilePath, _ratingStatus.ToString());
-            }
+            return true;
         }
-        catch (IOException)
+
+        if (ImageRatingStore.Shared.Set(_imagePath, _ratingStatus))
         {
-            // File may be in use or read-only - rating will be lost on reload
+            _savedRatingStatus = _ratingStatus;
+            return true;
         }
-        catch (UnauthorizedAccessException)
-        {
-            // No permission to write - rating will be lost on reload
-        }
+
+        RatingStatus = _savedRatingStatus;
+        return false;
     }
 
     private void SaveCaption()
@@ -575,7 +567,10 @@ public class DatasetImageViewModel : ObservableObject
     {
         var previousRating = _ratingStatus;
         RatingStatus = newRating;
-        SaveRating();
+        if (!SaveRating())
+        {
+            return;
+        }
 
         _eventAggregator?.PublishImageRatingChanged(new ImageRatingChangedEventArgs
         {

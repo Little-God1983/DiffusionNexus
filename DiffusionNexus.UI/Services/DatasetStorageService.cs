@@ -40,6 +40,7 @@ public class DatasetStorageService : IDatasetStorageService
         ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
 
         DeleteFile(imagePath);
+        ImageRatingStore.Shared.Remove(imagePath);
 
         if (!string.IsNullOrWhiteSpace(captionPath))
         {

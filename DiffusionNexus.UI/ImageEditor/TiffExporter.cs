@@ -1,5 +1,6 @@
 using BitMiracle.LibTiff.Classic;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Imaging;
 using SkiaSharp;
 
 namespace DiffusionNexus.UI.ImageEditor;
@@ -10,10 +11,23 @@ namespace DiffusionNexus.UI.ImageEditor;
 /// <c>ReadRGBAImageOriented</c> reader so arbitrary third-party TIFFs (tiled, planar,
 /// compressed, palette, CMYK, etc.) load correctly — not just app-written ones.
 /// All operations report progress/errors through the optional <see cref="IUnifiedLogger"/>.
+/// <para>
+/// Saves encode the whole file in memory and then swap it over the target, so a failure part-way
+/// (or a stack with nothing to write) leaves an existing file as it was. Save on an opened TIFF
+/// writes over the user's original, so a truncated file there would lose every layer.
+/// </para>
 /// </summary>
 public static class TiffExporter
 {
     private const string LogSource = "TiffExporter";
+
+    /// <summary>Whether <paramref name="filePath"/> has a TIFF extension (.tif or .tiff, any case).</summary>
+    public static bool IsTiffPath(string? filePath)
+    {
+        var extension = Path.GetExtension(filePath);
+        return string.Equals(extension, ".tif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".tiff", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Saves layers to a multi-page TIFF file.
@@ -36,27 +50,30 @@ public static class TiffExporter
 
         try
         {
-            using var tiff = Tiff.Open(filePath, "w");
-            if (tiff == null)
+            var pagesWritten = 0;
+            var bytes = EncodeInMemory(filePath, tiff =>
             {
-                logger?.Error(LogCategory.General, LogSource, $"SaveLayeredTiff: Tiff.Open returned null for {filePath}");
+                for (var pageIndex = 0; pageIndex < layers.Count; pageIndex++)
+                {
+                    var layer = layers[pageIndex];
+                    if (layer.Bitmap == null)
+                        continue;
+
+                    WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex, layers.Width, layers.Height), pageIndex, layers.Count);
+                    pagesWritten++;
+                }
+            });
+
+            if (pagesWritten == 0)
+            {
+                logger?.Warn(LogCategory.General, LogSource, "SaveLayeredTiff: no layer has pixels; nothing written.", filePath);
                 return false;
             }
 
-            var pagesWritten = 0;
-            for (var pageIndex = 0; pageIndex < layers.Count; pageIndex++)
-            {
-                var layer = layers[pageIndex];
-                if (layer.Bitmap == null)
-                    continue;
-
-                WritePage(tiff, layer.Bitmap, CreateLayerMetadata(layer, pageIndex), pageIndex, layers.Count);
-                pagesWritten++;
-            }
-
+            ImageFileWriter.ReplaceAtomically(filePath, bytes);
             logger?.Info(LogCategory.General, LogSource,
                 $"Saved {pagesWritten}-page TIFF.", filePath);
-            return pagesWritten > 0;
+            return true;
         }
         catch (Exception ex)
         {
@@ -79,14 +96,8 @@ public static class TiffExporter
 
         try
         {
-            using var tiff = Tiff.Open(filePath, "w");
-            if (tiff == null)
-            {
-                logger?.Error(LogCategory.General, LogSource, $"SaveFlattenedTiff: Tiff.Open returned null for {filePath}");
-                return false;
-            }
-
-            WritePage(tiff, bitmap, metadata: null, pageIndex: 0, pageCount: 1);
+            var bytes = EncodeInMemory(filePath, tiff => WritePage(tiff, bitmap, metadata: null, pageIndex: 0, pageCount: 1));
+            ImageFileWriter.ReplaceAtomically(filePath, bytes);
             logger?.Info(LogCategory.General, LogSource, "Saved flattened TIFF.", filePath);
             return true;
         }
@@ -98,12 +109,32 @@ public static class TiffExporter
     }
 
     /// <summary>
+    /// Runs <paramref name="write"/> against a TIFF held in memory and returns the finished file.
+    /// </summary>
+    /// <param name="name">The target path, for LibTiff's messages only; nothing is opened there.</param>
+    private static byte[] EncodeInMemory(string name, Action<Tiff> write)
+    {
+        using var buffer = new MemoryStream();
+        using (var tiff = Tiff.ClientOpen(name, "w", buffer, new TiffStream())
+            ?? throw new IOException($"LibTiff could not start a TIFF for {name}."))
+        {
+            write(tiff);
+        }
+        // Disposing the Tiff flushes the last directory and closes the stream; ToArray still works.
+        return buffer.ToArray();
+    }
+
+    /// <summary>
     /// Writes a single RGBA page (8-bit, LZW, straight/unassociated alpha) to an open TIFF.
+    /// Throws when LibTiff reports a failure (it returns false rather than throwing), so a broken
+    /// page never reaches the file.
     /// </summary>
     private static void WritePage(Tiff tiff, SKBitmap bitmap, string? metadata, int pageIndex, int pageCount)
     {
         var width = bitmap.Width;
         var height = bitmap.Height;
+        if (width <= 0 || height <= 0)
+            throw new InvalidOperationException($"Page {pageIndex} is {width}x{height}: there are no pixels to write.");
 
         tiff.SetField(TiffTag.IMAGEWIDTH, width);
         tiff.SetField(TiffTag.IMAGELENGTH, height);
@@ -142,10 +173,12 @@ public static class TiffExporter
                 rowData[dataOffset + 2] = pixel.Blue;
                 rowData[dataOffset + 3] = pixel.Alpha;
             }
-            tiff.WriteScanline(rowData, row);
+            if (!tiff.WriteScanline(rowData, row))
+                throw new IOException($"LibTiff could not write row {row} of page {pageIndex}.");
         }
 
-        tiff.WriteDirectory();
+        if (!tiff.WriteDirectory())
+            throw new IOException($"LibTiff could not finish page {pageIndex}.");
     }
 
     /// <summary>
@@ -171,7 +204,11 @@ public static class TiffExporter
 
             var firstWidth = tiff.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
             var firstHeight = tiff.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-            var layerStack = new LayerStack(firstWidth, firstHeight);
+            var firstDescription = tiff.GetField(TiffTag.IMAGEDESCRIPTION);
+            int? canvasW = null, canvasH = null;
+            if (firstDescription != null && firstDescription.Length > 0)
+                ParseLayerMetadata(firstDescription[0].ToString(), out _, out _, out _, out _, out _, out _, out canvasW, out canvasH);
+            var layerStack = new LayerStack(canvasW ?? firstWidth, canvasH ?? firstHeight);
 
             var pageIndex = 0;
             do
@@ -182,8 +219,10 @@ public static class TiffExporter
                 var opacity = 1.0f;
                 var blendMode = BlendMode.Normal;
                 var isVisible = true;
+                var offsetX = 0;
+                var offsetY = 0;
                 if (description != null && description.Length > 0)
-                    ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible);
+                    ParseLayerMetadata(description[0].ToString(), out layerName, out opacity, out blendMode, out isVisible, out offsetX, out offsetY, out _, out _);
 
                 var bitmap = ReadCurrentPageRgba(tiff);
                 if (bitmap is null)
@@ -194,7 +233,7 @@ public static class TiffExporter
                     continue;
                 }
 
-                var layer = new Layer(bitmap, layerName)
+                var layer = new Layer(bitmap, layerName, new SKPointI(offsetX, offsetY))
                 {
                     Opacity = opacity,
                     BlendMode = blendMode,
@@ -216,7 +255,7 @@ public static class TiffExporter
 
             layerStack.ActiveLayer = layerStack[layerStack.Count - 1];
             logger?.Info(LogCategory.General, LogSource,
-                $"Loaded TIFF with {layerStack.Count} layer(s) ({firstWidth}x{firstHeight}).", filePath);
+                $"Loaded TIFF with {layerStack.Count} layer(s) ({canvasW ?? firstWidth}x{canvasH ?? firstHeight}).", filePath);
             return layerStack;
         }
         catch (Exception ex)
@@ -270,38 +309,66 @@ public static class TiffExporter
         if (!tiff.ReadRGBAImageOriented(width, height, raster, Orientation.TOPLEFT, false))
             return null;
 
+        // LibTiff's RGBA interface hands back premultiplied colour for alpha the file tags as
+        // alpha (it multiplies unassociated alpha in and passes associated alpha through), while
+        // this bitmap and SKColor are straight. Un-premultiply, or every semi-transparent pixel
+        // loads darker and darkens again on each save/load cycle. An UNSPECIFIED extra sample is
+        // passed through as stored with nothing saying it was premultiplied, so it is kept.
+        var premultiplied = HasTaggedAlpha(tiff);
         var bitmap = new SKBitmap(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul);
         var pixels = new SKColor[width * height];
         for (var i = 0; i < pixels.Length; i++)
         {
             var p = raster[i];
-            pixels[i] = new SKColor(
-                (byte)Tiff.GetR(p),
-                (byte)Tiff.GetG(p),
-                (byte)Tiff.GetB(p),
-                (byte)Tiff.GetA(p));
+            var a = Tiff.GetA(p);
+            pixels[i] = premultiplied
+                ? new SKColor(
+                    Unpremultiply(Tiff.GetR(p), a),
+                    Unpremultiply(Tiff.GetG(p), a),
+                    Unpremultiply(Tiff.GetB(p), a),
+                    (byte)a)
+                : new SKColor((byte)Tiff.GetR(p), (byte)Tiff.GetG(p), (byte)Tiff.GetB(p), (byte)a);
         }
         bitmap.Pixels = pixels;
         return bitmap;
     }
 
+    /// <summary>Whether the page's first extra sample is tagged as associated or unassociated alpha.</summary>
+    private static bool HasTaggedAlpha(Tiff tiff)
+    {
+        var extraSamples = tiff.GetField(TiffTag.EXTRASAMPLES);
+        if (extraSamples is null || extraSamples[0].ToInt() < 1)
+            return false;
+        var kind = (ExtraSample)extraSamples[1].ToShortArray()[0];
+        return kind is ExtraSample.ASSOCALPHA or ExtraSample.UNASSALPHA;
+    }
+
+    /// <summary>Straight value of a premultiplied 8-bit channel, rounded; opaque and fully transparent pass through.</summary>
+    private static byte Unpremultiply(int premultiplied, int alpha)
+        => alpha is 0 or 255 ? (byte)premultiplied : (byte)Math.Min(255, (premultiplied * 255 + alpha / 2) / alpha);
+
     /// <summary>
     /// Creates metadata string for a layer.
     /// </summary>
-    private static string CreateLayerMetadata(Layer layer, int index)
+    private static string CreateLayerMetadata(Layer layer, int index, int canvasWidth, int canvasHeight)
     {
-        return $"LayerName={layer.Name}|Opacity={layer.Opacity:F2}|BlendMode={layer.BlendMode}|Visible={layer.IsVisible}|Index={index}";
+        return $"LayerName={layer.Name}|Opacity={layer.Opacity:F2}|BlendMode={layer.BlendMode}|Visible={layer.IsVisible}|Index={index}"
+             + $"|OffsetX={layer.OffsetX}|OffsetY={layer.OffsetY}|CanvasWidth={canvasWidth}|CanvasHeight={canvasHeight}";
     }
 
     /// <summary>
     /// Parses layer metadata from TIFF description.
     /// </summary>
-    private static void ParseLayerMetadata(string? metadata, out string name, out float opacity, out BlendMode blendMode, out bool isVisible)
+    private static void ParseLayerMetadata(string? metadata, out string name, out float opacity, out BlendMode blendMode, out bool isVisible, out int offsetX, out int offsetY, out int? canvasWidth, out int? canvasHeight)
     {
         name = "Layer";
         opacity = 1.0f;
         blendMode = BlendMode.Normal;
         isVisible = true;
+        offsetX = 0;
+        offsetY = 0;
+        canvasWidth = null;
+        canvasHeight = null;
 
         if (string.IsNullOrEmpty(metadata))
             return;
@@ -333,7 +400,30 @@ public static class TiffExporter
                     if (bool.TryParse(value, out var vis))
                         isVisible = vis;
                     break;
+                case "OffsetX":
+                    if (int.TryParse(value, out var ox))
+                        offsetX = ox;
+                    break;
+                case "OffsetY":
+                    if (int.TryParse(value, out var oy))
+                        offsetY = oy;
+                    break;
+                case "CanvasWidth":
+                    if (int.TryParse(value, out var cw) && cw > 0)
+                        canvasWidth = cw;
+                    break;
+                case "CanvasHeight":
+                    if (int.TryParse(value, out var ch) && ch > 0)
+                        canvasHeight = ch;
+                    break;
             }
         }
+    }
+
+    /// <summary>Test seam: name, offset and canvas size parsed from a page description.</summary>
+    internal static (string Name, int OffsetX, int OffsetY, int? CanvasWidth, int? CanvasHeight) ParseLayerMetadataForTest(string metadata)
+    {
+        ParseLayerMetadata(metadata, out var name, out _, out _, out _, out var ox, out var oy, out var cw, out var ch);
+        return (name, ox, oy, cw, ch);
     }
 }

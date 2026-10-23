@@ -26,6 +26,12 @@ public interface IDocumentService
     SKEncodedImageFormat GetFormatFromExtension(string filePath);
 
     /// <summary>
+    /// Like <see cref="GetFormatFromExtension"/>, but false for an extension it does not know
+    /// (".tif", ".avif", …), which a save writes as PNG bytes under that name.
+    /// </summary>
+    bool TryGetFormatFromExtension(string filePath, out SKEncodedImageFormat format);
+
+    /// <summary>
     /// Generates a unique file path by appending a suffix to the base name.
     /// </summary>
     /// <param name="directory">Target directory.</param>

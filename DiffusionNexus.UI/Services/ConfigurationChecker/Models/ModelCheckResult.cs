@@ -39,9 +39,28 @@ public sealed record ModelCheckResult
     /// </summary>
     public bool HasVramProfiles { get; init; }
 
+    /// <summary>
+    /// False when none of the names searched for is a file name: the download URL carries none (a Civitai
+    /// <c>…/api/download/models/3139172?fileId=…</c>), so the file is saved under the server's name and
+    /// cannot be found by name. Not finding such a model says nothing about whether it is on disk.
+    /// </summary>
+    public bool IsFindableByName { get; init; } = true;
+
+    /// <summary>
+    /// The model's category folder: the last segment of its destination (<c>models/vae</c> → <c>vae</c>),
+    /// or null when it has none. Removal offers a copy outside the Engine only from a folder of this name.
+    /// </summary>
+    public string? Category { get; init; }
+
     /// <summary>All paths that were searched.</summary>
     public required IReadOnlyList<string> SearchedPaths { get; init; }
 
     /// <summary>The path where the file was found, or empty if missing.</summary>
     public string FoundAtPath { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Every existing file for this model, first = <see cref="FoundAtPath"/>. Holds at most one
+    /// entry unless <see cref="ConfigurationCheckOptions.CollectAllMatches"/> was set.
+    /// </summary>
+    public IReadOnlyList<string> AllFoundPaths { get; init; } = [];
 }

@@ -164,6 +164,17 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
 
         Logger.Debug("Queuing workflow on ComfyUI server");
         using var response = await _httpClient.PostAsync("/prompt", content, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            // A node pack that did not load, or an input out of range: ComfyUI says which node in a 400.
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (ParsePromptRejection(body) is { } rejection)
+            {
+                Logger.Warning(rejection, "ComfyUI rejected the workflow");
+                throw rejection;
+            }
+            throw new HttpRequestException($"ComfyUI answered /prompt with 400: {Cap(body.Trim(), 300)}", null, response.StatusCode);
+        }
         response.EnsureSuccessStatusCode();
 
         var resultText = await response.Content.ReadAsStringAsync(ct);
@@ -216,7 +227,7 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
                         "ComfyUI execution error in node {NodeType}: {Error}",
                         parsed.ErrorNodeType,
                         parsed.ErrorDetail);
-                    throw new InvalidOperationException(parsed.ExecutionErrorMessage);
+                    throw new ComfyUIExecutionException(parsed.ErrorNodeType ?? "unknown", parsed.ErrorDetail ?? "Unknown execution error");
 
                 case ComfyUIProgressAction.Completed:
                     Logger.Information("Workflow execution completed for prompt {PromptId}", promptId);
@@ -600,6 +611,80 @@ public sealed class ComfyUIWrapperService : IComfyUIWrapperService
         return [];
     }
 
+    /// <summary>
+    /// ComfyUI's 400 answer to <c>/prompt</c> as an exception: a <see cref="ComfyUIExecutionException"/>
+    /// naming the node when one is to blame (<c>node_errors</c>, or a missing node type), else a
+    /// <see cref="ComfyUIWorkflowRejectedException"/> with ComfyUI's message; null when the body is not
+    /// ComfyUI's error JSON. Details are capped: a <c>value_not_in_list</c> lists every file in the folder.
+    /// </summary>
+    internal static Exception? ParsePromptRejection(string body)
+    {
+        try
+        {
+            if (JsonNode.Parse(body) is not JsonObject json || json["error"] is not JsonObject error)
+                return null;
+            var message = error["message"]?.GetValue<string>();
+
+            if (json["node_errors"] is JsonObject nodeErrors && nodeErrors.Count > 0)
+            {
+                var (nodeId, entry) = nodeErrors.First();
+                var nodeType = entry?["class_type"]?.GetValue<string>() ?? $"#{nodeId}";
+                var first = entry?["errors"] is JsonArray errors && errors.Count > 0 ? errors[0] : null;
+                var errorMessage = first?["message"]?.GetValue<string>();
+                var details = first?["details"]?.GetValue<string>();
+                var detail = errorMessage is null ? message ?? "invalid input"
+                    : string.IsNullOrWhiteSpace(details) ? errorMessage : $"{errorMessage}: {details}";
+                return new ComfyUIExecutionException(nodeType, Cap(detail, 300));
+            }
+
+            if (message is null)
+                return null;
+            return error["extra_info"]?["class_type"]?.GetValue<string>() is { Length: > 0 } classType
+                ? new ComfyUIExecutionException(classType, Cap(message, 300))
+                : new ComfyUIWorkflowRejectedException(Cap(message, 300));
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static string Cap(string text, int max) => text.Length <= max ? text : text[..max] + "…";
+
+    /// <inheritdoc />
+    public async Task InterruptAsync(CancellationToken ct = default)
+    {
+        // Deliberately not ObjectDisposedException.ThrowIf like the other methods: the contract is that
+        // this never throws. It runs from cancellation paths that may already be tearing the wrapper
+        // down, and an exception thrown from inside a caller's catch block replaces the cancellation.
+        if (_disposed)
+        {
+            Logger.Debug("Interrupt skipped: the ComfyUI wrapper is already disposed");
+            return;
+        }
+
+        Logger.Debug("Interrupting the running ComfyUI prompt");
+
+        try
+        {
+            using var response = await _httpClient.PostAsync("/interrupt", content: null, ct);
+            if (response.IsSuccessStatusCode)
+            {
+                Logger.Information("ComfyUI acknowledged the interrupt request");
+                return;
+            }
+
+            Logger.Warning("ComfyUI /interrupt returned {StatusCode}", response.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            // Deliberately swallowed: this runs on a cancellation path, where the engine may already be
+            // stopping, unreachable, or between prompts. Throwing here would turn a clean user cancel
+            // into an unrelated error report.
+            Logger.Warning(ex, "Failed to interrupt the running ComfyUI prompt");
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -799,12 +884,4 @@ internal readonly record struct ComfyUIProgressMessage(
     string? ReportText = null,
     string? ErrorNodeType = null,
     string? ErrorDetail = null,
-    int? QueueRemaining = null)
-{
-    /// <summary>
-    /// The exception message to surface when <see cref="Action"/> is
-    /// <see cref="ComfyUIProgressAction.Error"/>. Preserves the historical wording exactly.
-    /// </summary>
-    public string ExecutionErrorMessage =>
-        $"ComfyUI workflow failed in node '{ErrorNodeType}': {ErrorDetail}";
-}
+    int? QueueRemaining = null);

@@ -17,7 +17,9 @@ public class CivitaiClientTests
     {
         var handler = new FakeHttpHandler(responder);
         var http = new HttpClient(handler);
-        return (new CivitaiClient(http, disposeHttpClient: true), handler);
+        // Exercise the retry loop without sleeping through its real backoff.
+        var client = new CivitaiClient(http, disposeHttpClient: true) { RetryDelayOverride = _ => TimeSpan.Zero };
+        return (client, handler);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, object body) =>
@@ -74,7 +76,7 @@ public class CivitaiClientTests
     [Fact]
     public async Task GetModelAsync_ThrowsHttpRequestException_OnError()
     {
-        var (client, _) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
         {
             Content = new StringContent("{\"error\":\"oops\"}")
         });
@@ -86,6 +88,89 @@ public class CivitaiClientTests
             var ex = await act.Should().ThrowAsync<HttpRequestException>();
             ex.Which.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
         }
+
+        // Initial attempt + 3 retries: a persistent 500 still ends in a throw.
+        handler.Requests.Should().HaveCount(4);
+    }
+
+    [Fact]
+    public async Task GetModelAsync_RetriesTransientServerError_ThenSucceeds()
+    {
+        // A single 502 from Civitai's CDN used to cost a freshly downloaded LoRA its
+        // entire metadata record — the caller swallowed the throw and reported success.
+        var responses = new Queue<HttpResponseMessage>(
+        [
+            new HttpResponseMessage(HttpStatusCode.BadGateway),
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            Json(HttpStatusCode.OK, new { id = 7, name = "recovered" })
+        ]);
+
+        var (client, handler) = CreateClient(_ => responses.Dequeue());
+
+        using (client)
+        {
+            var model = await client.GetModelAsync(7);
+            model.Should().NotBeNull();
+            model!.Name.Should().Be("recovered");
+        }
+
+        handler.Requests.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task GetModelVersionByHashAsync_RetriesTransportFailure_ThenSucceeds()
+    {
+        // Connection resets surface as HttpRequestException with no StatusCode.
+        var attempts = 0;
+        var (client, handler) = CreateClient(_ =>
+        {
+            if (++attempts == 1) throw new HttpRequestException("The connection was closed unexpectedly.");
+            return Json(HttpStatusCode.OK, new { id = 11, name = "v1" });
+        });
+
+        using (client)
+        {
+            var version = await client.GetModelVersionByHashAsync("ABC123");
+            version.Should().NotBeNull();
+            version!.Id.Should().Be(11);
+        }
+
+        handler.Requests.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetModelAsync_DoesNotRetry_OnClientError()
+    {
+        // 401/403/404 are answers, not outages — retrying only delays the failure.
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("forbidden")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelAsync(1);
+            await act.Should().ThrowAsync<HttpRequestException>();
+        }
+
+        handler.Requests.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task GetModelAsync_DoesNotRetry_OnMalformedJson()
+    {
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{ not json", Encoding.UTF8, "application/json")
+        });
+
+        using (client)
+        {
+            var act = async () => await client.GetModelAsync(1);
+            await act.Should().ThrowAsync<JsonException>("a changed response shape does not fix itself");
+        }
+
+        handler.Requests.Should().ContainSingle();
     }
 
     [Fact]
@@ -360,8 +445,208 @@ public class CivitaiClientTests
             ex.Which.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
         }
 
-        // Initial attempt + 3 retries = 4 total
-        handler.Requests.Should().HaveCount(4);
+        // Initial attempt + 1 retry = 2 total. The gateway's shared cooldown does the waiting now;
+        // three in-call retries used to sleep 10+20+40s while holding a download slot.
+        handler.Requests.Should().HaveCount(2);
+    }
+
+    private sealed class RecordingRateLimitObserver : ICivitaiRateLimitObserver
+    {
+        public List<TimeSpan?> Observed { get; } = [];
+        public List<bool> IsRetryOfReportedCall { get; } = [];
+        public void OnRateLimited(TimeSpan? retryAfter, bool isRetryOfReportedCall = false)
+        {
+            Observed.Add(retryAfter);
+            IsRetryOfReportedCall.Add(isRetryOfReportedCall);
+        }
+    }
+
+    [Fact]
+    public async Task GetAsync_NotifiesObserver_OnEveryRateLimit_EvenWhenTheRetrySucceeds()
+    {
+        var responses = new Queue<HttpResponseMessage>(new[]
+        {
+            new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+            {
+                Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(7)) }
+            },
+            Json(HttpStatusCode.OK, new { id = 1, name = "ok" })
+        });
+
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => responses.Dequeue());
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var model = await client.GetModelAsync(1);
+
+        model.Should().NotBeNull();
+        observer.Observed.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(7));
+    }
+
+    [Fact]
+    public async Task GetAsync_ReportsOnlyTheFirst429OfACall_AsNotARetryOfAnAlreadyReportedCall()
+    {
+        // Finding A / PR #547 round 3: the observer must be able to tell a call's own in-call
+        // retry (its second 429) apart from a call's first 429, because that is the signal
+        // CivitaiRateLimitCooldown needs to escalate its multiplier once per call, not once per
+        // report. maxRateLimitRetries == 1, so at most two reports occur per call.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(1)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        observer.IsRetryOfReportedCall.Should().Equal(false, true);
+    }
+
+    [Fact]
+    public async Task GetAsync_TwoRateLimitsInOneCall_EscalatesTheSharedCooldownMultiplierOnlyOnce()
+    {
+        // Drives the REAL sequence end to end (not the cooldown directly): report, sleep exactly
+        // the server's Retry-After (mirroring production, where RateLimitDelay returns retryAfter
+        // verbatim — RetryDelayOverride is a test-only seam), report again. Before the fix, the
+        // second report landed exactly at the first report's cooldown deadline, which the
+        // (then purely time-based) episode check saw as a NEW episode — so the very first rate
+        // limit a user ever hit jumped the multiplier straight to the 4x cap. It must not.
+        var retryAfter = TimeSpan.FromSeconds(1);
+        long now = 0;
+        var cooldown = new CivitaiRateLimitCooldown(clock: () => now, delay: (_, _) => Task.CompletedTask);
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: cooldown)
+        {
+            // Advances the shared clock by exactly retryAfter, standing in for the real
+            // Task.Delay(RateLimitDelay(...)) sleep between the two 429s.
+            RetryDelayOverride = _ => { now += (long)retryAfter.TotalMilliseconds; return TimeSpan.Zero; }
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        cooldown.IntervalMultiplier.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GetAsync_ParsesRetryAfterAsHttpDate()
+    {
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(45)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        var ex = await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        ex.Which.RetryAfter.Should().NotBeNull();
+        ex.Which.RetryAfter!.Value.Should().BeCloseTo(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(5));
+        observer.Observed.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetAsync_ClampsPastRetryAfterHttpDate_ToZero()
+    {
+        // A past HTTP-date must clamp to TimeSpan.Zero, not go negative — the gateway feeds
+        // this value straight into a cooldown deadline.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(-45)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        var ex = await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        ex.Which.RetryAfter.Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public async Task GetAsync_ClampsAnOversizedRetryAfterDelta_ToTheCeiling()
+    {
+        // Regression test for finding 2 of the gateway fix-wave review. An unclamped delta flows
+        // straight into Task.Delay in both this client's own retry and (via the gateway, on
+        // CancellationToken.None) CivitaiRateLimitCooldown.WaitAsync — over ~49.7 days Task.Delay
+        // itself throws ArgumentOutOfRangeException, and short of that a huge-but-legal delta would
+        // freeze every Civitai call in the process for as long as the server named.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromDays(400)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        var ex = await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        ex.Which.RetryAfter.Should().Be(CivitaiClient.MaxRetryAfter);
+    }
+
+    [Fact]
+    public async Task GetAsync_ClampsAnOversizedRetryAfterHttpDate_ToTheCeiling()
+    {
+        // The HTTP-date form is the one the finding calls out specifically: `date - UtcNow` uses the
+        // local wall clock, so a machine whose clock is years behind (or a server emitting a bad
+        // date) yields a multi-year TimeSpan that must be clamped the same way the delta form is.
+        var observer = new RecordingRateLimitObserver();
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Headers = { RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddYears(3)) }
+        });
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true, rateLimitObserver: observer)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var act = async () => await client.GetModelAsync(1);
+        var ex = await act.Should().ThrowAsync<CivitaiRateLimitedException>();
+
+        ex.Which.RetryAfter.Should().Be(CivitaiClient.MaxRetryAfter);
+    }
+
+    [Fact]
+    public async Task RateLimitedException_IsStillCaughtAsHttpRequestException()
+    {
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.TooManyRequests));
+        using var client = new CivitaiClient(new HttpClient(handler), disposeHttpClient: true)
+        {
+            RetryDelayOverride = _ => TimeSpan.Zero
+        };
+
+        var caught = false;
+        try
+        {
+            await client.GetModelAsync(1);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            caught = true;
+        }
+
+        caught.Should().BeTrue();
     }
 
     [Fact]

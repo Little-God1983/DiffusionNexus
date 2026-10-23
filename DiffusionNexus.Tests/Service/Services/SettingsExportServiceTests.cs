@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Service.Services;
@@ -92,6 +93,9 @@ public class SettingsExportServiceTests : IDisposable
         UseForgeStylePrompts = false,
         MergeLoraSources = true,
         LoraUpdateCheckStalenessDays = 17,
+        SyncNotIdentifiedRetryDays = 60,
+        SyncErrorRetryDays = 7,
+        SyncThumbnailConcurrency = 8,
 
         LoraSortSourcePath = @"D:\Sort\In",
         LoraSortTargetPath = @"D:\Sort\Out",
@@ -105,7 +109,8 @@ public class SettingsExportServiceTests : IDisposable
         AutoBackupLocation = @"D:\Backups",
         MaxBackups = 42,
 
-        ComfyUiServerUrl = "http://192.168.0.42:9999/"
+        ComfyUiServerUrl = "http://192.168.0.42:9999/",
+        ComfyUiServerMode = ComfyUiServerMode.CustomUrl
     };
 
     // ── Round trip ───────────────────────────────────────────────────────
@@ -130,6 +135,9 @@ public class SettingsExportServiceTests : IDisposable
         imported.UseForgeStylePrompts.Should().BeFalse();
         imported.MergeLoraSources.Should().BeTrue();
         imported.LoraUpdateCheckStalenessDays.Should().Be(17);
+        imported.SyncNotIdentifiedRetryDays.Should().Be(60);
+        imported.SyncErrorRetryDays.Should().Be(7);
+        imported.SyncThumbnailConcurrency.Should().Be(8);
         imported.LoraSortSourcePath.Should().Be(@"D:\Sort\In");
         imported.LoraSortTargetPath.Should().Be(@"D:\Sort\Out");
         imported.DeleteEmptySourceFolders.Should().BeTrue();
@@ -141,6 +149,7 @@ public class SettingsExportServiceTests : IDisposable
         imported.AutoBackupLocation.Should().Be(@"D:\Backups");
         imported.MaxBackups.Should().Be(42);
         imported.ComfyUiServerUrl.Should().Be("http://192.168.0.42:9999/");
+        imported.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
     }
 
     [Fact]
@@ -290,6 +299,73 @@ public class SettingsExportServiceTests : IDisposable
         using var doc = JsonDocument.Parse(json);
         doc.RootElement.GetProperty("schemaVersion").GetInt32()
             .Should().Be(SettingsExportSchema.CurrentVersion);
+    }
+
+    [Fact]
+    public async Task WhenExportingThenTheServerModeIsWrittenByName()
+    {
+        GivenCurrentSettings(FullyPopulatedSettings());
+        var sut = CreateSut();
+        var path = PathFor("server-mode.json");
+
+        await sut.ExportAsync(path);
+
+        (await File.ReadAllTextAsync(path)).Should().Contain("\"comfyUiServerMode\": \"CustomUrl\"");
+    }
+
+    [Fact]
+    public async Task WhenImportingANumericServerModeThenItIsStillAccepted()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v5-numeric-server-mode.json", """
+        { "schemaVersion": 5, "comfyUiServerMode": 1 }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
+    }
+
+    /// <summary>
+    /// The file's own rule: bump <c>CurrentVersion</c> whenever fields are added to
+    /// <c>SettingsExportData</c>. v3 is the metadata-sync retry windows and thumbnail concurrency;
+    /// v4 is the LoRA sorter's excluded-folders list; v5 is the ComfyUI server mode.
+    /// Without the bump a file written before a feature and one written after it are
+    /// indistinguishable, so no later migration can tell "absent because it predates the feature"
+    /// from "the user chose nothing" — which is exactly the distinction the v1→v2 backup split
+    /// needed and got.
+    /// </summary>
+    [Fact]
+    public void TheSchemaVersionIsBumpedForTheComfyUiServerModeField()
+    {
+        SettingsExportSchema.CurrentVersion.Should().Be(5);
+        SettingsExportSchema.MinSupportedVersion.Should().Be(1,
+            "the bump costs nothing on the way in — v1 and v2 files still import");
+    }
+
+    /// <summary>
+    /// …and costs nothing on the way in either. A v2 file has none of the three new properties, so
+    /// the DTO defaults stand in and the file imports exactly as it did before the bump. (The
+    /// reverse — an old build reading a v3 file — is covered by the unknown-property tolerance the
+    /// deserializer already has, and by the "newer than this build" test below.)
+    /// </summary>
+    [Fact]
+    public async Task WhenAVersionTwoFileHasNoSyncFieldsThenTheDefaultsAreImported()
+    {
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v2-no-sync-fields.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.ShowNsfw.Should().BeTrue("the file's own fields still apply");
+        imported.SyncNotIdentifiedRetryDays.Should().Be(30);
+        imported.SyncErrorRetryDays.Should().Be(1);
+        imported.SyncThumbnailConcurrency.Should().Be(4);
     }
 
     [Fact]
@@ -577,6 +653,93 @@ public class SettingsExportServiceTests : IDisposable
         captured()!.BackupDatasetImagesEnabled.Should().BeFalse();
     }
 
+    // Metadata Sync (Task 6 fix round 1).
+    // AppSettingsService.SaveSettingsAsync's whitelist copies these three
+    // columns from whatever detached AppSettings snapshot it is handed.
+    // ImportAsync built that snapshot straight from SettingsExportData without
+    // loading current DB state, and the DTO had no Sync* properties — so every
+    // import silently reset the user's retry windows and concurrency back to
+    // the CLR defaults (30/1/4), even when the export file the user just
+    // produced carried different values.
+
+    [Fact]
+    public async Task WhenSyncSettingsAreExportedAndReimportedThenTheyRoundTrip()
+    {
+        var original = FullyPopulatedSettings();
+        original.SyncNotIdentifiedRetryDays = 60;
+        original.SyncErrorRetryDays = 7;
+        original.SyncThumbnailConcurrency = 8;
+        GivenCurrentSettings(original);
+        var captured = GivenSaveIsCaptured();
+        var sut = CreateSut();
+        var path = PathFor("sync-settings.json");
+
+        await sut.ExportAsync(path);
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.SyncNotIdentifiedRetryDays.Should().Be(60,
+            "the exported retry window must survive re-import, not silently reset to the CLR default");
+        imported.SyncErrorRetryDays.Should().Be(7);
+        imported.SyncThumbnailConcurrency.Should().Be(8);
+    }
+
+    [Fact]
+    public async Task WhenAnOldExportWithoutSyncSettingsIsImportedThenTheSyncDefaultsApply()
+    {
+        // Unavoidable without the fields: an export file written before this fix
+        // (or by an older app version) carries no sync data at all, so import
+        // lands on the DTO's declared defaults — same as any other newly added
+        // setting under this schema's backward-compatibility contract.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("old-export-no-sync.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        var imported = captured()!;
+        imported.SyncNotIdentifiedRetryDays.Should().Be(30);
+        imported.SyncErrorRetryDays.Should().Be(1);
+        imported.SyncThumbnailConcurrency.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task WhenExportingThenLastLibrarySyncAtIsNeverWritten()
+    {
+        // Machine-local bookkeeping (Task 5's own sync flow stamps it directly
+        // via UpdateLastLibrarySyncAtAsync), not a portable user setting — it
+        // must never appear in an export file.
+        GivenCurrentSettings(FullyPopulatedSettings());
+        var sut = CreateSut();
+        var path = PathFor("no-last-sync-stamp.json");
+
+        await sut.ExportAsync(path);
+
+        (await File.ReadAllTextAsync(path)).Should().NotContain("lastLibrarySyncAt");
+    }
+
+    [Fact]
+    public async Task WhenImportingThenTheDetachedSnapshotNeverSetsLastLibrarySyncAt()
+    {
+        // ImportAsync's own contribution to the preservation guarantee: it must
+        // never invent a LastLibrarySyncAt value on the snapshot it hands to
+        // SaveSettingsAsync. The other half of the guarantee — that
+        // AppSettingsService.SaveSettingsAsync's whitelist leaves the column
+        // alone so the real (already persisted) value survives untouched — is
+        // proven against a real database in AppSettingsServiceSyncSettingsTests.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("last-sync-not-set.json", """
+        { "schemaVersion": 2, "showNsfw": true }
+        """);
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.LastLibrarySyncAt.Should().BeNull();
+    }
+
     [Fact]
     public async Task WhenTheModernFlagKeyIsGenuinelyAbsentFromTheDocumentThenDeserializationYieldsNullNotFalse()
     {
@@ -739,6 +902,21 @@ public class SettingsExportServiceTests : IDisposable
         _settingsService.Verify(
             s => s.SaveSettingsAsync(It.IsAny<AppSettings>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Import_OfFileWithoutServerMode_YieldsCustomUrl()
+    {
+        // A file written before the setting existed (schema <= 4) came from a user whose editor ran
+        // on their own ComfyUI. Importing it must not silently move them onto the Engine.
+        var captured = GivenSaveIsCaptured();
+        var path = await WriteJsonAsync("v4-no-servermode.json",
+            "{\"schemaVersion\":4,\"comfyUiServerUrl\":\"http://127.0.0.1:8188/\"}");
+        var sut = CreateSut();
+
+        await sut.ImportAsync(path);
+
+        captured()!.ComfyUiServerMode.Should().Be(ComfyUiServerMode.CustomUrl);
     }
 
     public void Dispose()

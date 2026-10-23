@@ -22,6 +22,9 @@ public interface IUnitOfWork : IDisposable, IAsyncDisposable
     /// <summary>Repository for InstallerPackage entities.</summary>
     IInstallerPackageRepository InstallerPackages { get; }
 
+    /// <summary>Repository for ModelSyncState entities and the sync step candidate queries.</summary>
+    ISyncStateRepository SyncStates { get; }
+
     /// <summary>
     /// Persists all pending changes to the database.
     /// </summary>

@@ -140,6 +140,19 @@ Write-SubHeader "Building and Publishing"
 Write-Host "Cleaning project artifacts..."
 & dotnet clean $Project --configuration $Configuration
 
+# Regenerate the notices BEFORE publishing. The JSON index is an EmbeddedResource, so it is
+# baked into the exe at build time — regenerating afterwards would ship a screen showing
+# patch-stale versions next to a text file showing exact ones. A release that cannot produce
+# its notices is not a release, so a failure here stops the publish.
+Write-SubHeader "Generating Third-Party Notices"
+& dotnet restore $Project -r $Runtime -p:SelfContained=true
+if ($LASTEXITCODE -ne 0) { Write-Host "RESTORE FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
+# The RID is passed explicitly: the generator defaults to win-x64, and the restore above uses
+# $Runtime. They agreed only by coincidence, and a generator run against a RID the project was
+# never restored for finds zero runtime-pack notices.
+& pwsh (Join-Path $ScriptDir "Scripts/Generate-ThirdPartyNotices.ps1") -RuntimeIdentifier $Runtime
+if ($LASTEXITCODE -ne 0) { Write-Host "NOTICES GENERATION FAILED!" -ForegroundColor Red; exit $LASTEXITCODE }
+
 & dotnet publish $Project `
     --configuration $Configuration `
     --runtime $Runtime `
@@ -277,8 +290,8 @@ command.CommandText = @"
     DELETE FROM [AppSettings];
 
     -- Seed minimal AppSettings row (required as FK parent for DatasetCategories)
-    INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, BackupDatasetImagesEnabled, BackupDatabaseEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, ComfyUiServerUrl, UpdatedAt)
-    VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 10, 'http://127.0.0.1:8188/', datetime('now'));
+    INSERT INTO [AppSettings] (Id, ShowNsfw, GenerateVideoThumbnails, ShowVideoPreview, UseForgeStylePrompts, MergeLoraSources, DeleteEmptySourceFolders, BackupDatasetImagesEnabled, BackupDatabaseEnabled, AutoBackupIntervalDays, AutoBackupIntervalHours, MaxBackups, ComfyUiServerUrl, ComfyUiServerMode, UpdatedAt)
+    VALUES (1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 10, 'http://127.0.0.1:8188/', 'Engine', datetime('now'));
 
     -- Seed default DatasetCategories
     INSERT INTO [DatasetCategories] (Id, Name, Description, [Order], IsDefault, AppSettingsId, CreatedAt)
@@ -329,6 +342,39 @@ Console.WriteLine(`$"Clean database created. Only DatasetCategories seeded (Rows
     Write-Host "To create a portable distribution with pre-configured settings:"
     Write-Host "  1. Run the Configurator to create configurations"
     Write-Host "  2. Run this script again"
+}
+
+# Ship the flat notices document beside the exe so it lands in the zip.
+$NoticesSource = Join-Path $ScriptDir "THIRD-PARTY-NOTICES.txt"
+if (-not (Test-Path $NoticesSource)) {
+    Write-Host "THIRD-PARTY-NOTICES.txt is missing after generation!" -ForegroundColor Red
+    exit 1
+}
+Copy-Item -Path $NoticesSource -Destination (Join-Path $OutputDir "THIRD-PARTY-NOTICES.txt") -Force
+Write-Host "Third-party notices copied to publish folder." -ForegroundColor Green
+
+# Ship the product's OWN licence too. MIT requires the licence text and copyright notice to
+# accompany every copy of the software, so a zip carrying only third-party notices satisfies
+# everyone else's terms and not our own.
+$LicenseSource = Join-Path $ScriptDir "LICENSE"
+if (-not (Test-Path $LicenseSource)) {
+    Write-Host "LICENSE is missing from the repository root!" -ForegroundColor Red
+    exit 1
+}
+Copy-Item -Path $LicenseSource -Destination (Join-Path $OutputDir "LICENSE") -Force
+Write-Host "Product LICENSE copied to publish folder." -ForegroundColor Green
+
+# Stage the corresponding source for the GPL binaries in libvlc/win-x64/plugins/.
+# GPL-2.0 section 3 accepts three routes; shipping the source beside the binary is route (a),
+# and it is the reason THIRD-PARTY-NOTICES.txt makes no written offer and names no contact.
+# A release that cannot produce that source is not a release, so a failure here stops the
+# publish - exactly as a failure to generate the notices does above. Archives are cached in
+# .source-cache, so only the first publish on a machine pays for the downloads.
+Write-SubHeader "Corresponding Source (GPL)"
+& pwsh (Join-Path $ScriptDir "Scripts/Fetch-CorrespondingSource.ps1") -OutputDir $OutputDir
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "CORRESPONDING SOURCE STAGING FAILED!" -ForegroundColor Red
+    exit $LASTEXITCODE
 }
 
 # Show output files

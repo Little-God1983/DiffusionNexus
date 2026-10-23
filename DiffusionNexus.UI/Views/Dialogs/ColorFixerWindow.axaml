@@ -74,6 +74,10 @@
                     <TextBlock Text="{Binding Detail}"
                                FontSize="11" Opacity="0.6"
                                TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding FixError}"
+                               IsVisible="{Binding HasFixError}"
+                               FontSize="11" Foreground="#FF6B6B"
+                               TextWrapping="Wrap"/>
                   </StackPanel>
                   <TextBlock Grid.Column="2"
                              Text="{Binding Score, StringFormat={}{0:F0}}"

@@ -1,129 +1,321 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.PanAndZoom;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using DiffusionNexus.UI.ViewModels.DiffusionCanvas;
+using DiffusionNexus.UI.Views.Controls;
 
 namespace DiffusionNexus.UI.Views.DiffusionCanvas;
 
 /// <summary>
-/// Code-behind for the Diffusion Canvas. Owns the per-frame drag and resize gestures,
-/// translating screen-space pointer movement into canvas-space updates on the bound
-/// <see cref="GenerationFrameViewModel"/> while the user holds the left mouse button.
+/// Code-behind for the Diffusion Canvas.
 ///
-/// Pan and zoom of the canvas itself are handled entirely by <see cref="ZoomBorder"/>
-/// (middle-click drag pans; Ctrl + wheel zooms) — we don't intercept those.
+/// Pointer gestures live in <see cref="DiffusionCanvasSurface"/>; this file owns the keyboard, because
+/// the shortcuts act on the view model (staging) as often as on the surface. Keys are taken on the
+/// <b>tunnel</b> pass deliberately: this screen hosts a dozen Buttons, and an Avalonia Button activates
+/// on Space and Enter while focused, so a bubbling handler would never see the staging shortcuts. The
+/// price of tunnelling is that the prompt TextBox has to be excluded explicitly — the same guard
+/// <c>ImageViewerDialog</c> uses.
 /// </summary>
 public partial class DiffusionCanvasView : UserControl
 {
-    // Per-pointer drag state. Keyed by IPointer so multi-touch / pen + mouse don't
-    // collide if a future revision wants to support simultaneous gestures.
-    private readonly Dictionary<IPointer, DragState> _dragStates = new();
-    private readonly Dictionary<IPointer, ResizeState> _resizeStates = new();
-
     public DiffusionCanvasView()
     {
         InitializeComponent();
+
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel);
     }
 
     private void InitializeComponent() => AvaloniaXamlLoader.Load(this);
 
-    private ZoomBorder? CanvasZoomBorder => this.FindControl<ZoomBorder>("CanvasZoom");
+    private DiffusionCanvasViewModel? ViewModel => DataContext as DiffusionCanvasViewModel;
 
     /// <summary>
-    /// Returns the inner element that hosts the absolute-positioned frames (the Canvas
-    /// inside the ItemsControl). All pointer positions are computed relative to it so
-    /// the values are in canvas-space (unaffected by ZoomBorder pan/zoom transforms).
+    /// Ticks the status bar's ETA once a second. An image in flight counts down by elapsed time, which
+    /// no progress event announces: the engine reports none at all between an image's start and its end.
+    /// Lives here because only a shown view needs it; the queue itself stays free of UI timers. It runs
+    /// only while the shown view's queue is busy, which is a small part of a session.
     /// </summary>
-    private Visual? CanvasContentVisual => CanvasZoomBorder?.Child as Visual;
+    private DispatcherTimer? _etaTimer;
 
-    // ────────────────────────────── DRAG (move frame) ──────────────────────────────
+    private CanvasGenerationQueue? _watchedQueue;
+    private bool _isAttached;
 
-    private void OnFramePointerPressed(object? sender, PointerPressedEventArgs e)
+    /// <summary>Follows <paramref name="queue"/>'s busy state with the ETA timer; null stops it.</summary>
+    private void WatchQueue(CanvasGenerationQueue? queue)
     {
-        if (sender is not Border border || border.DataContext is not GenerationFrameViewModel vm) return;
-        if (vm.IsBusy) return; // can't move a frame while it's generating
+        if (!ReferenceEquals(_watchedQueue, queue))
+        {
+            if (_watchedQueue is not null)
+                _watchedQueue.PropertyChanged -= OnQueuePropertyChanged;
 
-        var props = e.GetCurrentPoint(border).Properties;
-        if (!props.IsLeftButtonPressed) return;
+            _watchedQueue = queue;
+            if (queue is not null)
+                queue.PropertyChanged += OnQueuePropertyChanged;
+        }
 
-        // Capture the pointer's CANVAS-space position so zoom/pan don't distort the delta.
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        _dragStates[e.Pointer] = new DragState(
-            StartPointerCanvasX: canvasPoint.X,
-            StartPointerCanvasY: canvasPoint.Y,
-            StartFrameX: vm.CanvasX,
-            StartFrameY: vm.CanvasY);
-
-        e.Pointer.Capture(border);
-        e.Handled = true;
+        SyncEtaTimer();
     }
 
-    private void OnFramePointerMoved(object? sender, PointerEventArgs e)
+    private void OnQueuePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (!_dragStates.TryGetValue(e.Pointer, out var state)) return;
-        if (sender is not Border border || border.DataContext is not GenerationFrameViewModel vm) return;
-
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        vm.CanvasX = state.StartFrameX + (canvasPoint.X - state.StartPointerCanvasX);
-        vm.CanvasY = state.StartFrameY + (canvasPoint.Y - state.StartPointerCanvasY);
+        if (e.PropertyName == nameof(CanvasGenerationQueue.IsBusy))
+            SyncEtaTimer();
     }
 
-    private void OnFramePointerReleased(object? sender, PointerReleasedEventArgs e)
+    private void SyncEtaTimer()
     {
-        if (_dragStates.Remove(e.Pointer))
-            e.Pointer.Capture(null);
+        if (_watchedQueue is not { IsBusy: true })
+        {
+            _etaTimer?.Stop();
+            return;
+        }
+
+        _etaTimer ??= new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        _etaTimer.Tick -= OnEtaTick;
+        _etaTimer.Tick += OnEtaTick;
+        _etaTimer.Start();
     }
 
-    // ────────────────────────────── RESIZE (bottom-right handle) ────────────────
+    private void OnEtaTick(object? sender, EventArgs e) => _watchedQueue?.Tick();
 
-    private void OnResizePointerPressed(object? sender, PointerPressedEventArgs e)
+    protected override void OnDataContextChanged(EventArgs e)
     {
-        if (sender is not Border handle) return;
-        // The handle's DataContext is the parent template's frame VM (binding inheritance).
-        if (handle.DataContext is not GenerationFrameViewModel vm) return;
-        if (vm.IsBusy) return;
+        base.OnDataContextChanged(e);
 
-        var props = e.GetCurrentPoint(handle).Properties;
-        if (!props.IsLeftButtonPressed) return;
-
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        _resizeStates[e.Pointer] = new ResizeState(
-            StartPointerCanvasX: canvasPoint.X,
-            StartPointerCanvasY: canvasPoint.Y,
-            StartWidth: vm.Width,
-            StartHeight: vm.Height);
-
-        e.Pointer.Capture(handle);
-        e.Handled = true;
+        if (_isAttached)
+            WatchQueue(ViewModel?.Queue);
     }
 
-    private void OnResizePointerMoved(object? sender, PointerEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (!_resizeStates.TryGetValue(e.Pointer, out var state)) return;
-        if (sender is not Border handle || handle.DataContext is not GenerationFrameViewModel vm) return;
+        base.OnAttachedToVisualTree(e);
 
-        var canvasPoint = e.GetPosition(CanvasContentVisual);
-        var deltaX = canvasPoint.X - state.StartPointerCanvasX;
-        var deltaY = canvasPoint.Y - state.StartPointerCanvasY;
+        _isAttached = true;
+        WatchQueue(ViewModel?.Queue);
 
-        // Snap to the model's alignment grid (Z-Image-Turbo: 64) and clamp to allowed range.
-        vm.Width = GenerationFrameViewModel.SnapDimension(state.StartWidth + deltaX);
-        vm.Height = GenerationFrameViewModel.SnapDimension(state.StartHeight + deltaY);
+        if (Surface is not { } surface)
+            return;
+
+        surface.PropertyChanged += OnSurfacePropertyChanged;
+        UpdateZoomReadout();
+
+        // Every module view is one long-lived instance swapped through the shell's ContentControl, so the
+        // canvas is detached and re-attached on every navigation and keyboard focus is lost each time.
+        // Nothing restores it, so take focus here or the shortcuts are dead after the first visit.
+        Dispatcher.UIThread.Post(() => surface.Focus(), DispatcherPriority.Input);
     }
 
-    private void OnResizePointerReleased(object? sender, PointerReleasedEventArgs e)
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (_resizeStates.Remove(e.Pointer))
-            e.Pointer.Capture(null);
+        _isAttached = false;
+        WatchQueue(null);
+
+        if (Surface is { } surface)
+            surface.PropertyChanged -= OnSurfacePropertyChanged;
+
+        base.OnDetachedFromVisualTree(e);
     }
 
-    private readonly record struct DragState(
-        double StartPointerCanvasX, double StartPointerCanvasY,
-        double StartFrameX, double StartFrameY);
+    private void OnSurfacePropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property == DiffusionCanvasSurface.ZoomProperty)
+            UpdateZoomReadout();
+    }
 
-    private readonly record struct ResizeState(
-        double StartPointerCanvasX, double StartPointerCanvasY,
-        int StartWidth, int StartHeight);
+    private void UpdateZoomReadout()
+    {
+        if (ZoomReadout is null || Surface is null)
+            return;
+
+        ZoomReadout.Text = string.Format(CultureInfo.InvariantCulture, "{0:0}%", Surface.Viewport.Zoom * 100);
+    }
+
+    // ────────────────────────────── Toolbar ──────────────────────────────
+
+    private void OnFitClicked(object? sender, RoutedEventArgs e) => Surface?.FitToContent();
+
+    private void OnOneToOneClicked(object? sender, RoutedEventArgs e) => Surface?.ResetZoom();
+
+    private void OnCenterBoxClicked(object? sender, RoutedEventArgs e) => Surface?.CenterOnBox();
+
+    // ────────────────────────────── Keyboard ──────────────────────────────
+
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ShouldLeaveTheKeyAlone(e.Key))
+            return;
+
+        var vm = ViewModel;
+        var staging = vm?.Staging;
+        var hasCandidates = staging?.HasCandidates == true;
+
+        switch (e.Key)
+        {
+            case Key.F:
+                Surface?.FitToContent();
+                e.Handled = true;
+                return;
+
+            case Key.D1 or Key.NumPad1:
+                Surface?.ResetZoom();
+                e.Handled = true;
+                return;
+
+            case Key.B:
+                Surface?.CenterOnBox();
+                e.Handled = true;
+                return;
+
+            case Key.G:
+                if (vm is not null)
+                {
+                    vm.ShowGrid = !vm.ShowGrid;
+                    e.Handled = true;
+                }
+
+                return;
+
+            case Key.Escape:
+                Surface?.CancelActiveGesture();
+                // Escape also puts the brush or eraser down, so a left drag moves the box again.
+                if (vm is not null)
+                    vm.PaintTool = DiffusionNexus.UI.DiffusionCanvas.CanvasPaintTool.None;
+                e.Handled = true;
+                return;
+
+            case Key.Space:
+                // Space means "flip the candidate against the canvas" while anything is staged, and
+                // "arm drag-to-pan" when nothing is. Both are in the spec; the strip decides which.
+                if (hasCandidates)
+                    staging!.IsComparing = true;
+                else
+                    Surface?.SetSpaceHeld(true);
+
+                e.Handled = true;
+                return;
+
+            case Key.Left when hasCandidates:
+                staging!.PreviousCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Right when hasCandidates:
+                staging!.NextCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Enter when hasCandidates:
+                staging!.AcceptCommand.Execute(null);
+                e.Handled = true;
+                return;
+
+            case Key.Delete when hasCandidates:
+                staging!.DiscardCommand.Execute(null);
+                e.Handled = true;
+                return;
+        }
+
+        // [ and ] resize the brush while a paint tool is active. Matched by the typed symbol, and by the
+        // US key only when there is no symbol: on a German keyboard [ is AltGr+8, and the keys the US
+        // layout puts [ and ] on type ß and ´ there.
+        if (vm is { PaintTool: not DiffusionNexus.UI.DiffusionCanvas.CanvasPaintTool.None }
+            && BrushStep(e) is { } grow)
+        {
+            vm.StepBrushSize(grow);
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>True for "grow" (]), false for "shrink" ([), null for any other key.</summary>
+    internal static bool? BrushStep(KeyEventArgs e) => e.KeySymbol switch
+    {
+        "]" => true,
+        "[" => false,
+        null => e.Key switch
+        {
+            Key.OemCloseBrackets => true,
+            Key.OemOpenBrackets => false,
+            _ => null,
+        },
+        _ => null,
+    };
+
+    private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Space)
+            return;
+
+        // Released unconditionally, even while typing: a space typed into the prompt must never leave the
+        // canvas stuck in compare mode or with panning armed.
+        if (ViewModel?.Staging is { } staging)
+            staging.IsComparing = false;
+
+        Surface?.SetSpaceHeld(false);
+    }
+
+    /// <summary>
+    /// True when the focused control genuinely owns <paramref name="key"/>, so the canvas must not claim it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// These handlers run on the <b>tunnel</b> pass and claim their keys unconditionally, so any control
+    /// that needs a key has to be excluded explicitly. Testing for "is a TextBox" was enough while the only
+    /// input on this screen was the prompt; region B filled a whole column with sliders, combos and toggles.
+    /// </para>
+    /// <para>
+    /// The exclusion is per <b>key</b>, not per control. Excluding every control in the panel wholesale
+    /// looked simpler but was much worse: focus lands on a Button when it is clicked and stays there, and
+    /// the panel has buttons that never disable (Unload, the seed controls, the LoRA picker's own), so one
+    /// click on any of them killed every canvas and staging shortcut until the user clicked the canvas
+    /// again. A Button does not consume Left, Right, Delete, F, G, B or 1 — only its activation key — so
+    /// there is no reason to hand it those.
+    /// </para>
+    /// <para>
+    /// Buttons are given <see cref="Key.Space"/> but deliberately not <see cref="Key.Enter"/>. Enter while
+    /// candidates are staged means "accept", which the staging strip's own tooltip advertises, and a user
+    /// who clicks a seed button and then presses Enter means to accept rather than to press it again. The
+    /// canvas only claims Enter while the strip has candidates, so with nothing staged it still reaches the
+    /// focused button as usual.
+    /// </para>
+    /// </remarks>
+    private bool ShouldLeaveTheKeyAlone(Key key)
+    {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+
+        return focused switch
+        {
+            // Typing wins outright: the prompt accepts spaces and returns.
+            TextBox => true,
+
+            // Arrows move the selection, Enter and Space open and commit, Escape closes, and letters
+            // drive type-ahead — a ComboBox has a use for essentially every key.
+            ComboBox => true,
+            AutoCompleteBox => true,
+
+            NumericUpDown => key is Key.Up or Key.Down or Key.PageUp or Key.PageDown,
+
+            Slider => key is Key.Left or Key.Right or Key.Up or Key.Down
+                or Key.Home or Key.End or Key.PageUp or Key.PageDown,
+
+            // The staging strip: its own arrow navigation does the same thing as ours, so let it.
+            ListBox { Name: "StagingList" } => key is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End,
+
+            // A focused layer row is a ListBoxItem (the layer ListBox itself is not focusable) and needs no
+            // arm: the canvas claims no vertical keys, and Left/Right stay staging Previous/Next.
+
+            // CheckBox before ToggleButton before Button: the first two derive from the last.
+            CheckBox => key is Key.Space,
+            ToggleButton => key is Key.Space,
+            Button => key is Key.Space,
+
+            _ => false,
+        };
+    }
 }

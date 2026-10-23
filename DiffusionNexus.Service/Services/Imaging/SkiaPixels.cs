@@ -1,0 +1,255 @@
+using SkiaSharp;
+
+namespace DiffusionNexus.Service.Services.Imaging;
+
+/// <summary>
+/// Pixel-level loading helpers on SkiaSharp for the analysis and ONNX code that used to run on
+/// ImageSharp. Everything here hands back plain <see cref="SKBitmap"/>s in a known layout
+/// (<see cref="SKColorType.Rgba8888"/>, unpremultiplied) or plain byte arrays, so callers can
+/// walk rows with <see cref="SKBitmap.GetPixelSpan"/> the way they walked ImageSharp's
+/// <c>ProcessPixelRows</c>.
+/// </summary>
+public static class SkiaPixels
+{
+    /// <summary>
+    /// The resampler used for every downscale here. ImageSharp's default <c>Bicubic</c> is a Keys
+    /// cubic with a = -0.5, which is Catmull-Rom; Skia has no Lanczos, so call sites that used
+    /// <c>Lanczos3</c> use this too.
+    /// </summary>
+    public static readonly SKSamplingOptions Sampling = new(SKCubicResampler.CatmullRom);
+
+    /// <summary>
+    /// Decodes an image file into an unpremultiplied RGBA8888 bitmap. Throws when the file is not
+    /// a decodable image, matching ImageSharp's <c>Image.Load</c>, which threw too.
+    /// </summary>
+    public static SKBitmap DecodeRgba(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return DecodeRgba(stream);
+    }
+
+    /// <summary>Decodes a stream into an unpremultiplied RGBA8888 bitmap.</summary>
+    public static SKBitmap DecodeRgba(Stream stream)
+    {
+        using var codec = SKCodec.Create(stream)
+            ?? throw new InvalidDataException("The data is not a decodable image.");
+        return DecodeRgba(codec);
+    }
+
+    /// <summary>Decodes raw RGBA8888 bytes (width × height × 4) into a bitmap that owns a copy.</summary>
+    public static SKBitmap FromRgbaBytes(ReadOnlySpan<byte> rgba, int width, int height)
+    {
+        var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Unpremul));
+        rgba.CopyTo(bitmap.GetPixelSpan());
+        return bitmap;
+    }
+
+    /// <summary>
+    /// Returns a bitmap that fits within <paramref name="maxDimension"/> on both axes, keeping the
+    /// aspect ratio. Images that already fit come back as the same instance (not a copy), so
+    /// callers dispose the result only when it differs from the input. This is ImageSharp's
+    /// <c>ResizeMode.Max</c> as the analysers used it: downscale only.
+    /// </summary>
+    public static SKBitmap FitWithin(SKBitmap source, int maxDimension)
+    {
+        if (source.Width <= maxDimension && source.Height <= maxDimension)
+            return source;
+
+        double scale = Math.Min(maxDimension / (double)source.Width, maxDimension / (double)source.Height);
+        int width = Math.Max(1, (int)Math.Round(source.Width * scale));
+        int height = Math.Max(1, (int)Math.Round(source.Height * scale));
+        return ResizeTo(source, width, height);
+    }
+
+    /// <summary>
+    /// Resizes to exactly <paramref name="width"/> × <paramref name="height"/> (ImageSharp's
+    /// <c>ResizeMode.Stretch</c>). A cubic kernel reads only 4×4 source pixels per output pixel, so
+    /// on its own it aliases any reduction beyond about 2×: a 1-px checkerboard shrunk 30× came
+    /// out anywhere from near-black to near-white instead of grey. ImageSharp widened its kernel
+    /// with the ratio; here the image is first halved with a bilinear filter (an exact 2×2 average
+    /// at half scale) on every axis that is still at least twice the target, and the final step is
+    /// the cubic resample.
+    /// </summary>
+    public static SKBitmap ResizeTo(SKBitmap source, int width, int height)
+    {
+        // Skia filters the stored values as they are. For unpremultiplied pixels that averages the
+        // RGB of transparent pixels into their neighbours (opaque red beside transparent black
+        // became dark red), so filter premultiplied and convert back.
+        if (source.AlphaType == SKAlphaType.Unpremul)
+        {
+            using var premultiplied = WithAlphaType(source, SKAlphaType.Premul);
+            using var resized = ResizeFiltered(premultiplied, width, height);
+            return WithAlphaType(resized, SKAlphaType.Unpremul);
+        }
+
+        return ResizeFiltered(source, width, height);
+    }
+
+    /// <summary>
+    /// True when the file holds more than one frame (animated WebP or GIF). False for single
+    /// frames and for anything that is not a readable image.
+    /// </summary>
+    public static bool IsAnimated(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+        using var codec = SKCodec.Create(path);
+        return codec is { FrameCount: > 1 };
+    }
+
+    private static SKBitmap WithAlphaType(SKBitmap bitmap, SKAlphaType alphaType)
+    {
+        var info = new SKImageInfo(bitmap.Width, bitmap.Height, bitmap.ColorType, alphaType, bitmap.ColorSpace);
+        var copy = new SKBitmap(info);
+        using var pixmap = bitmap.PeekPixels();
+        if (pixmap is null || !pixmap.ReadPixels(info, copy.GetPixels(), copy.RowBytes, 0, 0))
+        {
+            copy.Dispose();
+            throw new InvalidOperationException($"Converting a {bitmap.Width}x{bitmap.Height} bitmap to {alphaType} failed.");
+        }
+        return copy;
+    }
+
+    private static SKBitmap ResizeFiltered(SKBitmap source, int width, int height)
+    {
+        var current = source;
+        try
+        {
+            while (current.Width >= width * 2 || current.Height >= height * 2)
+            {
+                int halfWidth = current.Width >= width * 2 ? current.Width / 2 : current.Width;
+                int halfHeight = current.Height >= height * 2 ? current.Height / 2 : current.Height;
+                var half = current.Resize(InfoLike(current, halfWidth, halfHeight), HalvingSampling)
+                    ?? throw new InvalidOperationException($"Resize to {halfWidth}x{halfHeight} failed.");
+                if (!ReferenceEquals(current, source)) current.Dispose();
+                current = half;
+            }
+
+            return current.Resize(InfoLike(current, width, height), Sampling)
+                ?? throw new InvalidOperationException($"Resize to {width}x{height} failed.");
+        }
+        finally
+        {
+            if (!ReferenceEquals(current, source)) current.Dispose();
+        }
+    }
+
+    private static readonly SKSamplingOptions HalvingSampling = new(SKFilterMode.Linear);
+
+    private static SKImageInfo InfoLike(SKBitmap bitmap, int width, int height)
+        => new(width, height, bitmap.ColorType, bitmap.AlphaType, bitmap.ColorSpace);
+
+    /// <summary>
+    /// Converts an RGBA8888 bitmap to one 8-bit luminance value per pixel, row-major, using the
+    /// same BT.709 weights and rounding ImageSharp's <c>L8</c> conversion used, so grayscale
+    /// analysis results stay where they were.
+    /// </summary>
+    public static byte[] ToGray8(SKBitmap rgba)
+    {
+        EnsureRgba(rgba);
+        var pixels = rgba.GetPixelSpan();
+        int width = rgba.Width, height = rgba.Height, stride = rgba.RowBytes;
+        var gray = new byte[width * height];
+        for (int y = 0, i = 0; y < height; y++)
+        {
+            for (int x = 0, p = y * stride; x < width; x++, i++, p += 4)
+            {
+                gray[i] = Luminance(pixels[p], pixels[p + 1], pixels[p + 2]);
+            }
+        }
+        return gray;
+    }
+
+    /// <summary>BT.709 luma of an 8-bit RGB triple, rounded like ImageSharp's <c>L8</c>.</summary>
+    public static byte Luminance(byte r, byte g, byte b)
+        => (byte)((r * .2126F) + (g * .7152F) + (b * .0722F) + 0.5F);
+
+    /// <summary>
+    /// Loads a file as 8-bit luminance, downscaled to fit <paramref name="maxDimension"/> when
+    /// larger. Returns the gray plane plus its dimensions.
+    /// </summary>
+    public static (byte[] Gray, int Width, int Height) LoadGray(string path, int maxDimension = int.MaxValue)
+    {
+        using var decoded = DecodeRgba(path);
+        var fitted = FitWithin(decoded, maxDimension);
+        try
+        {
+            return (ToGray8(fitted), fitted.Width, fitted.Height);
+        }
+        finally
+        {
+            if (!ReferenceEquals(fitted, decoded)) fitted.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Loads a file as unpremultiplied RGBA8888, downscaled to fit <paramref name="maxDimension"/>
+    /// when larger. The caller owns the returned bitmap.
+    /// </summary>
+    public static SKBitmap LoadRgba(string path, int maxDimension = int.MaxValue)
+    {
+        var decoded = DecodeRgba(path);
+        var fitted = FitWithin(decoded, maxDimension);
+        if (!ReferenceEquals(fitted, decoded)) decoded.Dispose();
+        return fitted;
+    }
+
+    /// <summary>
+    /// Reads the pixel dimensions from the file header without decoding any pixels. Throws when
+    /// the file is not a recognisable image.
+    /// </summary>
+    public static (int Width, int Height) ReadDimensions(string path)
+    {
+        using var codec = SKCodec.Create(path)
+            ?? throw new InvalidDataException("The file is not a decodable image.");
+        return (codec.Info.Width, codec.Info.Height);
+    }
+
+    /// <summary>
+    /// Encodes a bitmap with one of the encoders Skia has (PNG, JPEG, WebP). Throws instead of
+    /// returning null when Skia produces no data, so a failure carries its cause.
+    /// </summary>
+    public static byte[] Encode(SKBitmap bitmap, SKEncodedImageFormat format, int quality)
+    {
+        // Encode straight from the bitmap's pixels. SKImage.FromBitmap copies a mutable bitmap
+        // first, which for an 8192x8192 upscale is another 256 MB just to encode.
+        using var pixmap = bitmap.PeekPixels()
+            ?? throw new InvalidOperationException($"The {bitmap.Width}x{bitmap.Height} bitmap has no pixels to encode.");
+        using var data = pixmap.Encode(format, quality)
+            ?? throw new InvalidOperationException($"Encoding a {bitmap.Width}x{bitmap.Height} {bitmap.ColorType} bitmap as {format} produced no data.");
+        return data.ToArray();
+    }
+
+    /// <summary>Encodes a bitmap to PNG bytes.</summary>
+    public static byte[] EncodePng(SKBitmap bitmap) => Encode(bitmap, SKEncodedImageFormat.Png, 100);
+
+    /// <summary>Encodes a bitmap to PNG and writes it to <paramref name="path"/>.</summary>
+    public static void SavePng(SKBitmap bitmap, string path)
+        => File.WriteAllBytes(path, EncodePng(bitmap));
+
+    /// <summary>Encodes a bitmap to JPEG at <paramref name="quality"/> (1–100) and writes it to <paramref name="path"/>.</summary>
+    public static void SaveJpeg(SKBitmap bitmap, string path, int quality)
+        => File.WriteAllBytes(path, Encode(bitmap, SKEncodedImageFormat.Jpeg, quality));
+
+    private static SKBitmap DecodeRgba(SKCodec codec)
+    {
+        // Images without an alpha channel (JPEG, most PNGs) stay Opaque, which is a valid straight
+        // layout and lets ResizeTo skip the premultiply round trip.
+        var alphaType = codec.Info.AlphaType == SKAlphaType.Opaque ? SKAlphaType.Opaque : SKAlphaType.Unpremul;
+        var info = codec.Info.WithColorType(SKColorType.Rgba8888).WithAlphaType(alphaType);
+        var bitmap = new SKBitmap(info);
+        var result = codec.GetPixels(info, bitmap.GetPixels());
+        if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput)
+        {
+            bitmap.Dispose();
+            throw new InvalidDataException($"Image decode failed: {result}.");
+        }
+        return bitmap;
+    }
+
+    private static void EnsureRgba(SKBitmap bitmap)
+    {
+        if (bitmap.ColorType != SKColorType.Rgba8888)
+            throw new ArgumentException($"Expected an Rgba8888 bitmap, got {bitmap.ColorType}.", nameof(bitmap));
+    }
+}

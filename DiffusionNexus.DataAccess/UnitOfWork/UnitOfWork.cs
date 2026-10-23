@@ -23,6 +23,7 @@ internal sealed class UnitOfWork : IUnitOfWork
     private IAppSettingsRepository? _appSettings;
     private IDisclaimerAcceptanceRepository? _disclaimerAcceptances;
     private IInstallerPackageRepository? _installerPackages;
+    private ISyncStateRepository? _syncStates;
 
     public UnitOfWork(IDbContextFactory<DiffusionNexusCoreDbContext> factory)
     {
@@ -50,6 +51,10 @@ internal sealed class UnitOfWork : IUnitOfWork
     /// <inheritdoc />
     public IInstallerPackageRepository InstallerPackages =>
         _installerPackages ??= new InstallerPackageRepository(_context);
+
+    /// <inheritdoc />
+    public ISyncStateRepository SyncStates =>
+        _syncStates ??= new SyncStateRepository(_context);
 
     /// <inheritdoc />
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

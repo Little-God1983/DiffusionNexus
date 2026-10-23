@@ -1,3 +1,4 @@
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.ViewModels;
 using FluentAssertions;
@@ -558,8 +559,218 @@ public class DatasetFileImporterTests
     }
 
     // -------------------------------------------------------------------
+    //  Two conflict rows sharing one file name (PR #570 review): a loose
+    //  file and a same-named ZIP entry both conflicting with the dataset.
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportResolved_TwoSameNamedRenameRows_GetDistinctTargets()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.jpg");
+        var resolution = MakeResolution(
+            MakeConflict("cat.jpg", @"C:\a\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Rename),
+            MakeConflict("cat.jpg", @"C:\Temp\zip1\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Rename));
+
+        var act = () => _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        var result = (await act.Should().NotThrowAsync()).Subject;
+        result.Renamed.Should().Be(2);
+        _fileOps.CopiedFiles.Select(c => c.Destination)
+            .Should().BeEquivalentTo([@"C:\Dest\cat_1.jpg", @"C:\Dest\cat_2.jpg"]);
+    }
+
+    [Fact]
+    public async Task ImportResolved_RenameKeepsImageAndCaptionFromSameFolderTogether()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.jpg");
+        var resolution = MakeResolution(
+            MakeConflict("cat.jpg", @"C:\a\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Rename),
+            MakeConflict("cat.txt", @"C:\a\cat.txt", @"C:\Dest\cat.txt", FileConflictResolution.Rename),
+            MakeConflict("cat.jpg", @"C:\b\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Rename));
+
+        await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        _fileOps.CopiedFiles.Select(c => c.Destination)
+            .Should().BeEquivalentTo([@"C:\Dest\cat_1.jpg", @"C:\Dest\cat_1.txt", @"C:\Dest\cat_2.jpg"],
+                "the pair from C:\\a shares one new base name, the file from C:\\b gets its own");
+    }
+
+    [Fact]
+    public async Task ImportResolved_TwoSameNamedOverrideRows_KeepBothFiles()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.jpg");
+        var resolution = MakeResolution(
+            MakeConflict("cat.jpg", @"C:\a\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Override),
+            MakeConflict("cat.jpg", @"C:\Temp\zip1\cat.jpg", @"C:\Dest\cat.jpg", FileConflictResolution.Override));
+
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        result.Overridden.Should().Be(1);
+        result.Renamed.Should().Be(1, "the second file cannot also overwrite the same slot, so it is kept under a new name");
+        _fileOps.CopiedFiles.Should().HaveCount(2);
+        _fileOps.CopiedFiles[0].Should().Be((@"C:\a\cat.jpg", @"C:\Dest\cat.jpg", true));
+        _fileOps.CopiedFiles[1].Destination.Should().Be(@"C:\Dest\cat_1.jpg");
+        result.ProcessedSourceFiles.Should().BeEquivalentTo([@"C:\a\cat.jpg", @"C:\Temp\zip1\cat.jpg"]);
+    }
+
+    // -------------------------------------------------------------------
+    //  A source that is already the destination file (#586)
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportResolved_OverrideOfAFileWithItself_LeavesItAlone()
+    {
+        // The Image Editor hands over its unedited original; added to its own folder it conflicts
+        // with itself, and copying a file onto itself throws.
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Override));
+
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        result.AlreadyPresent.Should().Be(1);
+        result.TotalAdded.Should().Be(0);
+        _fileOps.CopiedFiles.Should().BeEmpty();
+        _fileOps.MovedFiles.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ImportResolved_RenameOfAFileWithItself_StillKeepsBoth()
+    {
+        _fileOps.ExistingFiles.Add(@"C:\Dest\cat.png");
+        var resolution = MakeResolution(
+            MakeConflict("cat.png", @"C:\Dest\cat.png", @"C:\Dest\cat.png", FileConflictResolution.Rename));
+
+        var result = await _importer.ImportResolvedAsync(
+            [], resolution, DestFolder, videoThumbnailService: null, moveFiles: false);
+
+        result.Renamed.Should().Be(1);
+        result.AlreadyPresent.Should().Be(0);
+        _fileOps.CopiedFiles.Should().ContainSingle().Which.Should().Be((@"C:\Dest\cat.png", @"C:\Dest\cat_1.png", false));
+    }
+
+    // -------------------------------------------------------------------
     //  Mock IFileOperations — records all operations for assertions.
     // -------------------------------------------------------------------
+
+    // -------------------------------------------------------------------
+    //  Ratings (issue #317) - real files, because ratings live on disk
+    // -------------------------------------------------------------------
+
+    [Fact]
+    public async Task ImportResolved_WhenOverride_ClearsTheReplacedFilesRating()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        var existing = dirs.DestFile("a.png");
+        ImageRatingStore.Shared.Set(existing, ImageRatingStatus.Rejected);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [], MakeResolution(MakeConflict("a.png", source, existing, FileConflictResolution.Override)),
+            dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        new ImageRatingStore().Get(existing).Should().Be(ImageRatingStatus.Unrated,
+            "the old rating judged a different image");
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenMoving_TheRatingMovesWithTheFile()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        ImageRatingStore.Shared.Set(source, ImageRatingStatus.Approved);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: true);
+
+        var store = new ImageRatingStore();
+        store.Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Approved);
+        store.Get(source).Should().Be(ImageRatingStatus.Unrated, "the source folder must not keep a stale entry");
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenCopying_LeavesTheSourceRatingAlone()
+    {
+        using var dirs = new RatingFolders();
+        var source = dirs.SourceFile("a.png");
+        ImageRatingStore.Shared.Set(source, ImageRatingStatus.Approved);
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        var store = new ImageRatingStore();
+        store.Get(source).Should().Be(ImageRatingStatus.Approved);
+        store.Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Unrated);
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenMovingACaption_DoesNotGiveItTheImagesLegacyRating()
+    {
+        using var dirs = new RatingFolders();
+        dirs.SourceFile("foo.png");
+        var caption = dirs.SourceFile("foo.txt");
+        File.WriteAllText(Path.Combine(dirs.Source, "foo.rating"), "Approved");
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [caption], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: true);
+
+        File.Exists(Path.Combine(dirs.Dest, ImageRatingStore.RatingsFileName)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ImportResolved_WhenCopyingOntoAStaleEntry_TheFileArrivesUnrated()
+    {
+        using var dirs = new RatingFolders();
+        var gone = dirs.DestFile("a.png");
+        ImageRatingStore.Shared.Set(gone, ImageRatingStatus.Rejected);
+        File.Delete(gone); // deleted outside the app, so its entry stays behind
+        var source = dirs.SourceFile("a.png");
+        var importer = new DatasetFileImporter(new FileOperations());
+
+        await importer.ImportResolvedAsync(
+            [source], conflictResolutions: null, dirs.Dest, videoThumbnailService: null, moveFiles: false);
+
+        new ImageRatingStore().Get(Path.Combine(dirs.Dest, "a.png")).Should().Be(ImageRatingStatus.Unrated);
+    }
+
+    private sealed class RatingFolders : IDisposable
+    {
+        private readonly string _root = Path.Combine(Path.GetTempPath(), $"DatasetFileImporterRatings_{Guid.NewGuid()}");
+
+        public RatingFolders()
+        {
+            Directory.CreateDirectory(Source);
+            Directory.CreateDirectory(Dest);
+        }
+
+        public string Source => Path.Combine(_root, "src");
+        public string Dest => Path.Combine(_root, "dest");
+
+        public string SourceFile(string name) => Write(Path.Combine(Source, name));
+        public string DestFile(string name) => Write(Path.Combine(Dest, name));
+
+        private static string Write(string path)
+        {
+            File.WriteAllBytes(path, [1, 2, 3]);
+            return path;
+        }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_root))
+            {
+                Directory.Delete(_root, recursive: true);
+            }
+        }
+    }
 
     private sealed class MockFileOperations : IFileOperations
     {

@@ -20,6 +20,8 @@ internal sealed class ModelConfiguration : IEntityTypeConfiguration<Model>
 
         // Properties
         entity.Property(e => e.Name).IsRequired().HasMaxLength(500);
+        // #647: a short label of what Civitai said when the user first rated the LoRA.
+        entity.Property(e => e.OriginalNsfwRating).HasMaxLength(40);
         entity.Property(e => e.Description).HasColumnType("TEXT");
         entity.Property(e => e.Type).HasConversion<string>().HasMaxLength(50);
         entity.Property(e => e.Mode).HasConversion<string>().HasMaxLength(20);

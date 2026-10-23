@@ -160,27 +160,27 @@ public class DialogService : IDialogService
         return dialog.ResultText;
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
             .ForMediaAndText();
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title, params string[] allowedExtensions)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
             .WithExtensions(allowedExtensions);
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
     }
 
-    public async Task<List<string>?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles)
+    public async Task<FileDropResult?> ShowFileDropDialogAsync(string title, IEnumerable<string> initialFiles)
     {
         var dialog = new FileDropDialog()
             .WithTitle(title)
@@ -188,7 +188,19 @@ public class DialogService : IDialogService
             .WithInitialFiles(initialFiles);
 
         await dialog.ShowDialog(_window);
-        return dialog.ResultFiles;
+        return ToFileDropResult(dialog);
+    }
+
+    private static FileDropResult? ToFileDropResult(FileDropDialog dialog)
+    {
+        if (dialog.ResultFiles is null)
+            return null;
+
+        return new FileDropResult
+        {
+            Files = dialog.ResultFiles,
+            TemporaryDirectories = dialog.TemporaryDirectories.ToList()
+        };
     }
 
     public async Task<int> ShowOptionsAsync(string title, string message, params string[] options)
@@ -463,6 +475,7 @@ public class DialogService : IDialogService
         {
             NonConflictingFiles = dialog.NonConflictingResultFiles ?? dialog.ResultFiles,
             ConflictResolutions = dialog.ConflictResolutionData,
+            TemporaryDirectories = dialog.TemporaryDirectories.ToList(),
             Cancelled = false
         };
     }
@@ -576,21 +589,11 @@ public class DialogService : IDialogService
         return dialog.Result ?? DownloadLoraVersionResult.Cancelled();
     }
 
-    public async Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders)
+    public async Task<bool> ShowDownloadLoraMovedDialogAsync()
     {
-        var settings = App.Services?.GetService<IAppSettingsService>();
-        var favorite = settings is null ? null : await settings.GetFavoriteLoraSourceAsync();
-        var viewModel = new DownloadLoraDialogViewModel(
-            App.Services?.GetService<DiffusionNexus.Civitai.ICivitaiClient>(),
-            settings,
-            this,
-            App.Services?.GetService<Domain.Services.UnifiedLogging.IUnifiedLogger>());
-        await viewModel.InitializeAsync(sourceFolders, favorite);
-
-        var dialog = new DownloadLoraDialog().WithViewModel(viewModel);
-
+        var dialog = new DownloadLoraMovedDialog();
         await dialog.ShowDialog(_window);
-        return dialog.Result ?? DownloadLoraResult.Cancelled();
+        return dialog.GoToBrowse;
     }
 
     public async Task<int> ShowDuplicateFixerAsync(IEnumerable<ViewModels.Tabs.DuplicateClusterItemViewModel> clusters)
@@ -731,5 +734,31 @@ public class DialogService : IDialogService
         var dialog = new AssignCivitaiIdsDialog();
         await dialog.ShowDialog(_window);
         return new AssignCivitaiIdsDialogResult(dialog.IsConfirmed, dialog.ResolvedModel, dialog.ResolvedVersion);
+    }
+
+    public async Task<SyncPlanDialogResult> ShowSyncPlanDialogAsync(SyncPlanDialogViewModel viewModel)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            return await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSyncPlanDialogAsync(viewModel));
+        }
+
+        var dialog = new SyncPlanDialog().WithViewModel(viewModel);
+        await dialog.ShowDialog(_window);
+        return dialog.Result ?? SyncPlanDialogResult.Cancelled();
+    }
+
+    public async Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSyncReportDialogAsync(viewModel));
+            return;
+        }
+
+        var dialog = new SyncReportDialog().WithViewModel(viewModel);
+        await dialog.ShowDialog(_window);
     }
     }

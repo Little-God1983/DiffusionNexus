@@ -1,0 +1,447 @@
+using DiffusionNexus.Civitai;
+using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
+
+namespace DiffusionNexus.Service.Services.Sync;
+
+/// <summary>
+/// Writes a Civitai API response into the local DB graph of a model.
+/// Moved verbatim out of <c>LoraViewerViewModel.UpdateModelFromCivitaiAsync</c> (#521 WP2)
+/// so the sync pipeline — not a ViewModel — owns the response → entity mapping.
+/// </summary>
+/// <remarks>
+/// The caller owns the unit of work (and therefore the DbContext scope): this class only
+/// mutates the graph and saves. All entry points honor <see cref="Model.IsUserEdited"/> /
+/// <see cref="ModelVersion.IsUserEdited"/> so a user's own metadata is never overwritten.
+/// Pacing is not this class's business any more: every request it makes goes through the
+/// Civitai gateway, which paces, cools down after a 429 and caches. It used to wait here
+/// because this was the only code in the app that waited at all.
+/// </remarks>
+public sealed class CivitaiMetadataApplier
+{
+    private const string LogSource = "LibrarySync";
+
+    private readonly ICivitaiClient _client;
+    private readonly IUnifiedLogger? _logger;
+
+    /// <param name="client">The Civitai API client.</param>
+    /// <param name="logger">Optional unified logger.</param>
+    public CivitaiMetadataApplier(
+        ICivitaiClient client,
+        IUnifiedLogger? logger = null)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Fetches the full model (for tags/images/versions) and writes the Civitai response into
+    /// the DB graph of <paramref name="modelId"/>. Honors <c>IsUserEdited</c> on model and
+    /// version. Saves. Returns <c>false</c> when the model row no longer exists.
+    /// </summary>
+    /// <param name="uow">Unit of work owning the DbContext the graph is loaded into.</param>
+    /// <param name="modelId">Local model id to write into.</param>
+    /// <param name="fileId">Local <see cref="ModelFile"/> id identifying which version to update.</param>
+    /// <param name="version">The version as returned by the hash lookup (fallback source).</param>
+    /// <param name="apiKey">Optional Civitai API key.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<bool> ApplyAsync(
+        IUnitOfWork uow,
+        int modelId,
+        int fileId,
+        CivitaiModelVersion version,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        // Fetch the full model to get all versions (richer data including images)
+        CivitaiModel? civitaiModel = null;
+        if (version.ModelId > 0)
+        {
+            civitaiModel = await _client.GetModelAsync(version.ModelId, apiKey, ct);
+        }
+
+        // Resolve the best image source: the full model response is more reliable than
+        // the hash-lookup response which often returns an empty images array.
+        var bestCivitaiVersion = civitaiModel?.ModelVersions
+            .FirstOrDefault(v => v.Id == version.Id) ?? version;
+
+        // Load ONLY the target model — not the entire database (was the #1 cause of OOM)
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
+        if (dbModel is null) return false;
+
+        // Update model-level fields from Civitai
+        // Skip overwriting user-edited fields (description, tags, etc.) — IsUserEdited is sticky.
+        var preserveModelEdits = !CanWriteModelText(dbModel);
+        if (civitaiModel is not null)
+        {
+            // Always set the grouping key — not unique, safe for all models sharing the same Civitai page
+            dbModel.CivitaiModelPageId = civitaiModel.Id;
+
+            // Only assign CivitaiId if no other model already owns it (prevents UNIQUE constraint violation)
+            var civitaiIdTaken = await uow.Models.IsCivitaiIdTakenAsync(civitaiModel.Id, dbModel.Id, ct);
+            if (!civitaiIdTaken)
+            {
+                dbModel.CivitaiId = civitaiModel.Id;
+            }
+            else
+            {
+                _logger?.Warn(LogCategory.Network, LogSource,
+                    $"Skipping CivitaiId {civitaiModel.Id} for model '{dbModel.Name}' (Id={dbModel.Id}): " +
+                    "already assigned to another model");
+            }
+
+            if (!preserveModelEdits)
+            {
+                dbModel.Name = civitaiModel.Name;
+                dbModel.Description = civitaiModel.Description;
+            }
+            dbModel.IsNsfw = civitaiModel.Nsfw;
+            dbModel.IsPoi = civitaiModel.Poi;
+            dbModel.Source = DataSource.CivitaiApi;
+            dbModel.LastSyncedAt = DateTimeOffset.UtcNow;
+            // Capture version-availability data from the same response so the
+            // "+N more versions" badge can be shown without an additional HTTP call.
+            dbModel.TotalVersionCount = civitaiModel.ModelVersions?.Count ?? 0;
+            dbModel.LastCheckedForUpdatesUtc = DateTime.UtcNow;
+            dbModel.AllowNoCredit = civitaiModel.AllowNoCredit;
+            dbModel.AllowDerivatives = civitaiModel.AllowDerivatives;
+            dbModel.AllowDifferentLicense = civitaiModel.AllowDifferentLicense;
+
+            // Update or create creator — reuse existing Creator entity by
+            // Username to avoid UNIQUE constraint violations.
+            if (civitaiModel.Creator is not null)
+            {
+                if (dbModel.Creator is not null)
+                {
+                    dbModel.Creator.Username = civitaiModel.Creator.Username;
+                    dbModel.Creator.AvatarUrl ??= civitaiModel.Creator.Image;
+                }
+                else
+                {
+                    var existingCreator = await uow.Models
+                        .FindCreatorByUsernameAsync(civitaiModel.Creator.Username, ct);
+
+                    dbModel.Creator = existingCreator ?? new Creator
+                    {
+                        Username = civitaiModel.Creator.Username,
+                        AvatarUrl = civitaiModel.Creator.Image,
+                    };
+                }
+            }
+        }
+
+        // Update version-level fields for the matched version
+        var dbVersion = dbModel.Versions.FirstOrDefault(v =>
+            v.Files.Any(f => f.Id == fileId));
+
+        if (dbVersion is not null)
+        {
+            // Only assign CivitaiId if no other version already owns it (prevents UNIQUE constraint violation)
+            var versionIdTaken = await uow.Models
+                .IsVersionCivitaiIdTakenAsync(bestCivitaiVersion.Id, dbVersion.Id, ct);
+            if (!versionIdTaken)
+            {
+                dbVersion.CivitaiId = bestCivitaiVersion.Id;
+            }
+            else
+            {
+                _logger?.Warn(LogCategory.Network, LogSource,
+                    $"Skipping CivitaiId {bestCivitaiVersion.Id} for version '{dbVersion.Name}' (Id={dbVersion.Id}): " +
+                    "already assigned to another version");
+            }
+
+            // Name, description, trigger words and the base model are the four fields a user edits
+            // on a version, so they all hang off the same guard — the ids, download URL, stats and
+            // images below are facts about the upstream version, not answers anyone authored here.
+            // The base model belongs on this side of the line because the detail view lets the user
+            // pick it (ModelDetailViewModel.Editing writes BaseModelRaw + BaseModel and stamps
+            // IsUserEdited); refreshing over it silently undid that choice.
+            var preserveVersionEdits = !CanWriteVersionText(dbVersion);
+
+            if (!preserveVersionEdits)
+            {
+                dbVersion.Name = bestCivitaiVersion.Name;
+                dbVersion.Description = bestCivitaiVersion.Description;
+
+                // CivitaiModelVersion.BaseModel is a non-nullable string defaulting to "", so a
+                // response that omits it looks exactly like one that carries a blank — BaseModelWriter
+                // treats that as a missing answer and writes nothing, which is what keeps a base
+                // model an earlier sidecar established from being undone on a version nobody edited.
+                BaseModelWriter.Write(dbVersion, bestCivitaiVersion.BaseModel);
+            }
+
+            dbVersion.DownloadUrl = bestCivitaiVersion.DownloadUrl;
+            dbVersion.DownloadCount = bestCivitaiVersion.Stats?.DownloadCount ?? 0;
+            dbVersion.PublishedAt = bestCivitaiVersion.PublishedAt;
+            dbVersion.EarlyAccessDays = bestCivitaiVersion.EarlyAccessTimeFrame;
+
+            // Update trigger words — skip when this version was user-edited
+            if (!preserveVersionEdits)
+            {
+                dbVersion.TriggerWords.Clear();
+                var order = 0;
+                foreach (var word in bestCivitaiVersion.TrainedWords)
+                {
+                    dbVersion.TriggerWords.Add(new TriggerWord
+                    {
+                        Word = word,
+                        Order = order++
+                    });
+                }
+            }
+
+            // Images from Civitai (use the version with the richest data): new ones added, stored
+            // ones re-rated, duplicate copies dropped — see CivitaiImageMerger (#631).
+            MergeImages(dbVersion, bestCivitaiVersion.Images);
+
+            // Update file hashes from Civitai data
+            var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
+            if (civFile?.Hashes is not null)
+            {
+                var dbFile = dbVersion.PrimaryFile;
+                if (dbFile is not null)
+                {
+                    dbFile.CivitaiId = civFile.Id;
+                    // Uppercased on the way in: Civitai answers in lowercase, and a stored
+                    // lowercase digest breaks SQL equality against every hash the app writes
+                    // itself — the invariant the startup repair pass exists to restore.
+                    dbFile.HashSHA256 ??= FileHasher.NormalizeSha256(civFile.Hashes.SHA256);
+                    dbFile.HashAutoV2 ??= civFile.Hashes.AutoV2;
+                    dbFile.HashCRC32 ??= civFile.Hashes.CRC32;
+                    dbFile.HashBLAKE3 ??= civFile.Hashes.BLAKE3;
+                }
+            }
+        }
+
+        // Sync tags from Civitai model response (skip when user has edited tags)
+        if (!preserveModelEdits && civitaiModel?.Tags is { Count: > 0 } civitaiTags)
+        {
+            var tagLookup = await uow.Models.GetAllTagsLookupAsync(ct);
+            SyncTags(dbModel, civitaiTags, tagLookup);
+        }
+
+        await uow.SaveChangesAsync(ct);
+        return true;
+    }
+
+    /// <summary>
+    /// Tags only (FetchTags step): fetch the model page and replace the model's tags unless
+    /// the model is user-edited. Saves. Returns the number of tags on the model afterwards —
+    /// <c>0</c> is a valid, final answer for a model Civitai has no tags for — or <c>null</c>
+    /// when Civitai had no model to answer with at all.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>null</c> / <c>0</c> split is the whole point of the entry point: "the page is gone"
+    /// and "the page lists no tags" are different facts, and the caller stamps them differently.
+    /// An empty tag list from a page that *did* respond is authoritative, so tags removed upstream
+    /// are removed here too — except on a user-edited model, whose tags are never ours to touch,
+    /// and except on a degraded payload (<c>"tags": null</c>), which is not an answer at all.
+    /// </para>
+    /// <para>
+    /// The authoritative-clear branch is currently unreachable from <c>FetchTagsStep</c>:
+    /// <c>SelectTagCandidatesAsync</c> only offers models with no tags, and <c>ForceTags</c>
+    /// bypasses the "already checked" policy, not that predicate. That is <i>intentional</i> — a
+    /// forced re-sync must never be able to turn into a bulk tag-wipe driven by one degraded
+    /// Civitai response. Re-pulling tags for models that already have some is separate design
+    /// work, and would start at the repository query, not here.
+    /// </para>
+    /// </remarks>
+    public async Task<int?> ApplyTagsAsync(
+        IUnitOfWork uow,
+        int modelId,
+        int civitaiModelId,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
+
+        // A 404 says nothing about tags: the model page itself is gone. Reporting that as
+        // "zero tags" would let a dead page silently wipe the tags we already hold.
+        if (civitaiModel is null) return null;
+
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
+        if (dbModel is null) return 0;
+
+        // Same guard as ApplyAsync: never overwrite a user's own tags.
+        if (!CanWriteModelText(dbModel)) return dbModel.Tags.Count;
+
+        // Tags is annotated non-nullable and initialized to [], but System.Text.Json writes null
+        // straight through for an explicit `"tags": null` — the client does not enable
+        // RespectNullableAnnotations, and Civitai's response shapes have drifted under us twice
+        // before. A missing list is a degraded payload, NOT an authoritative empty one: it must not
+        // clear tags. It still counts as answered (non-null), so the caller stops re-asking.
+        if (civitaiModel.Tags is null) return dbModel.Tags.Count;
+
+        var tagLookup = await uow.Models.GetAllTagsLookupAsync(ct);
+        SyncTags(dbModel, civitaiModel.Tags, tagLookup);
+        await uow.SaveChangesAsync(ct);
+
+        return dbModel.Tags.Count;
+    }
+
+    /// <summary>
+    /// Images only (FetchImages step): fetch the version and merge its images through
+    /// <see cref="CivitaiImageMerger"/> — new ones added, stored ones rated, duplicates dropped.
+    /// Saves when anything changed. Returns the number added, or <c>null</c> when Civitai has no
+    /// such version any more.
+    /// </summary>
+    public async Task<int?> ApplyImagesAsync(
+        IUnitOfWork uow,
+        int modelId,
+        int versionId,
+        int civitaiVersionId,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        var civitaiVersion = await _client.GetModelVersionAsync(civitaiVersionId, apiKey, ct);
+
+        // As above: a version that 404s is not a version with no images.
+        if (civitaiVersion is null) return null;
+
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(modelId, ct);
+        var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
+        if (dbVersion is null) return 0;
+
+        var merge = MergeImages(dbVersion, civitaiVersion.Images);
+        if (merge.Changed)
+        {
+            await uow.SaveChangesAsync(ct);
+        }
+
+        return merge.Added;
+    }
+
+    /// <summary>
+    /// Images for every version of one model, from a single model-page request. Returns the number
+    /// of images added per Civitai version id; a version the page does not describe maps to
+    /// <c>null</c> so the caller can ask for that one specifically.
+    /// </summary>
+    /// <remarks>
+    /// <c>models/{id}</c> carries every version with its images, so asking per version cost a
+    /// six-version model six requests for one page of data. The per-version
+    /// <see cref="ApplyImagesAsync"/> remains for the versions a model page omits — Civitai's two
+    /// endpoints do not always agree, and recording "no images" for a version we simply were not
+    /// told about would stamp it as checked and never look again.
+    /// </remarks>
+    public async Task<IReadOnlyDictionary<int, int?>> ApplyImagesFromModelAsync(
+        IUnitOfWork uow,
+        int civitaiModelId,
+        IReadOnlyList<(int ModelId, int VersionId, int CivitaiVersionId)> versions,
+        string? apiKey,
+        CancellationToken ct = default)
+    {
+        var results = new Dictionary<int, int?>();
+        if (versions.Count == 0) return results;
+
+        var civitaiModel = await _client.GetModelAsync(civitaiModelId, apiKey, ct);
+
+        // Every candidate here shares one local model — FetchImagesStep.SelectAsync groups its
+        // versions by ModelId before calling in — so the graph is loaded once for the whole group,
+        // not once per version as it was before this fix. A gone model row is not "no answer" for a
+        // version the page DID describe: it falls to the same 0 a single missing version row got,
+        // both before and after this change.
+        var dbModel = await uow.Models.GetByIdWithIncludesAsync(versions[0].ModelId, ct);
+
+        var anyChanged = false;
+
+        foreach (var (_, versionId, civitaiVersionId) in versions)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var civitaiVersion = civitaiModel?.ModelVersions?.FirstOrDefault(v => v.Id == civitaiVersionId);
+            if (civitaiVersion is null)
+            {
+                results[civitaiVersionId] = null;
+                continue;
+            }
+
+            var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
+            if (dbVersion is null)
+            {
+                results[civitaiVersionId] = 0;
+                continue;
+            }
+
+            var merge = MergeImages(dbVersion, civitaiVersion.Images);
+            if (merge.Changed) anyChanged = true;
+            results[civitaiVersionId] = merge.Added;
+        }
+
+        // One save for the whole group rather than one per version that changed something — the
+        // per-version counts above are already computed from the in-memory graph, so batching the
+        // write changes nothing about what is returned, only how many round-trips it costs.
+        if (anyChanged) await uow.SaveChangesAsync(ct);
+
+        return results;
+    }
+
+    /// <summary>
+    /// <see cref="CivitaiImageMerger.Merge"/> plus a line for what healing did: an image re-rated or
+    /// a duplicate copy dropped is the #631 repair, and a bulk run should show that it happened.
+    /// </summary>
+    private ImageMergeResult MergeImages(ModelVersion dbVersion, IReadOnlyList<CivitaiModelImage> civitaiImages)
+    {
+        var merge = CivitaiImageMerger.Merge(dbVersion, civitaiImages);
+        if (merge.Rated > 0 || merge.Removed > 0)
+        {
+            _logger?.Debug(LogCategory.Network, LogSource, FormattableString.Invariant(
+                $"Images for '{dbVersion.Name}': {merge.Added} added, {merge.Rated} rated, {merge.Removed} duplicate(s) removed"));
+        }
+        return merge;
+    }
+
+    /// <summary>
+    /// Whether the model's own text — name, description, tags — may be written from upstream.
+    /// A model the user has edited answers no: <see cref="Model.IsUserEdited"/> is sticky, and
+    /// nothing Civitai returns is more authoritative than what the user typed.
+    /// </summary>
+    private static bool CanWriteModelText(Model dbModel) => !dbModel.IsUserEdited;
+
+    /// <summary>
+    /// The same rule for a version's authored answers — name, description, trigger words and the
+    /// base model. Version edits are tracked separately from the model's, so a user who renamed one
+    /// version keeps the rest of the model syncing normally.
+    /// </summary>
+    private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
+
+    /// <summary>
+    /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>
+    /// rows by <see cref="Tag.NormalizedName"/> to avoid duplicates in the Tags table.
+    /// </summary>
+    /// <remarks>
+    /// Civitai tag lists are not normalized — "Anime" and "anime" both occur, on the same model —
+    /// and two spellings that fold to one <see cref="Tag"/> would produce two <see cref="ModelTag"/>
+    /// rows with the same composite key <c>(ModelId, TagId)</c>. That is not a cosmetic duplicate:
+    /// the change tracker rejects the second one outright, so the model's whole tag list is lost and
+    /// the item fails. One row per distinct normalized name, first spelling wins.
+    /// </remarks>
+    public static void SyncTags(
+        Model dbModel,
+        IReadOnlyList<string> civitaiTags,
+        Dictionary<string, Tag> knownTags)
+    {
+        dbModel.Tags.Clear();
+
+        var applied = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var tagName in civitaiTags)
+        {
+            if (string.IsNullOrWhiteSpace(tagName)) continue;
+
+            var normalized = tagName.Trim().ToLowerInvariant();
+            if (!applied.Add(normalized)) continue;
+
+            if (!knownTags.TryGetValue(normalized, out var tag))
+            {
+                tag = new Tag { Name = tagName, NormalizedName = normalized };
+                knownTags[normalized] = tag;
+            }
+
+            dbModel.Tags.Add(new ModelTag { Tag = tag });
+        }
+    }
+}

@@ -10,7 +10,10 @@ using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Utilities;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
@@ -293,9 +296,9 @@ public partial class ModelDetailViewModel
     /// list is sourced from <see cref="ICivitaiBaseModelCatalog"/> at load time
     /// and matches Civitai's own base-model filter dropdown. The currently
     /// persisted value is always present, even when the catalog hasn't heard of
-    /// it yet, so the ComboBox can round-trip arbitrary legacy strings.
+    /// it yet, so the picker can round-trip arbitrary legacy strings.
     /// </summary>
-    public ObservableCollection<string> AvailableBaseModels { get; } = [];
+    public BatchObservableCollection<string> AvailableBaseModels { get; } = [];
 
     /// <summary>Currently selected base model in the ComboBox (two-way bound).</summary>
     [ObservableProperty]
@@ -337,19 +340,19 @@ public partial class ModelDetailViewModel
             _suppressBaseModelSave = true;
             try
             {
-                AvailableBaseModels.Clear();
-                foreach (var label in labels)
-                {
-                    AvailableBaseModels.Add(label);
-                }
-
                 // Make sure the currently-stored value is selectable even if it
                 // isn't in the Civitai catalog (e.g. legacy / custom labels).
+                var rebuilt = new List<string>(labels.Count + 1);
                 if (!string.IsNullOrWhiteSpace(current)
-                    && !AvailableBaseModels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
+                    && !labels.Any(b => string.Equals(b, current, StringComparison.OrdinalIgnoreCase)))
                 {
-                    AvailableBaseModels.Insert(0, current);
+                    rebuilt.Add(current);
                 }
+                rebuilt.AddRange(labels);
+
+                // One Reset instead of Clear + N Adds — this reload runs on every
+                // tile selection and every subscribed picker rebuilds per event.
+                AvailableBaseModels.ReplaceAll(rebuilt);
 
                 SelectedBaseModel = string.IsNullOrWhiteSpace(current) ? null : current;
             }
@@ -429,7 +432,6 @@ public partial class ModelDetailViewModel
             if (dbVersion is null) return;
 
             dbVersion.BaseModelRaw = newValue;
-            dbVersion.BaseModel = BaseModelTypeExtensions.ParseCivitai(newValue);
             dbVersion.IsUserEdited = true;
 
             await unitOfWork.SaveChangesAsync();
@@ -687,8 +689,10 @@ public partial class ModelDetailViewModel
     #region Thumbnail upload
 
     /// <summary>
-    /// Maximum width (px) for stored custom thumbnail. Mirrors
-    /// <c>ModelTileViewModel.MaxThumbnailWidth</c> conventions.
+    /// Maximum width (px) for a stored custom thumbnail. Deliberately wider than the
+    /// <c>ThumbnailCodec.TargetWidth</c> (450) the sync pipeline produces: this is a picture the
+    /// user chose by hand for one model, not one of thousands fetched in bulk, so it is worth the
+    /// extra bytes and it must not be the first thing to look soft on a high-DPI display.
     /// </summary>
     private const int CustomThumbnailMaxWidth = 640;
 
@@ -745,10 +749,10 @@ public partial class ModelDetailViewModel
                 dbVersion.Images.Add(image);
             }
 
-            image.ThumbnailData = data;
-            image.ThumbnailMimeType = mime;
-            image.ThumbnailWidth = width;
-            image.ThumbnailHeight = height;
+            // Plan B made ThumbnailWriter the one writer of the six thumbnail columns; this was the
+            // last path around it. Routing through it also stamps the attempt and clears any prior
+            // failure verdict — a user-uploaded image must not sit next to yesterday's "Corrupt".
+            ThumbnailWriter.ApplySuccess(image, new ThumbnailPayload(data, mime, width, height), DateTimeOffset.UtcNow);
             image.IsLocalCacheValid = false;
             image.LocalCachePath = null;
             image.CachedAt = DateTimeOffset.UtcNow;
@@ -883,7 +887,6 @@ public partial class ModelDetailViewModel
     {
         version.CivitaiId = null;
         version.Description = null;
-        version.BaseModel = BaseModelType.Unknown;
         version.BaseModelRaw = "???";
         version.PublishedAt = null;
         version.DownloadUrl = null;
@@ -931,6 +934,9 @@ public partial class ModelDetailViewModel
         model.CivitaiModelPageId = null;
         model.Description = null;
         model.IsNsfw = false;
+        // Civitai's label kept beside the user's rating (#647) goes with the rest of Civitai's
+        // data; the user's own rating stays.
+        model.OriginalNsfwRating = null;
         model.IsPoi = false;
         model.LastSyncedAt = null;
         model.AllowNoCredit = false;
@@ -1106,39 +1112,8 @@ public partial class ModelDetailViewModel
                     }
                 }
 
-                // Add new images (skip duplicates by CivitaiId).
-                var existingImageIds = dbVersion.Images
-                    .Where(i => i.CivitaiId.HasValue)
-                    .Select(i => i.CivitaiId!.Value)
-                    .ToHashSet();
-                var sortOrder = dbVersion.Images.Count;
-                foreach (var civImage in civitaiVersion.Images)
-                {
-                    if (string.IsNullOrEmpty(civImage.Url)) continue;
-                    if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value)) continue;
-
-                    dbVersion.Images.Add(new ModelImage
-                    {
-                        ModelVersionId = dbVersion.Id,
-                        CivitaiId = civImage.Id,
-                        Url = civImage.Url,
-                        MediaType = civImage.Type,
-                        IsNsfw = civImage.Nsfw,
-                        Width = civImage.Width ?? 0,
-                        Height = civImage.Height ?? 0,
-                        BlurHash = civImage.Hash,
-                        SortOrder = sortOrder++,
-                        CreatedAt = civImage.CreatedAt,
-                        PostId = civImage.PostId,
-                        Username = civImage.Username,
-                        Prompt = civImage.Meta?.Prompt,
-                        NegativePrompt = civImage.Meta?.NegativePrompt,
-                        Seed = civImage.Meta?.Seed,
-                        Steps = civImage.Meta?.Steps,
-                        Sampler = civImage.Meta?.Sampler,
-                        CfgScale = civImage.Meta?.CfgScale,
-                    });
-                }
+                // Images: new ones added, stored ones rated, duplicate copies dropped (#631).
+                CivitaiImageMerger.Merge(dbVersion, civitaiVersion.Images);
 
                 // File hashes from the primary Civitai file.
                 var civFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)

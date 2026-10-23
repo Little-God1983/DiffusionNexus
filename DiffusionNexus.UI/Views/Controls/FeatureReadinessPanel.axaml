@@ -97,6 +97,25 @@
               ToolTip.Tip="Re-check whether this feature has everything it needs to run"/>
     </Grid>
 
+    <!-- Which backend answered, with the way to change it or to install what is missing on the Engine -->
+    <Panel IsVisible="{Binding ShowBackendLine}">
+      <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding !ShowInstallOnEngine}">
+        <TextBlock Text="Running on" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+        <TextBlock Text="{Binding ActiveBackendName}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <TextBlock Text="·" FontSize="11" Opacity="0.7" VerticalAlignment="Center" IsVisible="{Binding ShowChangeLink}"/>
+        <Button Content="change" Command="{Binding ChangeBackendCommand}" IsVisible="{Binding ShowChangeLink}"
+                Background="Transparent" BorderThickness="0" Padding="0" FontSize="11" Foreground="#8AB4F8"
+                Cursor="Hand" ToolTip.Tip="Choose which ComfyUI runs this tool (Settings → ComfyUI Server)"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" Spacing="4" IsVisible="{Binding ShowInstallOnEngine}">
+        <TextBlock Text="Not installed on the Engine" FontSize="11" FontWeight="SemiBold" Foreground="#FFAB91" VerticalAlignment="Center"/>
+        <TextBlock Text="·" FontSize="11" Opacity="0.7" VerticalAlignment="Center"/>
+        <Button Content="{Binding InstallOnEngineLabel}" Command="{Binding InstallOnEngineCommand}"
+                Background="Transparent" BorderThickness="0" Padding="0" FontSize="11" Foreground="#8AB4F8"
+                Cursor="Hand" ToolTip.Tip="Open the Engine's Features dialog with this feature ticked"/>
+      </StackPanel>
+    </Panel>
+
     <!-- Missing requirements detail (hidden while checking) -->
     <Border Background="#2A1A1A" CornerRadius="6" Padding="12" Margin="0,4,0,0">
       <Border.IsVisible>

@@ -26,6 +26,9 @@ public class DiffusionNexusCoreDbContext : DbContext
     /// <summary>Models (aggregate root).</summary>
     public DbSet<Model> Models => Set<Model>();
 
+    /// <summary>Per-model record of what the library sync has already attempted (one row per model).</summary>
+    public DbSet<ModelSyncState> ModelSyncStates => Set<ModelSyncState>();
+
     /// <summary>Model versions.</summary>
     public DbSet<ModelVersion> ModelVersions => Set<ModelVersion>();
 

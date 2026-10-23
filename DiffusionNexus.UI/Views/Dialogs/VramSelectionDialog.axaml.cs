@@ -30,7 +30,11 @@ public partial class VramSelectionDialog : Window
     /// Available VRAM sizes in GB, parsed from the configuration
     /// (e.g. <c>[8, 16, 24]</c>). Must contain at least one value.
     /// </param>
-    public VramSelectionDialog(int[] configuredProfiles)
+    /// <param name="suggestedVramGb">
+    /// The detected VRAM tier to preselect, when it matches one of <paramref name="configuredProfiles"/>.
+    /// Falls back to the first (smallest) profile when <c>null</c> or no match is found.
+    /// </param>
+    public VramSelectionDialog(int[] configuredProfiles, int? suggestedVramGb = null)
     {
         ArgumentNullException.ThrowIfNull(configuredProfiles);
 
@@ -39,7 +43,11 @@ public partial class VramSelectionDialog : Window
 
         var combo = this.FindControl<ComboBox>("VramComboBox")!;
         combo.ItemsSource = _profiles.Select(p => $"{p} GB").ToList();
-        combo.SelectedIndex = 0;
+
+        var suggestedIndex = suggestedVramGb.HasValue
+            ? Array.IndexOf(_profiles, suggestedVramGb.Value)
+            : -1;
+        combo.SelectedIndex = suggestedIndex >= 0 ? suggestedIndex : 0;
     }
 
     private void OnOk(object sender, RoutedEventArgs e)

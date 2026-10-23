@@ -23,7 +23,14 @@ public enum ModelType
     Other,
     Embedding,
     Detection,
-    Motion
+    Motion,
+    /// <summary>
+    /// CLIP / T5 / LLM text encoders. Not a Civitai model type: Civitai has no such category, so
+    /// this member only ever arrives from our own classification of a local file. Appended last —
+    /// the value is persisted as a string (ModelConfiguration.cs:24), so appending is free and
+    /// reordering would silently repoint every existing row.
+    /// </summary>
+    TextEncoder
 }
 
 /// <summary>
@@ -47,38 +54,6 @@ public enum CivitaiCategory
     Animal,
     Assets,
     Action
-}
-
-/// <summary>
-/// Base model architectures.
-/// </summary>
-public enum BaseModelType
-{
-    Unknown = 0,
-    SD14,
-    SD15,
-    SD15LCM,
-    SD20,
-    SD21,
-    SDXL09,
-    SDXL10,
-    SDXLTurbo,
-    SDXLLightning,
-    SDXLDistilled,
-    SD3,
-    SD35,
-    SD35Large,
-    SD35Medium,
-    Flux1D,
-    Flux1S,
-    Pony,
-    Illustrious,
-    NoobAI,
-    Hunyuan,
-    HunyuanVideo,
-    WanVideo21,
-    WanVideo22,
-    Other
 }
 
 /// <summary>
@@ -138,14 +113,19 @@ public enum ScanResult
 }
 
 /// <summary>
-/// NSFW content level.
+/// Civitai's browsing-level bitmask for a piece of content. <see cref="None"/> means unrated.
+/// Whether a rating counts as safe is <see cref="Services.NsfwPolicy"/>'s answer, nobody else's.
 /// </summary>
+[Flags]
 public enum NsfwLevel
 {
     None = 0,
-    Soft,
-    Mature,
-    X
+    PG = 1,
+    PG13 = 2,
+    R = 4,
+    X = 8,
+    XXX = 16,
+    Blocked = 32
 }
 
 /// <summary>

@@ -27,6 +27,10 @@ public class CivitaiBaseModelCatalogTests : IDisposable
     // trip a test, since the whole point of this class is to degrade *loudly*.
     private const int BundledSnapshotCount = 86;
 
+    // Number of upstream URLs the catalog walks before giving up. Pinned for the same
+    // reason as the snapshot count: adding or dropping a source must be a deliberate act.
+    private const int CandidateUrlCount = 3;
+
     // --- New (2026) layout: baseModelRecords: BaseModelRecord[] = [ ... ] ---
     private const string NewFormatTs = """
         import { BaseModelRecord } from './types';
@@ -71,6 +75,23 @@ public class CivitaiBaseModelCatalogTests : IDisposable
           { name: 'SD 1.5' },
           { name: 'SDXL 1.0' },
           { name: 'SD 1.5' },
+        ];
+        """;
+
+    // --- The re-export shim Civitai left at src/shared/constants in 2026-08 when the
+    //     definitions moved into the @civitai/shared workspace package. Verbatim shape. ---
+    private const string ReExportShimTs = """
+        // Re-export shim: this module moved to the @civitai/shared package so the creator-studio spoke can
+        // resolve base models too (media type drives the video pricing caps).
+        // Existing call sites import from '~/shared/constants/basemodel.constants' unchanged.
+        export * from '@civitai/shared/basemodel.constants';
+        """;
+
+    // --- The moved-to file, carrying a label only the new location knows about. ---
+    private const string MovedRecordsTs = """
+        export const baseModelRecords: BaseModelRecord[] = [
+          { name: 'SD 1.5' },
+          { name: 'MiniMax H3', description: 'Hailuo H3 by MiniMax' },
         ];
         """;
 
@@ -193,7 +214,47 @@ public class CivitaiBaseModelCatalogTests : IDisposable
         var models = await catalog.GetBaseModelsAsync();
 
         models.Should().Equal("SD 1.4", "SD 1.5", "SDXL 1.0", "Pony");
-        handler.Requests.Should().HaveCount(2);
+        handler.Requests.Should().HaveCount(CandidateUrlCount);
+        events.Should().Contain(CivitaiBaseModelCatalogEventKind.FetchSucceeded);
+    }
+
+    [Fact]
+    public async Task PackagesPath_IsTriedFirst_SoAReExportShimCannotServeAStaleList()
+    {
+        // 2026-08: Civitai moved baseModelRecords into packages/civitai-shared and left a
+        // 4-line `export * from ...` shim behind at src/shared/constants. The shim parses
+        // to nothing, so a catalog that still asks the old path first falls through to the
+        // legacy constants.ts license keys — a list that silently lags every new base model
+        // (the real "MiniMax H3 never appears after Refresh" bug).
+        var (catalog, handler, _) = Create(req =>
+            req.RequestUri!.AbsoluteUri.Contains("packages/civitai-shared") ? Ts(MovedRecordsTs)
+            : req.RequestUri!.AbsoluteUri.Contains("src/shared/constants") ? Ts(ReExportShimTs)
+            : Ts(LegacyLicensesTs));
+
+        var models = await catalog.GetBaseModelsAsync();
+
+        models.Should().Contain("MiniMax H3");
+        handler.Requests.Should().ContainSingle();
+        handler.Requests[0].RequestUri!.AbsoluteUri.Should().Contain("packages/civitai-shared");
+    }
+
+    [Fact]
+    public async Task SourceThatParsesToNothing_IsReported_BeforeFallingThroughToTheNextUrl()
+    {
+        // A 200 OK that yields zero models must not pass in silence — that exact
+        // combination (shim at the old path, legacy keys at the last one) reported
+        // "Fetched 78 base models" while serving a stale list.
+        var (catalog, handler, events) = Create(req =>
+            req.RequestUri!.AbsoluteUri.Contains("packages/civitai-shared")
+                ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                : req.RequestUri!.AbsoluteUri.Contains("src/shared/constants")
+                    ? Ts(ReExportShimTs)
+                    : Ts(LegacyArrayTs));
+
+        var models = await catalog.GetBaseModelsAsync();
+
+        models.Should().Equal("SD 1.4", "SD 1.5", "SDXL 1.0", "Pony");
+        events.Should().Contain(CivitaiBaseModelCatalogEventKind.SourceYieldedNoModels);
         events.Should().Contain(CivitaiBaseModelCatalogEventKind.FetchSucceeded);
     }
 
@@ -212,8 +273,8 @@ public class CivitaiBaseModelCatalogTests : IDisposable
 
         models.Should().HaveCount(BundledSnapshotCount);
         models.Should().Contain(new[] { "SD 1.5", "SDXL 1.0", "Flux.2 Klein 9B", "Pony V7", "Upscaler" });
-        // Both candidate URLs are tried before giving up.
-        handler.Requests.Should().HaveCount(2);
+        // Every candidate URL is tried before giving up.
+        handler.Requests.Should().HaveCount(CandidateUrlCount);
         events.Should().Contain(CivitaiBaseModelCatalogEventKind.FetchFailed)
             .And.Contain(CivitaiBaseModelCatalogEventKind.UsedBundledFallback);
     }
@@ -227,7 +288,7 @@ public class CivitaiBaseModelCatalogTests : IDisposable
 
         models.Should().HaveCount(BundledSnapshotCount);
         models.Should().OnlyHaveUniqueItems();
-        handler.Requests.Should().HaveCount(2);
+        handler.Requests.Should().HaveCount(CandidateUrlCount);
         events.Should().Contain(CivitaiBaseModelCatalogEventKind.UsedBundledFallback);
     }
 

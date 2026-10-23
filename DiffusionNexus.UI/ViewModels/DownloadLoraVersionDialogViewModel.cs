@@ -2,6 +2,8 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
+using DiffusionNexus.Service.Services.Lora;
+using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -117,15 +119,8 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     {
         get
         {
-            if (!IsDownloadToExisting || string.IsNullOrWhiteSpace(SelectedSourceFolder))
-                return string.Empty;
-
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
-                path = Path.Combine(path, BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
+            if (!IsDownloadToExisting) return string.Empty;
+            return BuildExistingSourceTargetDirectory() ?? string.Empty;
         }
     }
 
@@ -181,10 +176,9 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
         BaseModel = civitaiVersion.BaseModel;
         Category = category ?? string.Empty;
 
-        var primaryFile = civitaiVersion.Files.FirstOrDefault(f => f.Primary == true)
-                          ?? civitaiVersion.Files.FirstOrDefault();
+        var primaryFile = CivitaiVersionFiles.PickPrimary(civitaiVersion);
         FileName = primaryFile?.Name ?? "unknown.safetensors";
-        FileSizeDisplay = FormatFileSize(primaryFile?.SizeKB ?? 0);
+        FileSizeDisplay = FileSizeFormatter.FormatKilobytes(primaryFile?.SizeKB ?? 0);
 
         SourceFolders.Clear();
         foreach (var folder in sourceFolders)
@@ -269,29 +263,22 @@ public partial class DownloadLoraVersionDialogViewModel : ObservableObject
     /// </summary>
     public string? GetTargetFolder()
     {
-        if (IsDownloadToExisting && !string.IsNullOrWhiteSpace(SelectedSourceFolder))
-        {
-            var path = SelectedSourceFolder;
-            if (CreateBaseModelFolder && !string.IsNullOrWhiteSpace(BaseModel))
-                path = Path.Combine(path, BaseModel);
-            if (CreateCategoryFolder && !string.IsNullOrWhiteSpace(Category))
-                path = Path.Combine(path, Category);
-            return path;
-        }
-
+        if (IsDownloadToExisting) return BuildExistingSourceTargetDirectory();
         if (IsDownloadToFolder) return CustomFolderPath;
         return null;
     }
 
-    private static string FormatFileSize(double sizeKb)
+    /// <summary>
+    /// The "download to existing source folder" branch shared by <see cref="PreviewPath"/> and
+    /// <see cref="GetTargetFolder"/> — both used to hand-roll the same base-model/category
+    /// combine, which is exactly the folder-toggle drift spec §4.4 exists to kill.
+    /// </summary>
+    private string? BuildExistingSourceTargetDirectory()
     {
-        return sizeKb switch
-        {
-            >= 1_048_576 => $"{sizeKb / 1_048_576:F1} GB",
-            >= 1_024 => $"{sizeKb / 1_024:F1} MB",
-            > 0 => $"{sizeKb:F0} KB",
-            _ => "Unknown"
-        };
+        if (string.IsNullOrWhiteSpace(SelectedSourceFolder)) return null;
+        return LoraPathBuilder.BuildTargetDirectory(
+            SelectedSourceFolder, BaseModel, Category,
+            includeBaseModel: CreateBaseModelFolder, includeCategory: CreateCategoryFolder);
     }
 
     #endregion

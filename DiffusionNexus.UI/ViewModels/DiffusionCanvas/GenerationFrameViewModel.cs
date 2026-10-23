@@ -1,46 +1,48 @@
+using Avalonia;
 using Avalonia.Media.Imaging;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
+using DiffusionNexus.UI.DiffusionCanvas;
+using DiffusionNexus.UI.ViewModels;
 
 namespace DiffusionNexus.UI.ViewModels.DiffusionCanvas;
 
 /// <summary>
-/// One generation frame on the infinite canvas. Owns its position, size, prompt, and
-/// the lifecycle state of the generation that produced (or is producing) the image inside it.
+/// One accepted result on the canvas: pixels at a world position and size.
 ///
-/// The frame is the unit of "history" on the canvas — once a generation completes, the user
-/// can drag the frame around freely; pressing Generate again creates a NEW frame next to it
-/// rather than overwriting the result.
+/// This used to be the canvas's whole spatial model — Generate appended a frame at a walking diagonal
+/// offset and the user dragged it around afterwards. Issue #518 replaced that with a single
+/// <see cref="GenerationBoundingBox"/> that declares where the next generation lands, so a frame is now
+/// simply a committed raster: the record of a candidate the user accepted. It no longer moves or resizes,
+/// because moving a result after the fact would desynchronise it from the pixels it was generated from.
 /// </summary>
-public partial class GenerationFrameViewModel : ObservableObject
+public partial class GenerationFrameViewModel : ObservableObject, ICanvasRaster, ILayerStackItem, IDisposable
 {
-    /// <summary>Model dimension alignment. Z-Image-Turbo requires multiples of 64.</summary>
-    public const int DimensionAlignment = 64;
-
-    public const int MinDimension = 512;
-    public const int MaxDimension = 2048;
-
-    /// <summary>X position on the canvas, in canvas-space pixels.</summary>
+    /// <summary>X position on the canvas, in world units.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private double _canvasX;
 
-    /// <summary>Y position on the canvas, in canvas-space pixels.</summary>
+    /// <summary>Y position on the canvas, in world units.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private double _canvasY;
 
-    /// <summary>Frame width (matches the diffusion output width). Snapped to <see cref="DimensionAlignment"/>.</summary>
+    /// <summary>Raster width (matches the diffusion output width).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private int _width = 1024;
 
-    /// <summary>Frame height (matches the diffusion output height). Snapped to <see cref="DimensionAlignment"/>.</summary>
+    /// <summary>Raster height (matches the diffusion output height).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private int _height = 1024;
 
-    /// <summary>Per-frame prompt text (defaults from the canvas-level prompt at creation time).</summary>
+    /// <summary>The prompt that produced this result, kept for provenance.</summary>
     [ObservableProperty]
     private string _prompt = string.Empty;
 
-    /// <summary>Current lifecycle state. Drives view template selection.</summary>
+    /// <summary>Current lifecycle state. Accepted results are always <see cref="GenerationFrameState.Completed"/>.</summary>
     [ObservableProperty]
     private GenerationFrameState _state = GenerationFrameState.Idle;
 
@@ -52,42 +54,116 @@ public partial class GenerationFrameViewModel : ObservableObject
     [ObservableProperty]
     private int _stepTotal;
 
-    /// <summary>Human-readable status line shown over the frame ("Loading…", "Sampling 5/9", error message…).</summary>
+    /// <summary>Human-readable status line ("Done in 4.1s", an error message…).</summary>
     [ObservableProperty]
     private string _statusText = string.Empty;
 
-    /// <summary>The completed image bound to the frame's surface, or null while idle/in-flight.</summary>
+    /// <summary>The image the surface draws. The frame owns it once a candidate is accepted.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Thumbnail))]
     private Bitmap? _frameImage;
 
-    /// <summary>Absolute path of the saved PNG, populated once <see cref="State"/> becomes Completed.</summary>
+    /// <summary>
+    /// Absolute path of the saved PNG. <see cref="CanvasRegionCompositor"/> reads the region back from
+    /// here, so a frame without a path contributes nothing to an img2img generation under it.
+    /// </summary>
     [ObservableProperty]
     private string? _imagePath;
 
-    /// <summary>Seed actually used for the generation (echoed from the backend), or null while pending.</summary>
+    /// <summary>Seed actually used for the generation (echoed from the backend), or null when unknown.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ProvenanceText))]
     private long? _seed;
 
-    /// <summary>True while generation is in flight — disables Generate / drag-to-resize.</summary>
+    /// <summary>The raster's world rectangle — the one definition every intersection test uses.</summary>
+    public Rect WorldRect => new(CanvasX, CanvasY, Width, Height);
+
+    /// <summary>True while generation is in flight.</summary>
     public bool IsBusy => State is GenerationFrameState.Loading or GenerationFrameState.Sampling;
 
     partial void OnStateChanged(GenerationFrameState value) => OnPropertyChanged(nameof(IsBusy));
 
-    /// <summary>
-    /// Snaps a desired pixel dimension to the model's alignment grid and clamps to the allowed range.
-    /// </summary>
-    public static int SnapDimension(double desired)
+    // ────────────────────────────── Layer (#594) ──────────────────────────────
+
+    /// <summary>What this layer holds: always <see cref="CanvasLayerKind.Raster"/>.</summary>
+    public CanvasLayerKind Kind => CanvasLayerKind.Raster;
+
+    /// <summary>Layer name shown in the layer stack. Assigned "Layer N" when the candidate is accepted.</summary>
+    [ObservableProperty]
+    private string _name = string.Empty;
+
+    /// <summary>Whether the layer is drawn and fed to the model.</summary>
+    [ObservableProperty]
+    private bool _isVisible = true;
+
+    /// <summary>Protects the layer from Delete and Clear canvas. Reorder, rename and hide stay allowed.</summary>
+    [ObservableProperty]
+    private bool _isLocked;
+
+    private double _opacity = 1.0;
+
+    /// <summary>Opacity from 0 to 1. Out-of-range values clamp; NaN means fully opaque.</summary>
+    public double Opacity
     {
-        var snapped = (int)Math.Round(desired / DimensionAlignment) * DimensionAlignment;
-        return Math.Clamp(snapped, MinDimension, MaxDimension);
+        get => _opacity;
+        set
+        {
+            var clamped = double.IsNaN(value) ? 1.0 : Math.Clamp(value, 0.0, 1.0);
+            if (SetProperty(ref _opacity, clamped))
+            {
+                OnPropertyChanged(nameof(OpacityPercent));
+                OnPropertyChanged(nameof(OpacityText));
+            }
+        }
     }
 
-    // TODO(v2-context-menu): wire these commands when the right-click context menu ships:
+    /// <summary>Opacity as a whole percentage, for the inspector's 0–100 slider.</summary>
+    public int OpacityPercent
+    {
+        get => (int)Math.Round(Opacity * 100);
+        set => Opacity = value / 100.0;
+    }
+
+    /// <summary>Opacity as display text, formatted invariantly.</summary>
+    public string OpacityText => string.Create(CultureInfo.InvariantCulture, $"{OpacityPercent}%");
+
+    /// <summary>The layer row's thumbnail: the raster itself, scaled by the row.</summary>
+    public Bitmap? Thumbnail => FrameImage;
+
+    /// <summary>
+    /// Seed, size and world position as one line for the inspector. Formatted invariantly in the view
+    /// model: XAML <c>StringFormat</c> follows the current culture and renders "1,0" on a German machine.
+    /// </summary>
+    public string ProvenanceText => string.Create(
+        CultureInfo.InvariantCulture,
+        $"Seed {(Seed is { } seed ? seed.ToString(CultureInfo.InvariantCulture) : "unknown")} · {Width}×{Height} at ({Math.Round(CanvasX, MidpointRounding.AwayFromZero):0}, {Math.Round(CanvasY, MidpointRounding.AwayFromZero):0})");
+
+    // TODO(v2-context-menu): the surface's right-click flyout offers Delete only today (bound to the
+    // canvas view model's DeleteFrameCommand). Add these there when they ship:
     //   - SendToImageEditorCommand
     //   - UseAsControlNetReferenceCommand
-    //   - UseAsInpaintBaseCommand
     //   - CopySeedToClipboardCommand
     //   - CopyPromptToClipboardCommand
-    /// <summary>Right-click → Delete frame. Implemented in v1; bound from the canvas VM.</summary>
-    public IRelayCommand<GenerationFrameViewModel>? DeleteCommand { get; set; }
+
+    /// <summary>
+    /// Releases the raster's bitmap. Callers must detach the frame from the bound collection first —
+    /// disposing a bitmap still bound into the visual tree faults the render.
+    /// </summary>
+    public void Dispose()
+    {
+        var image = FrameImage;
+        FrameImage = null;
+
+        try
+        {
+            image?.Dispose();
+        }
+        catch (Exception)
+        {
+            // Same rule as the staged candidate: releasing a bitmap must never be able to take down a
+            // teardown path. A bitmap we cannot release is a leak, not a crash.
+        }
+
+        GC.SuppressFinalize(this);
+    }
 }

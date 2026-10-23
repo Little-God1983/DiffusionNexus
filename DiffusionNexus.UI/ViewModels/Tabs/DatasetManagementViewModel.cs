@@ -71,6 +71,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     private DatasetType? _filterType;
     private bool _showNsfw;
     private bool _selectedNsfw;
+    private DatasetOverviewFilterResult _filterResult = new([], 0, 0);
 
     // Sub-tab fields
     private VersionSubTab _selectedSubTab = VersionSubTab.TrainingData;
@@ -473,21 +474,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
     public bool HasActiveFilter => !string.IsNullOrWhiteSpace(_filterText) || _filterType.HasValue || !_showNsfw;
 
     /// <summary>
-    /// Number of datasets hidden by filters (search, type, NSFW combined).
+    /// Number of datasets hidden entirely by the filters (search, type, NSFW combined).
     /// </summary>
-    public int HiddenCount { get; private set; }
+    public int HiddenDatasetCount => _filterResult.HiddenDatasetCount;
 
     /// <summary>
-    /// Whether any datasets are hidden by filters.
+    /// Number of versions hidden by the filters while their dataset stays visible
+    /// (NSFW-flagged versions in both views, plus version cards dropped by search/type in flattened view).
     /// </summary>
-    public bool HasHidden => HiddenCount > 0;
+    public int HiddenVersionCount => _filterResult.HiddenVersionCount;
 
     /// <summary>
-    /// Text describing how many datasets are hidden by filters.
+    /// Whether any datasets or versions are hidden by filters.
     /// </summary>
-    public string HiddenText => HiddenCount == 1 
-        ? "1 dataset hidden" 
-        : $"{HiddenCount} datasets hidden";
+    public bool HasHidden => _filterResult.HasHidden;
+
+    /// <summary>
+    /// Text describing what the filters hide, e.g. "1 dataset, 2 versions hidden".
+    /// </summary>
+    public string HiddenText => _filterResult.HiddenText;
 
     /// <summary>
     /// Filtered collection of datasets grouped by category.
@@ -1295,6 +1300,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         if (DialogService is null || ActiveDataset is null) return;
 
         IsFileDialogOpen = true;
+        IReadOnlyList<string> zipTempDirectories = [];
 
         try
         {
@@ -1314,6 +1320,7 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 destFolderPath);
 
             if (result is null || result.Cancelled) return;
+            zipTempDirectories = result.TemporaryDirectories;
 
             var filesToAdd = result.GetFilesToAdd().ToList();
             if (filesToAdd.Count == 0) return;
@@ -1390,7 +1397,29 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         finally
         {
             IsFileDialogOpen = false;
+            await Task.Run(() => DeleteZipExtractionDirectories(zipTempDirectories));
         }
+    }
+
+    /// <summary>
+    /// Removes the temporary directories the file-drop dialog created while expanding dropped ZIP
+    /// archives. The extracted files have been copied into the dataset by now (or the import was
+    /// abandoned), so nothing references them any more. Goes through the shared
+    /// <see cref="ZipMediaExtractor.DeleteExtractionDirectories"/> guard so only real extraction
+    /// folders are ever deleted, but performs the IO via <see cref="IDatasetStorageService"/> so the
+    /// flow stays testable without touching the disk.
+    /// </summary>
+    private void DeleteZipExtractionDirectories(IReadOnlyList<string> directories)
+    {
+        ZipMediaExtractor.DeleteExtractionDirectories(
+            directories,
+            deleteDirectory: dir =>
+            {
+                if (_datasetStorageService.DirectoryExists(dir))
+                    _datasetStorageService.DeleteDirectory(dir, recursive: true);
+            },
+            onError: (dir, ex) =>
+                _activityLog?.LogWarning("Import", $"Could not remove temporary ZIP folder '{dir}': {ex.Message}"));
     }
 
     private void SaveAllCaptions()
@@ -1665,6 +1694,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
                 if (!samePath)
                 {
+                    // The rating follows the image to its new name
+                    ImageRatingStore.Shared.Move(image.ImagePath, destPath);
                     image.ImagePath = destPath;
                 }
 
@@ -1677,7 +1708,8 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                 var uniquePath = _datasetStorageService.GetUniqueFilePath(destFolder, newFileName);
                 
                 _datasetStorageService.CopyFile(sourcePath, uniquePath, false);
-                
+                ImageRatingStore.Shared.Set(uniquePath, ImageRatingStatus.Unrated); // never a stale entry's rating
+
                 var newImageVm = DatasetImageViewModel.FromFile(uniquePath, _eventAggregator, _thumbnailOrchestrator, OwnerToken);
                 if (newImageVm.IsVideo && _videoThumbnailService != null)
                 {
@@ -1994,9 +2026,9 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             {
                 var sourcePath = ActiveDataset.GetVersionFolderPath(sourceVersion);
                 
-                // Build a dictionary of file base names with their ratings that match the rating filter
+                // Build the set of file base names that match the rating filter
                 // (based on DatasetImages which has the rating info)
-                var allowedFiles = new Dictionary<string, ImageRatingStatus>(StringComparer.OrdinalIgnoreCase);
+                var allowedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var img in DatasetImages)
                 {
                     var shouldInclude = 
@@ -2007,41 +2039,38 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                     if (shouldInclude)
                     {
                         // Add the base name (without extension) for matching media and caption files
-                        var baseName = Path.GetFileNameWithoutExtension(img.ImagePath);
-                        allowedFiles[baseName] = img.RatingStatus;
+                        allowedFiles.Add(Path.GetFileNameWithoutExtension(img.ImagePath));
                     }
                 }
 
                 var files = _datasetStorageService.EnumerateFiles(sourcePath)
                     .Where(f => !Path.GetFileName(f).StartsWith("."))
                     .ToList();
+                var copiedRatings = new List<KeyValuePair<string, ImageRatingStatus>>();
 
                 foreach (var sourceFile in files)
                 {
                     var baseName = Path.GetFileNameWithoutExtension(sourceFile);
-                    var extension = Path.GetExtension(sourceFile).ToLowerInvariant();
                     var shouldCopy = false;
+                    var isMedia = false;
 
                     // Check if this file type should be copied based on user selection
                     if (result.CopyImages && MediaFileExtensions.IsImageFile(sourceFile))
                     {
                         // For images, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                        shouldCopy = allowedFiles.Contains(baseName);
+                        isMedia = true;
                     }
                     else if (result.CopyVideos && MediaFileExtensions.IsVideoFile(sourceFile))
                     {
                         // For videos, check if base name is in allowed set (rating filter)
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
+                        shouldCopy = allowedFiles.Contains(baseName);
+                        isMedia = true;
                     }
                     else if (result.CopyCaptions && MediaFileExtensions.IsCaptionFile(sourceFile))
                     {
                         // For captions, only copy if the corresponding media file is being copied
-                        shouldCopy = allowedFiles.ContainsKey(baseName);
-                    }
-                    else if (extension == ".rating")
-                    {
-                        // Skip .rating files in the main loop - we handle them separately below
-                        continue;
+                        shouldCopy = allowedFiles.Contains(baseName);
                     }
 
                     if (shouldCopy)
@@ -2050,24 +2079,18 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
                         var destFile = Path.Combine(destPath, fileName);
                         _datasetStorageService.CopyFile(sourceFile, destFile, overwrite: false);
                         copied++;
-                    }
-                }
 
-                // Copy ratings if the option is selected
-                if (result.CopyRatings)
-                {
-                    foreach (var (baseName, rating) in allowedFiles)
-                    {
-                        // Only copy rating if it's not Unrated (Unrated means no .rating file)
-                        if (rating != ImageRatingStatus.Unrated)
+                        // Ratings are read from the source folder (its ratings file or a legacy
+                        // .rating) and written into the new version's ratings file
+                        if (isMedia && result.CopyRatings)
                         {
-                            var sourceRatingFile = Path.Combine(sourcePath, baseName + ".rating");
-                            var destRatingFile = Path.Combine(destPath, baseName + ".rating");
-                            
-                            _datasetStorageService.CopyFileIfExists(sourceRatingFile, destRatingFile, overwrite: false);
+                            copiedRatings.Add(new(destFile, ImageRatingStore.Shared.Get(sourceFile)));
                         }
                     }
                 }
+
+                // One write for the whole version instead of one per file
+                ImageRatingStore.Shared.SetMany(copiedRatings);
             }
 
             // Inherit NSFW flag from the parent version by default
@@ -2401,108 +2424,25 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
 
     /// <summary>
     /// Applies the current filter to the grouped datasets.
+    /// The rules live in <see cref="DatasetOverviewFilter"/> so they can be unit tested.
     /// </summary>
     private void ApplyFilter()
     {
+        _filterResult = DatasetOverviewFilter.Apply(GroupedDatasets, _filterText, _filterType, _showNsfw);
+
         FilteredGroupedDatasets.Clear();
-
-        var filterText = _filterText?.Trim() ?? string.Empty;
-        var hasTextFilter = !string.IsNullOrWhiteSpace(filterText);
-        var hasTypeFilter = _filterType.HasValue;
-
-        // Count all hidden datasets
-        var hiddenCount = 0;
-
-        foreach (var group in GroupedDatasets)
+        foreach (var group in _filterResult.Groups)
         {
-            var filteredDatasets = new List<DatasetCardViewModel>();
-
-            foreach (var dataset in group.Datasets)
-            {
-                // Step 1: Resolve the Safe Representation if in Safe Mode
-                DatasetCardViewModel? cardToShow = dataset;
-
-                if (!_showNsfw)
-                {
-                    // Get a safe snapshot. This returns:
-                    // - 'dataset' (this) if it's already safe
-                    // - A transient copy pointing to a safe version if it's Mixed but currently NSFW
-                    // - null if it's Pure NSFW
-                    cardToShow = dataset.GetSafeSnapshot();
-                }
-
-                // If card is null (Hidden by Safe Mode), count as hidden and skip
-                if (cardToShow is null)
-                {
-                    hiddenCount++;
-                    continue;
-                }
-
-                // Step 2: Apply Text and Type filters to the *resolved* card
-                // (We filter the snapshot to ensure Text/Description matches the displayed version if needed, 
-                // though typically Name is constant).
-                if (MatchesBasicFilters(cardToShow, filterText, hasTextFilter, hasTypeFilter))
-                {
-                    filteredDatasets.Add(cardToShow);
-                }
-                else
-                {
-                    hiddenCount++;
-                }
-            }
-
-            if (filteredDatasets.Count > 0)
-            {
-                var filteredGroup = new DatasetGroupViewModel
-                {
-                    CategoryId = group.CategoryId,
-                    Name = group.Name,
-                    Description = group.Description,
-                    SortOrder = group.SortOrder
-                };
-
-                foreach (var dataset in filteredDatasets)
-                {
-                    filteredGroup.Datasets.Add(dataset);
-                }
-
-                FilteredGroupedDatasets.Add(filteredGroup);
-            }
+            FilteredGroupedDatasets.Add(group);
         }
 
-        HiddenCount = hiddenCount;
         OnPropertyChanged(nameof(HasActiveFilter));
-        OnPropertyChanged(nameof(HiddenCount));
+        OnPropertyChanged(nameof(HiddenDatasetCount));
+        OnPropertyChanged(nameof(HiddenVersionCount));
         OnPropertyChanged(nameof(HasHidden));
         OnPropertyChanged(nameof(HiddenText));
         OnPropertyChanged(nameof(IsStorageConfiguredButEmpty));
         OnPropertyChanged(nameof(HasDatasetsToShow));
-    }
-
-    /// <summary>
-    /// Checks basic Text and Type filters (NSFW handled by GetSafeSnapshot in ApplyFilter).
-    /// </summary>
-    private bool MatchesBasicFilters(DatasetCardViewModel dataset, string filterText, bool hasTextFilter, bool hasTypeFilter)
-    {
-        // Check type filter
-        if (hasTypeFilter && dataset.Type != _filterType)
-        {
-            return false;
-        }
-
-        // Check text filter (matches name or description)
-        if (hasTextFilter)
-        {
-            var matchesName = dataset.Name?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
-            var matchesDescription = dataset.Description?.Contains(filterText, StringComparison.OrdinalIgnoreCase) == true;
-
-            if (!matchesName && !matchesDescription)
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -2608,11 +2548,16 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
         var selected = DatasetImages.Where(i => i.IsSelected).ToList();
         if (selected.Count == 0) return;
 
+        var notSaved = 0;
         foreach (var image in selected)
         {
             var previousRating = image.RatingStatus;
             image.RatingStatus = newRating;
-            image.SaveRating();
+            if (!image.SaveRating())
+            {
+                notSaved++;
+                continue;
+            }
 
             _eventAggregator.PublishImageRatingChanged(new ImageRatingChangedEventArgs
             {
@@ -2622,7 +2567,10 @@ public partial class DatasetManagementViewModel : ObservableObject, IDialogServi
             });
         }
 
-        StatusMessage = string.Format(statusMessageFormat, selected.Count);
+        StatusMessage = notSaved == 0
+            ? string.Format(statusMessageFormat, selected.Count)
+            : string.Format(statusMessageFormat, selected.Count - notSaved)
+              + $"; {notSaved} not saved: the folder's ratings file is in use (see the Unified Console)";
     }
 
     private void SelectApproved()

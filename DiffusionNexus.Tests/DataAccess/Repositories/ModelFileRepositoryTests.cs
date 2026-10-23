@@ -315,7 +315,6 @@ public class ModelFileRepositoryTests : IDisposable
         var version = new ModelVersion
         {
             Name = name,
-            BaseModel = BaseModelType.Other,
             Model = model
         };
 

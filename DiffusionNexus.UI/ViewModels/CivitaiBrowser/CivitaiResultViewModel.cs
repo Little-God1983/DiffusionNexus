@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,6 +19,23 @@ public partial class CivitaiResultViewModel : ObservableObject
 {
     private CancellationTokenSource _cts = new();
     private bool _showNsfwPreviews;
+
+    /// <summary>
+    /// One client for the lifetime of the process. A per-operation HttpClient discards the
+    /// connection pool and the TLS session every time, which is socket churn against a host we
+    /// are already asking to be patient with us. <see cref="SocketsHttpHandler.PooledConnectionLifetime"/>
+    /// keeps a process-lifetime client from pinning a stale DNS answer for the app's whole run.
+    /// </summary>
+    private static readonly HttpClient s_imagePreviewHttp = new(CreatePooledHandler()) { Timeout = TimeSpan.FromSeconds(15) };
+
+    /// <summary>Same rationale as <see cref="s_imagePreviewHttp"/>; longer timeout for the video stream.</summary>
+    private static readonly HttpClient s_videoPreviewHttp = new(CreatePooledHandler()) { Timeout = TimeSpan.FromSeconds(60) };
+
+    // Inlined rather than read from a separate static field: static field initializers run in
+    // textual order, and a field declared AFTER s_imagePreviewHttp/s_videoPreviewHttp above would
+    // still be default(TimeSpan) — zero — when those two run, silently disabling pooling instead
+    // of setting a 2-minute lifetime.
+    private static SocketsHttpHandler CreatePooledHandler() => new() { PooledConnectionLifetime = TimeSpan.FromMinutes(2) };
 
     /// <summary>
     /// Signals every in-flight preview download (image fetch, video stream,
@@ -49,10 +67,13 @@ public partial class CivitaiResultViewModel : ObservableObject
         // Only flag the model as EA when the *latest* version is in early access;
         // older non-EA versions are still freely available even if newer ones aren't.
         IsEarlyAccess = first.IsEarlyAccessActive();
+        IsPermanentlyPaid = first.IsPermanentlyPaid();
 
         foreach (var v in model.ModelVersions)
         {
-            Versions.Add(new CivitaiVersionPickItemViewModel(v));
+            var pick = new CivitaiVersionPickItemViewModel(v);
+            pick.PropertyChanged += OnVersionPropertyChanged;
+            Versions.Add(pick);
         }
 
         // Pre-select latest by default for cards' simple "select card → enqueue latest" flow.
@@ -133,6 +154,15 @@ public partial class CivitaiResultViewModel : ObservableObject
     public int DownloadCount { get; private init; }
     public int ThumbsUp { get; private init; }
     public bool IsEarlyAccess { get; private init; }
+
+    /// <summary>Latest version is paywalled forever (paidAccess.permanent) — same
+    /// latest-version-only semantic as <see cref="IsEarlyAccess"/>.</summary>
+    public bool IsPermanentlyPaid { get; private init; }
+
+    /// <summary>"Early Access" badge visibility — suppressed when the stronger
+    /// "Paywalled" badge applies, so the two never stack.</summary>
+    public bool ShowEarlyAccessBadge => IsEarlyAccess && !IsPermanentlyPaid;
+
     public bool IsNsfw { get; private init; }
     public string Category { get; private init; } = string.Empty;
     private bool _isVideoPreview;
@@ -175,6 +205,95 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// </summary>
     public void NotifyVersionSummaryChanged() => OnPropertyChanged(nameof(SelectedVersionSummary));
 
+    /// <summary>
+    /// Applies an installed-library snapshot to this card and to every version row:
+    /// the card badge lights when ANY version is present locally, each row's badge
+    /// only for its own version.
+    /// </summary>
+    public void ApplyInstalledIndex(CivitaiInstalledIndex index)
+    {
+        var installed = 0;
+        foreach (var v in Versions)
+        {
+            v.IsInstalled = index.IsInstalled(v.Version);
+            if (v.IsInstalled) installed++;
+        }
+        IsInstalled = installed > 0;
+        InstalledBadgeText = installed == 0 || Versions.Count <= 1 || installed == Versions.Count
+            ? "Installed"
+            : $"{installed} of {Versions.Count} installed";
+    }
+
+    /// <summary>
+    /// Card badge text: "Installed" when every version (or the only one) is in the library,
+    /// "2 of 3 installed" when only some are — so a multi-version model does not read as done.
+    /// </summary>
+    [ObservableProperty]
+    private string _installedBadgeText = "Installed";
+
+    /// <summary>
+    /// Why this card is on screen when it came from a pasted link or id ("Version ID 123"), so
+    /// the two cards a bare number can yield are told apart. Null for name-search cards.
+    /// </summary>
+    [ObservableProperty]
+    private string? _linkMatchLabel;
+
+    /// <summary>
+    /// Selection for a card a link or id produced (issue #630): tick the version the link named,
+    /// or the latest, unless it is already installed — the user can still tick it to download it
+    /// again. With <paramref name="selectCard"/> the card itself is selected whenever a version is
+    /// ticked, so "Add selection to queue" takes it in one click; the browser passes false when a
+    /// bare number yielded several cards, or that one click would download unrelated models.
+    /// Call after <see cref="ApplyInstalledIndex"/>.
+    /// </summary>
+    public void PreselectForLink(int? versionId, string matchLabel, bool selectCard = true)
+    {
+        LinkMatchLabel = matchLabel;
+        _linkVersionId = versionId;
+        _linkSelectCard = selectCard;
+        var target = (versionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+                     ?? Versions.FirstOrDefault();
+        foreach (var v in Versions)
+        {
+            v.IsSelected = ReferenceEquals(v, target) && !v.IsInstalled;
+        }
+        IsSelected = selectCard && HasSelectedVersions;
+        NotifyVersionSummaryChanged();
+        _linkPreselection = CaptureSelection();
+    }
+
+    /// <summary>
+    /// Redoes <see cref="PreselectForLink"/> after a newer installed snapshot was applied — the
+    /// browser shows link cards without waiting for the first library scan — but only while the
+    /// card's ticks are still exactly what the pre-tick set: anything the user ticked or unticked
+    /// since is theirs and stays. Returns true when the redo changed the ticks (for the log).
+    /// </summary>
+    public bool ReapplyLinkPreselectIfUntouched()
+    {
+        if (_linkPreselection is null || LinkMatchLabel is null) return false;
+        var before = CaptureSelection();
+        if (before != _linkPreselection) return false;
+        PreselectForLink(_linkVersionId, LinkMatchLabel, _linkSelectCard);
+        return CaptureSelection() != before;
+    }
+
+    /// <summary>
+    /// The version "Add selection to queue" takes from a selected card with nothing ticked: the
+    /// one a link named (the badge's version, even when installed — the queue then asks before
+    /// re-downloading it), otherwise the latest.
+    /// </summary>
+    public CivitaiVersionPickItemViewModel? DefaultPick =>
+        (_linkVersionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+        ?? Versions.FirstOrDefault();
+
+    private int? _linkVersionId;
+    private bool _linkSelectCard;
+    private string? _linkPreselection;
+
+    /// <summary>The card tick plus the ticked version ids, as one comparable value.</summary>
+    private string CaptureSelection() =>
+        $"{IsSelected}|{string.Join(",", Versions.Where(v => v.IsSelected).Select(v => v.Version.Id))}";
+
     [RelayCommand]
     private void SelectAllVersions()
     {
@@ -204,6 +323,31 @@ public partial class CivitaiResultViewModel : ObservableObject
 
     [RelayCommand]
     private void EnqueueAllVersions() => EnqueueAllVersionsHandler?.Invoke(this);
+
+    /// <summary>True while at least one version row is ticked.</summary>
+    public bool HasSelectedVersions => Versions.Any(v => v.IsSelected);
+
+    /// <summary>
+    /// Enqueues only the ticked version rows of this card. Wired by the browser VM
+    /// alongside <see cref="EnqueueAllVersionsHandler"/>.
+    /// </summary>
+    public Action<CivitaiResultViewModel>? EnqueueSelectedVersionsHandler { get; set; }
+
+    [RelayCommand(CanExecute = nameof(HasSelectedVersions))]
+    private void EnqueueSelectedVersions() => EnqueueSelectedVersionsHandler?.Invoke(this);
+
+    /// <summary>
+    /// Keeps the card in step with its version rows: ticking a checkbox in the picker
+    /// must refresh the summary line and re-evaluate whether "Add selected to queue"
+    /// has anything to add.
+    /// </summary>
+    private void OnVersionPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(CivitaiVersionPickItemViewModel.IsSelected)) return;
+        OnPropertyChanged(nameof(SelectedVersionSummary));
+        OnPropertyChanged(nameof(HasSelectedVersions));
+        EnqueueSelectedVersionsCommand.NotifyCanExecuteChanged();
+    }
 
     /// <summary>
     /// Opens the model's Civitai page in the default web browser. The browser always
@@ -253,50 +397,15 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// full-resolution payloads (which can be 6+ MB and trip Avalonia's bitmap decoder).
     /// No-op for non-Civitai hosts.
     /// </summary>
-    private static string? RewriteToResizedImageUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return url;
-        if (!url.Contains("image.civitai.com", StringComparison.OrdinalIgnoreCase)) return url;
+    private static string? RewriteToResizedImageUrl(string? url) => CivitaiImageUrls.ToThumbnailUrl(url);
 
-        var queryIndex = url.IndexOf('?');
-        var bare = queryIndex >= 0 ? url[..queryIndex] : url;
-        var trailing = queryIndex >= 0 ? url[queryIndex..] : string.Empty;
-
-        var lastSlash = bare.LastIndexOf('/');
-        if (lastSlash <= 0) return url;
-
-        var dirPart = bare[..lastSlash];
-        var filePart = bare[(lastSlash + 1)..];
-
-        const string transforms = "width=450";
-
-        var prevSlash = dirPart.LastIndexOf('/');
-        var lastSegment = prevSlash >= 0 ? dirPart[(prevSlash + 1)..] : dirPart;
-        var dirWithoutOldTransform = lastSegment.Contains('=') && prevSlash >= 0
-            ? dirPart[..prevSlash]
-            : dirPart;
-
-        return $"{dirWithoutOldTransform}/{transforms}/{filePart}{trailing}";
-    }
-
+    /// <summary>
+    /// Delegates to the one shared inference helper: the LoRA Sorter reorganizes files
+    /// into the folders this method picks, so a private copy here means the two silently
+    /// drift and then fight over the same files (review 4.1).
+    /// </summary>
     private static string? InferCategoryFromTags(IReadOnlyList<string> tags)
-    {
-        foreach (var tagName in tags)
-        {
-            if (string.IsNullOrWhiteSpace(tagName)) continue;
-            var normalized = tagName.Replace(" ", "_").Trim();
-            if (Enum.TryParse<global::DiffusionNexus.Domain.Enums.CivitaiCategory>(normalized, ignoreCase: true, out var category)
-                && category != global::DiffusionNexus.Domain.Enums.CivitaiCategory.Unknown)
-            {
-                return category switch
-                {
-                    global::DiffusionNexus.Domain.Enums.CivitaiCategory.BaseModel => "Base Model",
-                    _ => category.ToString()
-                };
-            }
-        }
-        return null;
-    }
+        => Services.Lora.Sorting.SorterCategoryResolver.InferFolderName(tags);
 
     // Cap the number of simultaneous video frame extractions across all visible cards.
     // Each extraction streams an MP4 and runs an FFmpeg invocation — letting 50 cards
@@ -326,8 +435,7 @@ public partial class CivitaiResultViewModel : ObservableObject
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            using var response = await http.GetAsync(PreviewUrl!, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await s_imagePreviewHttp.GetAsync(PreviewUrl!, HttpCompletionOption.ResponseHeadersRead, ct);
 
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "(none)";
 
@@ -443,8 +551,7 @@ public partial class CivitaiResultViewModel : ObservableObject
 
             // Stream the video URL to a temp file. Both the GET and the CopyToAsync
             // honor the token, so a cancel mid-download stops within ~one buffer fill.
-            using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) })
-            using (var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
+            using (var response = await s_videoPreviewHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false))
             {
                 response.EnsureSuccessStatusCode();
                 await using var responseStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

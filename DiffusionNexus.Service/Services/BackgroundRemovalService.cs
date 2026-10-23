@@ -1,10 +1,9 @@
 using DiffusionNexus.Domain.Services;
+using DiffusionNexus.Service.Services.Imaging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Serilog;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace DiffusionNexus.Service.Services;
 
@@ -162,12 +161,12 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
         int height,
         CancellationToken cancellationToken)
     {
-        // Step 1: Load and preprocess image
+        // Step 1: Load and preprocess image (RGBA8888, width*height*4 bytes)
         cancellationToken.ThrowIfCancellationRequested();
-        using var originalImage = Image.LoadPixelData<Rgba32>(imageData, width, height);
+        using var originalImage = SkiaPixels.FromRgbaBytes(imageData.AsSpan(0, width * height * 4), width, height);
 
         // Step 2: Resize to model input size (1024x1024)
-        using var resizedImage = originalImage.Clone(ctx => ctx.Resize(ModelInputSize, ModelInputSize));
+        using var resizedImage = SkiaPixels.ResizeTo(originalImage, ModelInputSize, ModelInputSize);
 
         // Step 3: Create input tensor (planar format: [1, 3, 1024, 1024])
         var inputTensor = PreprocessImage(resizedImage);
@@ -195,25 +194,24 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     /// Preprocesses the image for RMBG-1.4 model input.
     /// Converts to planar format (RRRGGGBBB) and normalizes to 0-1 range.
     /// </summary>
-    private static DenseTensor<float> PreprocessImage(Image<Rgba32> image)
+    private static DenseTensor<float> PreprocessImage(SKBitmap image)
     {
         var tensor = new DenseTensor<float>([1, 3, ModelInputSize, ModelInputSize]);
 
-        image.ProcessPixelRows(accessor =>
+        var pixels = image.GetPixelSpan();
+        var stride = image.RowBytes;
+        for (var y = 0; y < image.Height; y++)
         {
-            for (var y = 0; y < accessor.Height; y++)
+            var pixelRow = pixels.Slice(y * stride, image.Width * 4);
+            for (var x = 0; x < image.Width; x++)
             {
-                var pixelRow = accessor.GetRowSpan(y);
-                for (var x = 0; x < accessor.Width; x++)
-                {
-                    var pixel = pixelRow[x];
-                    // Normalize 0-255 to 0-1 and arrange in planar format
-                    tensor[0, 0, y, x] = pixel.R / 255.0f; // Red channel
-                    tensor[0, 1, y, x] = pixel.G / 255.0f; // Green channel
-                    tensor[0, 2, y, x] = pixel.B / 255.0f; // Blue channel
-                }
+                var p = x * 4;
+                // Normalize 0-255 to 0-1 and arrange in planar format
+                tensor[0, 0, y, x] = pixelRow[p] / 255.0f;     // Red channel
+                tensor[0, 1, y, x] = pixelRow[p + 1] / 255.0f; // Green channel
+                tensor[0, 2, y, x] = pixelRow[p + 2] / 255.0f; // Blue channel
             }
-        });
+        }
 
         return tensor;
     }
@@ -224,60 +222,61 @@ public sealed class BackgroundRemovalService : IBackgroundRemovalService
     /// </summary>
     private static byte[] PostprocessOutput(Tensor<float> outputTensor, int targetWidth, int targetHeight)
     {
-        // Create grayscale mask image from output tensor
-        using var maskImage = new Image<L8>(ModelInputSize, ModelInputSize);
+        // Create grayscale mask (one byte per pixel) from output tensor
+        var mask = new byte[ModelInputSize * ModelInputSize];
 
         // The output is typically [1, 1, H, W] or [1, H, W]
         var dimensions = outputTensor.Dimensions.ToArray();
         var isChannelFirst = dimensions.Length == 4;
 
-        maskImage.ProcessPixelRows(accessor =>
+        for (var y = 0; y < ModelInputSize; y++)
         {
-            for (var y = 0; y < ModelInputSize; y++)
+            var rowOffset = y * ModelInputSize;
+            for (var x = 0; x < ModelInputSize; x++)
             {
-                var pixelRow = accessor.GetRowSpan(y);
-                for (var x = 0; x < ModelInputSize; x++)
+                float value;
+                if (isChannelFirst)
                 {
-                    float value;
-                    if (isChannelFirst)
-                    {
-                        // [1, 1, H, W] format
-                        value = outputTensor[0, 0, y, x];
-                    }
-                    else
-                    {
-                        // [1, H, W] format
-                        value = outputTensor[0, y, x];
-                    }
-
-                    // Clamp and convert to byte
-                    var byteValue = (byte)Math.Clamp(value * 255.0f, 0, 255);
-                    pixelRow[x] = new L8(byteValue);
+                    // [1, 1, H, W] format
+                    value = outputTensor[0, 0, y, x];
                 }
-            }
-        });
+                else
+                {
+                    // [1, H, W] format
+                    value = outputTensor[0, y, x];
+                }
 
-        // Resize mask to original image dimensions
-        if (targetWidth != ModelInputSize || targetHeight != ModelInputSize)
-        {
-            maskImage.Mutate(ctx => ctx.Resize(targetWidth, targetHeight));
+                // Clamp and convert to byte
+                mask[rowOffset + x] = (byte)Math.Clamp(value * 255.0f, 0, 255);
+            }
         }
 
-        // Extract mask data as byte array
+        if (targetWidth == ModelInputSize && targetHeight == ModelInputSize)
+            return mask;
+
+        // Resize mask to original image dimensions as an 8-bit gray bitmap
+        using var maskImage = new SKBitmap(new SKImageInfo(ModelInputSize, ModelInputSize, SKColorType.Gray8, SKAlphaType.Opaque));
+        CopyGrayInto(mask, ModelInputSize, ModelInputSize, maskImage);
+        using var resized = SkiaPixels.ResizeTo(maskImage, targetWidth, targetHeight);
+
+        // Extract mask data as a tightly packed byte array
         var maskData = new byte[targetWidth * targetHeight];
-        maskImage.ProcessPixelRows(accessor =>
+        var pixels = resized.GetPixelSpan();
+        for (var y = 0; y < targetHeight; y++)
         {
-            for (var y = 0; y < accessor.Height; y++)
-            {
-                var pixelRow = accessor.GetRowSpan(y);
-                for (var x = 0; x < accessor.Width; x++)
-                {
-                    maskData[y * targetWidth + x] = pixelRow[x].PackedValue;
-                }
-            }
-        });
+            pixels.Slice(y * resized.RowBytes, targetWidth).CopyTo(maskData.AsSpan(y * targetWidth, targetWidth));
+        }
 
         return maskData;
+    }
+
+    private static void CopyGrayInto(byte[] gray, int width, int height, SKBitmap target)
+    {
+        var pixels = target.GetPixelSpan();
+        for (var y = 0; y < height; y++)
+        {
+            gray.AsSpan(y * width, width).CopyTo(pixels.Slice(y * target.RowBytes, width));
+        }
     }
 
     /// <inheritdoc />

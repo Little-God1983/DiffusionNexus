@@ -404,6 +404,9 @@ EfaWzpDlgX/Platforms/Windows/Package.appxmanifest
 
 # ZIP files
 *.zip
+# ...except the embedded Installer SDK catalog seed: the UI project embeds it, so a clone without
+# it does not build (CS1566). Refreshed by Scripts/Update-CatalogSeed.ps1.
+!DiffusionNexus.UI/Assets/Catalog/catalog.zip
 
 # Ignore a file with the specified name.
 # Scoped to the 'logs' subfolder.
@@ -421,3 +424,11 @@ DemoFiles/
 \
 # Throwaway spike project for StableDiffusion.NET evaluation
 DiffusionNexus.Inference.Sandbox/\
+
+# Cached upstream source archives staged into releases by Scripts/Fetch-CorrespondingSource.ps1.
+# Tens of MB of third-party tarballs, pinned by SHA-256 in corresponding-source.json and
+# re-downloadable from it, so they are cached but never committed.
+.source-cache/
+
+# Brainstorming mockups (superpowers visual companion)
+.superpowers/

@@ -319,6 +319,43 @@ public class EpochsTabViewModelTests : IDisposable
     }
 
     #endregion
+
+    #region Add Files Tests
+
+    [Fact]
+    public async Task AddEpochFilesCommand_DeletesZipExtractionDirectories_AfterCopyingFiles()
+    {
+        // Arrange: the dialog expanded a ZIP into a temp folder and returned a file living in it.
+        var epochsPath = Path.Combine(_testTempPath, "Epochs");
+        var extractDir = Path.Combine(_testTempPath, "DiffusionNexus_ZipExtract_test");
+        Directory.CreateDirectory(extractDir);
+        var extracted = Path.Combine(extractDir, "epoch-000001.safetensors");
+        File.WriteAllText(extracted, "weights");
+
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowFileDropDialogAsync(It.IsAny<string>(), It.IsAny<string[]>()))
+            .ReturnsAsync(new FileDropResult
+            {
+                Files = [extracted],
+                TemporaryDirectories = [extractDir]
+            });
+
+        var vm = new EpochsTabViewModel(_mockEventAggregator.Object)
+        {
+            EpochsFolderPath = epochsPath,
+            DialogService = dialog.Object
+        };
+
+        // Act
+        await vm.AddEpochFilesCommand.ExecuteAsync(null);
+
+        // Assert
+        File.Exists(Path.Combine(epochsPath, "epoch-000001.safetensors")).Should().BeTrue();
+        Directory.Exists(extractDir).Should().BeFalse("the extraction folder is deleted once the files are in place");
+        vm.EpochFiles.Should().ContainSingle();
+    }
+
+    #endregion
 }
 
 /// <summary>

@@ -16,8 +16,10 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.*" />
     <!-- Pin transitive SQLite native bundle to patched build; clears NU1903 (GHSA-2m69-gcr7-jv3q).
-         Stays in the 2.1.x line for compatibility with Microsoft.Data.Sqlite (EF Core 10). -->
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+         Stays in the 2.1.x line for compatibility with Microsoft.Data.Sqlite (EF Core 10).
+         Must stay at or above what the floating EF Core Sqlite resolves to (10.0.13 needs >= 2.1.13),
+         otherwise restore fails with the NU1605 downgrade error. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.14" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.*">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

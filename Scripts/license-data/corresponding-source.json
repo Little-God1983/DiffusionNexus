@@ -1,0 +1,124 @@
+{
+  "_comment": "Corresponding source for the GPL-licensed binaries this application redistributes, staged into the release by Scripts/Fetch-CorrespondingSource.ps1. GPL-2.0 section 3 accepts three routes; this is route (a), accompanying the binary with the source, which is why THIRD-PARTY-NOTICES.txt makes no written offer and names no contact point. Every version below was read from VLC's own contrib/src/<name>/rules.mak inside the VLC tarball, not chosen by hand.",
+
+  "_sourcesComment": "Each component lists several sources, and each source carries its OWN file name and SHA-256, because equally valid corresponding source is packaged differently by different distributors - Debian's OpenJPEG is a .tar.xz repack of the same tree GitHub serves as .tar.gz. The fetch script tries sources in order and accepts the first whose BYTES verify, so a host that answers 200 with an interstitial HTML page (SourceForge does this) is rejected and the next source is tried rather than failing the release.",
+
+  "correspondsTo": {
+    "package": "VideoLAN.LibVLC.Windows",
+    "packageVersion": "3.0.23.1",
+    "upstreamVersion": "3.0.23",
+    "versionCheck": "libvlc.dll FileVersion in the restored package must equal upstreamVersion. The NuGet package version (3.0.23.1) differs from the upstream release it carries (3.0.23), so the binary is the authority. A mismatch means the cached source no longer corresponds to the shipped binaries, and the publish fails rather than shipping source for a different build."
+  },
+
+  "components": [
+    {
+      "name": "VLC",
+      "version": "3.0.23",
+      "describes": "libvlc.dll, libvlccore.dll and the plugin modules under libvlc/win-x64/plugins/, including the VLC-side sources of libavcodec_plugin.dll and libswscale_plugin.dll. Its contrib/src/<name>/rules.mak files are what pin the versions of the components below.",
+      "sources": [
+        {
+          "url": "https://download.videolan.org/pub/videolan/vlc/3.0.23/vlc-3.0.23.tar.xz",
+          "file": "vlc-3.0.23.tar.xz",
+          "sha256": "e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0",
+          "note": "VideoLAN's own distribution. This hash is the one VideoLAN publishes for the file. Listed first although it was unreachable from the machine this manifest was built on - the mirrors below carry byte-identical content, verified against this same hash."
+        },
+        {
+          "url": "https://mirror.kumi.systems/videolan/vlc/3.0.23/vlc-3.0.23.tar.xz",
+          "file": "vlc-3.0.23.tar.xz",
+          "sha256": "e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0",
+          "note": "Official VideoLAN mirror; downloaded and verified against VideoLAN's published hash."
+        },
+        {
+          "url": "https://ftp.fau.de/videolan/vlc/3.0.23/vlc-3.0.23.tar.xz",
+          "file": "vlc-3.0.23.tar.xz",
+          "sha256": "e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0",
+          "note": "Official VideoLAN mirror."
+        },
+        {
+          "url": "https://mirror.netcologne.de/videolan.org/vlc/3.0.23/vlc-3.0.23.tar.xz",
+          "file": "vlc-3.0.23.tar.xz",
+          "sha256": "e891cae6aa3ccda69bf94173d5105cbc55c7a7d9b1d21b9b21666e69eff3e7e0",
+          "note": "Official VideoLAN mirror."
+        }
+      ]
+    },
+    {
+      "name": "FFmpeg",
+      "version": "commit 71fb6132637a2a430375c24afc381fff8b854fe7 on release/4.4",
+      "versionNote": "VLC's contrib pins FFmpeg by COMMIT, not by release tarball (contrib/src/ffmpeg/rules.mak sets FFMPEG_HASH). VLC labels the result 4.4.5 via FFMPEG_REVISION, but the RELEASE file inside that commit reads 4.4.4 - the commit sits on release/4.4 between the two. That is why ffmpeg.org's published ffmpeg-4.4.5.tar.xz is NOT listed here: it is a different tree, so it is not the corresponding source for these binaries, however close the version label looks. The shipped plugins report libavcodec 58.134.100, consistent with the 4.4 series.",
+      "describes": "libavcodec and libswscale, compiled into libavcodec_plugin.dll and libswscale_plugin.dll.",
+      "singleHostRisk": "Only GitHub serves this exact commit as an archive, and GitHub does not guarantee byte-stable generated tarballs (its tar.gz compression changed in January 2023). If that recurs, the hash below stops matching and the publish fails closed - which is correct, but it blocks releases until the pin is re-verified. The remedy is to drop a verified copy into .source-cache by hand, or to re-pin after confirming the new bytes contain the same tree. Do NOT substitute a different FFmpeg version to make the check pass.",
+      "sources": [
+        {
+          "url": "https://github.com/FFmpeg/FFmpeg/archive/71fb6132637a2a430375c24afc381fff8b854fe7.tar.gz",
+          "file": "ffmpeg-71fb6132.tar.gz",
+          "sha256": "8d15d3ce21b271b3ec1c341999035494488b2acc9b4fd581502b84a87a0e9ea5",
+          "note": "GitHub's archive of the exact commit VLC pins."
+        },
+        {
+          "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/71fb6132637a2a430375c24afc381fff8b854fe7",
+          "file": "ffmpeg-71fb6132.tar.gz",
+          "sha256": "8d15d3ce21b271b3ec1c341999035494488b2acc9b4fd581502b84a87a0e9ea5",
+          "note": "GitHub's download backend for the same archive. Not an independent host - it shares GitHub's generation, so it does not mitigate the byte-stability risk above. Listed only because it survives front-end outages."
+        }
+      ]
+    },
+    {
+      "name": "LAME",
+      "version": "3.100",
+      "describes": "Statically linked into libavcodec_plugin.dll (FFmpeg built with libmp3lame enabled). LAME is LGPL, and it is linked statically rather than shipped as its own DLL, so this source is how the relink provision of LGPL section 6 is met for it.",
+      "sources": [
+        {
+          "url": "https://deb.debian.org/debian/pool/main/l/lame/lame_3.100.orig.tar.gz",
+          "file": "lame-3.100.tar.gz",
+          "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+          "note": "Debian's pristine upstream tarball - byte-identical to the SourceForge original."
+        },
+        {
+          "url": "https://snapshot.debian.org/archive/debian/20200101T000000Z/pool/main/l/lame/lame_3.100.orig.tar.gz",
+          "file": "lame-3.100.tar.gz",
+          "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+          "note": "Debian's snapshot archive; separate infrastructure, verified byte-identical. SourceForge is deliberately NOT listed: it answers 200 with an interstitial HTML page rather than the tarball."
+        }
+      ]
+    },
+    {
+      "name": "OpenJPEG",
+      "version": "2.5.0",
+      "describes": "Statically linked into libavcodec_plugin.dll (FFmpeg built with libopenjpeg enabled). BSD-2-Clause.",
+      "sources": [
+        {
+          "url": "https://github.com/uclouvain/openjpeg/archive/v2.5.0.tar.gz",
+          "file": "openjpeg-2.5.0.tar.gz",
+          "sha256": "0333806d6adecc6f7a91243b2b839ff4d2053823634d4f6ed7a59bc87409122a",
+          "note": "Upstream's own repository archive."
+        },
+        {
+          "url": "https://deb.debian.org/debian/pool/main/o/openjpeg2/openjpeg2_2.5.0.orig.tar.xz",
+          "file": "openjpeg-2.5.0.tar.xz",
+          "sha256": "007e19d772c8b6b22e35379630b06ff3549e49ba719d96453607a36ad7b4de73",
+          "note": "Debian's repack of the same 2.5.0 tree - xz rather than gz, so different bytes and its own hash, which is why sources carry per-source hashes. Independent of GitHub, so it also covers the generated-tarball stability risk."
+        }
+      ]
+    },
+    {
+      "name": "libgsm",
+      "version": "1.0.13",
+      "describes": "Statically linked into libavcodec_plugin.dll (FFmpeg built with libgsm enabled). Permissive licence, Technische Universitaet Berlin.",
+      "sources": [
+        {
+          "url": "http://www.quut.com/gsm/gsm-1.0.13.tar.gz",
+          "file": "libgsm-1.0.13.tar.gz",
+          "sha256": "52c518244d428c2e56c543b98c9135f4a76ff780c32455580b793f60a0a092ad",
+          "note": "The upstream author's own site. The URL VLC's contrib pins (libgsm.sourcearchive.com) no longer resolves, and neither does the current Debian pool path for this old version - both were checked."
+        },
+        {
+          "url": "https://snapshot.debian.org/archive/debian/20140101T000000Z/pool/main/libg/libgsm/libgsm_1.0.13.orig.tar.gz",
+          "file": "libgsm-1.0.13.tar.gz",
+          "sha256": "52c518244d428c2e56c543b98c9135f4a76ff780c32455580b793f60a0a092ad",
+          "note": "Debian's snapshot archive, verified byte-identical to the upstream tarball. A genuinely independent host, which matters here because the primary is a plain-HTTP personal site."
+        }
+      ]
+    }
+  ]
+}

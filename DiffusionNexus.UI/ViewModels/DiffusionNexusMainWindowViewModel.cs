@@ -165,10 +165,116 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     /// </summary>
     public bool HasServerMessages => ServerMessages.Count > 0;
 
+    /// <summary>
+    /// Community links shown directly in the sidebar: the whole list when it fits
+    /// <see cref="CommunityLinkSlots.Count"/>, otherwise all but the last slot, which "More" takes.
+    /// </summary>
+    public ObservableCollection<CommunityLinkItemViewModel> InlineCommunityLinks { get; } = new();
+
+    /// <summary>Community links behind the sidebar's "More" button; empty when the list fits.</summary>
+    public ObservableCollection<CommunityLinkItemViewModel> OverflowCommunityLinks { get; } = new();
+
+    public bool HasCommunityLinkOverflow => OverflowCommunityLinks.Count > 0;
+
+    public string CommunityLinkOverflowLabel => $"More ({OverflowCommunityLinks.Count})";
+
+    /// <summary>Opens a URL in the system browser. Replaceable so tests never launch one.</summary>
+    internal Action<string> OpenExternalUrl { get; init; } = UrlLauncher.Open;
+
+    private const string CommunityLinksLogSource = "CommunityLinks";
+
     public DiffusionNexusMainWindowViewModel()
     {
         // Disclaimer check is called externally after services are initialized
+
+        // The compiled-in list renders until the remote one lands, and stays when it never does
+        // (offline, timeout, bad document), so the sidebar is never empty.
+        ApplyCommunityLinks(CommunityLink.Defaults);
     }
+
+    /// <summary>
+    /// Fetches the operator-edited community links (Gist-backed, through the SDK) and swaps them in.
+    /// Never throws and never delays startup: on any failure the compiled-in list stays on screen.
+    /// </summary>
+    public Task LoadCommunityLinksAsync()
+    {
+        var service = App.Services?.GetService<ICommunityLinksService>();
+        if (service is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return LoadCommunityLinksAsync(
+            service,
+            App.Services?.GetService<IUnifiedLogger>(),
+            App.Services?.GetService<IUiScheduler>() ?? AvaloniaUiScheduler.Instance);
+    }
+
+    internal async Task LoadCommunityLinksAsync(ICommunityLinksService service, IUnifiedLogger? logger, IUiScheduler uiScheduler)
+    {
+        logger?.Debug(LogCategory.Network, CommunityLinksLogSource, "Fetching community links");
+
+        try
+        {
+            var result = await service.GetLinksAsync();
+
+            if (result.IsFallback)
+            {
+                // Info, not Warn: offline is a normal state and must not light the status bar every launch.
+                logger?.Info(LogCategory.Network, CommunityLinksLogSource,
+                    "Community links unavailable; keeping the built-in list", result.ErrorMessage);
+                return;
+            }
+
+            await uiScheduler.InvokeAsync(() => ApplyCommunityLinks(result.Links));
+
+            logger?.Info(LogCategory.Network, CommunityLinksLogSource,
+                $"Loaded {result.Links.Count} community links ({InlineCommunityLinks.Count} in the sidebar, {OverflowCommunityLinks.Count} under More)");
+        }
+        catch (Exception ex)
+        {
+            // The service reports failures in its result and only throws on cancellation, which
+            // nothing here requests; the swap itself runs binding handlers. Guarded as a whole:
+            // the sidebar must never take startup down, and the failure belongs under this source.
+            logger?.Warn(LogCategory.Network, CommunityLinksLogSource,
+                "Community links update failed", ex.Message);
+        }
+    }
+
+    /// <summary>Replaces the sidebar's community links with <paramref name="links"/>, split per <see cref="CommunityLinkSlots"/>.</summary>
+    internal void ApplyCommunityLinks(IReadOnlyList<CommunityLink> links)
+    {
+        var (inline, overflow) = CommunityLinkSlots.Split(links);
+
+        InlineCommunityLinks.Clear();
+        foreach (var link in inline)
+        {
+            InlineCommunityLinks.Add(new CommunityLinkItemViewModel(link, OpenCommunityLink));
+        }
+
+        OverflowCommunityLinks.Clear();
+        foreach (var link in overflow)
+        {
+            OverflowCommunityLinks.Add(new CommunityLinkItemViewModel(link, OpenCommunityLink));
+        }
+
+        OnPropertyChanged(nameof(HasCommunityLinkOverflow));
+        OnPropertyChanged(nameof(CommunityLinkOverflowLabel));
+    }
+
+    private void OpenCommunityLink(CommunityLinkItemViewModel link)
+    {
+        App.Services?.GetService<IUnifiedLogger>()
+            ?.Info(LogCategory.General, CommunityLinksLogSource, $"Opening community link '{link.Name}'", link.Url);
+        OpenUrl(link.Url, CommunityLinksLogSource);
+    }
+
+    /// <summary>
+    /// Every URL this window opens (sidebar links, banner actions) goes through here, so a machine
+    /// with no default browser logs a warning instead of crashing a command on the UI thread.
+    /// </summary>
+    private void OpenUrl(string url, string source)
+        => UrlLauncher.TryOpen(url, OpenExternalUrl, App.Services?.GetService<IUnifiedLogger>(), source);
 
     /// <summary>
     /// Fetches applicable server messages (Gist-backed) and populates <see cref="ServerMessages"/>.
@@ -200,7 +306,7 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
                 ServerMessages.Clear();
                 foreach (var msg in result.Messages)
                 {
-                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, OpenUrl));
+                    ServerMessages.Add(new ServerMessageItemViewModel(msg, DismissServerMessage, url => OpenUrl(url, "ServerMessages")));
                 }
                 OnPropertyChanged(nameof(HasServerMessages));
             });
@@ -344,19 +450,9 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private void NavigateToModule(ModuleItem? module)
     {
         if (module is null) return;
-        
-        // Deactivate thumbnails for the previous module
-        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
-        {
-            previousAware.OnThumbnailDeactivated();
-        }
 
-        // Clear previous selection
-        foreach (var m in Modules)
-        {
-            m.IsSelected = false;
-        }
-        
+        DeactivateCurrentModule();
+
         module.IsSelected = true;
         SelectedModule = module;
         CurrentModuleView = module.View;
@@ -367,32 +463,19 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
             newAware.OnThumbnailActivated();
         }
 
+        if (module.ViewModel is IModuleActivationAware activationAware)
+        {
+            activationAware.OnModuleActivated();
+        }
+
         // Collapse the menu after selection
         IsMenuOpen = false;
     }
 
     [RelayCommand]
-    private void OpenYoutube()
-    {
-        OpenUrl("https://www.youtube.com/@IntoTheLatent");
-    }
-
-    [RelayCommand]
-    private void OpenCivitai()
-    {
-        OpenUrl("https://civitai.com/user/AIknowlege2go");
-    }
-
-    [RelayCommand]
-    private void OpenPatreon()
-    {
-        OpenUrl("https://patreon.com/AIKnowledgeCentral?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink");
-    }
-
-    [RelayCommand]
     private void OpenSettings()
     {
-        CurrentModuleView = new SettingsView();
+        ShowAppLevelView(new SettingsView());
     }
 
     [RelayCommand]
@@ -407,10 +490,49 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void OpenAbout()
     {
-        CurrentModuleView = new AboutView();
+        ShowAppLevelView(new AboutView());
     }
 
-    private static void OpenUrl(string url) => Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    /// <summary>
+    /// Shows a view that is not a registered module (Settings, About).
+    /// </summary>
+    /// <remarks>
+    /// Performs the same teardown as <see cref="NavigateToModule"/>: without it the outgoing
+    /// module keeps its selection highlight while an unrelated screen is displayed, and an
+    /// <see cref="IThumbnailAware"/> module keeps its thumbnail pipeline running behind a view
+    /// that is no longer on screen.
+    /// </remarks>
+    private void ShowAppLevelView(object view)
+    {
+        DeactivateCurrentModule();
+
+        SelectedModule = null;
+        CurrentModuleView = view;
+        IsMenuOpen = false;
+    }
+
+    /// <summary>
+    /// Tears the outgoing module down: stops its thumbnail pipeline and clears every selection
+    /// highlight.
+    /// </summary>
+    /// <remarks>
+    /// Shared by <see cref="NavigateToModule"/> and <see cref="ShowAppLevelView"/>, which had
+    /// two copies of it. One place to add the next teardown step means it cannot be added to
+    /// one path and forgotten on the other - the failure mode being a module left running
+    /// behind a screen that replaced it.
+    /// </remarks>
+    private void DeactivateCurrentModule()
+    {
+        if (SelectedModule?.ViewModel is IThumbnailAware previousAware)
+        {
+            previousAware.OnThumbnailDeactivated();
+        }
+
+        foreach (var module in Modules)
+        {
+            module.IsSelected = false;
+        }
+    }
 
     /// <summary>
         /// Registers a module for navigation.
