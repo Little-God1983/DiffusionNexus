@@ -596,6 +596,10 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("OriginalNsfwRating")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -617,6 +621,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("UserCategory")
                         .HasMaxLength(20)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool?>("UserNsfwRating")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 

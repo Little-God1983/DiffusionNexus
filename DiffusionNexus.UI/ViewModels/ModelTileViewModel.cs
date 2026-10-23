@@ -95,6 +95,12 @@ public partial class ModelTileViewModel : ViewModelBase
     public event EventHandler? Deleted;
 
     /// <summary>
+    /// Raised when <see cref="RefreshModelData"/> changed the LoRA's rating (#647): the parent view
+    /// model files the tile again.
+    /// </summary>
+    public event EventHandler? NsfwVerdictChanged;
+
+    /// <summary>
     /// Allows external collaborators (e.g. the detail-view "Delete Metadata"
     /// command) to signal that this tile should be removed from the grid after
     /// they have already removed the underlying record themselves.
@@ -206,6 +212,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     public void RefreshModelData(Model refreshedModel)
     {
+        var verdictBefore = NsfwVerdict;
         var index = _allGroupedModels.FindIndex(m => m.Id == refreshedModel.Id);
         if (index >= 0)
         {
@@ -253,6 +260,10 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             ModelEntity = primary;
         }
+
+        // Delete Metadata, Assign Civitai IDs or a download can change the LoRA's rating (#647):
+        // the viewer files the tile again (grid, unrated hint and list).
+        if (NsfwVerdict != verdictBefore) NsfwVerdictChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -399,37 +410,167 @@ public partial class ModelTileViewModel : ViewModelBase
     public bool IsNsfw => ModelEntity?.IsNsfw ?? false;
 
     /// <summary>
-    /// Whether the tile would put NSFW content on screen (#631): the model is flagged NSFW, or the
-    /// picture the tile shows is not rated safe. The tile shows its version's
-    /// <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still, so a tile that
-    /// passes this test shows a safe picture. A tile without a picture shows a placeholder.
+    /// The LoRA's rating and whether "Show NSFW" off hides it (#631, #647):
+    /// <see cref="NsfwPolicy.Judge"/> on the picture the tile shows — the user's rating when they gave
+    /// one, otherwise the creator's flag, then the version's <see cref="ModelVersion.PrimaryImage"/>,
+    /// which already prefers a safe still.
     /// </summary>
-    public bool HasNsfwContent => IsNsfw || ShowsNsfwPicture;
+    public NsfwVerdict NsfwVerdict =>
+        ModelEntity is { } model
+            ? NsfwPolicy.Judge(model, SelectedVersion, UserRating)
+            : new NsfwVerdict(NsfwHideReason.None);
 
     /// <summary>
-    /// The selected version still holds Civitai pictures with no rating — a library synced before
-    /// #631. Asked of hidden tiles only: once Download Metadata rates them, a safe one can become
-    /// the picture the tile shows.
+    /// The user's rating of this LoRA: the shown row's, or another grouped row's when that one
+    /// has none — a row that joins the group later (another version downloaded, re-discovery)
+    /// carries no rating, and must not undo the one the user gave the LoRA.
     /// </summary>
-    internal bool ShowsUnratedImage =>
-        SelectedVersion?.Images.Any(i => i.NsfwLevel == Domain.Enums.NsfwLevel.None
-                                         && NsfwPolicy.IsWebImage(i.Url)) == true;
+    private bool? UserRating => RatedRow?.UserNsfwRating;
 
-    /// <summary>The picture the tile shows is not safe, judged in its version (<see cref="ModelVersion.IsImageNsfw"/>).</summary>
-    private bool ShowsNsfwPicture =>
-        SelectedVersion is { } version && version.PrimaryImage is { } picture && version.IsImageNsfw(picture);
+    /// <summary>The model row that holds the user's rating, preferring the shown one.</summary>
+    private Model? RatedRow =>
+        ModelEntity is { UserNsfwRating: not null } shown
+            ? shown
+            : _allGroupedModels.FirstOrDefault(m => m.UserNsfwRating is not null);
+
+    /// <summary>Whether "Show NSFW" off hides this tile (<see cref="NsfwVerdict"/>).</summary>
+    public bool HasNsfwContent => NsfwVerdict.IsHidden;
+
+    /// <summary>The LoRA has no rating at all — neither Civitai's nor the user's (#647).</summary>
+    public bool IsUnrated => NsfwVerdict.IsUnrated;
+
+    /// <summary>Why an unrated LoRA has no rating, and what the user can do about it.</summary>
+    public string UnratedTooltip => NsfwVerdict.Reason switch
+    {
+        NsfwHideReason.NotRatedYet =>
+            "Not rated yet — Download Metadata can rate it, or rate it yourself: right-click → Rate SFW or Rate NSFW.",
+        NsfwHideReason.NoRating =>
+            "Civitai has no NSFW rating for this LoRA (it may no longer be on Civitai). Rate it yourself: right-click → Rate SFW or Rate NSFW.",
+        _ => string.Empty,
+    };
+
+    /// <summary>
+    /// Whether the creator's red NSFW badge shows: exactly when the creator's flag is the LoRA's
+    /// rating — judged on the row of the version on screen, as the hide decision is. Not once the
+    /// user rated the LoRA: their rating is the LoRA's rating, and "SFW · by you" beside "NSFW"
+    /// would contradict itself.
+    /// </summary>
+    public bool ShowCreatorNsfwBadge => NsfwVerdict.Reason == NsfwHideReason.FlaggedByCreator;
+
+    /// <summary>The user rated this LoRA themselves (<see cref="Model.UserNsfwRating"/>).</summary>
+    public bool IsRatedByUser => UserRating is not null;
+
+    /// <summary>The small badge on a LoRA the user rated.</summary>
+    public string UserRatingBadge => UserRating switch
+    {
+        false => "SFW · by you",
+        true => "NSFW · by you",
+        null => string.Empty,
+    };
+
+    /// <summary>The badge's tooltip: the user's rating and the original one it replaced.</summary>
+    public string UserRatingTooltip => RatedRow is { UserNsfwRating: { } isNsfw } row
+        ? $"Rated {(isNsfw ? "NSFW" : "SFW")} by you. Civitai: {row.OriginalNsfwRating ?? "unrated"}."
+        : string.Empty;
+
+    /// <summary>The detail view's line: what the LoRA is rated, and by whom.</summary>
+    public string NsfwRatingSummary
+    {
+        get
+        {
+            if (ModelEntity is not { } model) return string.Empty;
+            if (RatedRow is { UserNsfwRating: { } isNsfw } row)
+                return $"{(isNsfw ? "NSFW" : "SFW")} — changed by you (Civitai: {row.OriginalNsfwRating ?? "unrated"})";
+
+            var verdict = NsfwVerdict;
+            if (verdict.IsUnrated) return "Unrated";
+            if (verdict.Reason == NsfwHideReason.FlaggedByCreator) return "NSFW (creator's flag)";
+            var label = NsfwPolicy.CivitaiRatingLabel(model, SelectedVersion);
+            return $"{(verdict.IsHidden ? "NSFW" : "SFW")} (Civitai: {label})";
+        }
+    }
 
     /// <summary>
     /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
-    /// its picture is safe, but the version chips can switch it to a version whose picture is not;
-    /// <see cref="IsPreviewHidden"/> covers that picture instead of showing it.
+    /// it is not hidden, but the version chips can switch it to a version whose picture is not safe,
+    /// and the "Show unrated" list shows hidden tiles on purpose; <see cref="IsPreviewHidden"/>
+    /// covers the picture in both cases.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
     private bool _hideNsfwPreviews;
 
-    /// <summary>Whether the tile covers its picture: Show NSFW is off and the picture is not rated safe.</summary>
-    public bool IsPreviewHidden => HideNsfwPreviews && ShowsNsfwPicture;
+    /// <summary>
+    /// Set by the Installed tab while it lists only the unrated LoRAs (#647): the tile shows the
+    /// SFW / NSFW buttons.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isInUnratedView;
+
+    /// <summary>
+    /// The user uncovered the picture in the unrated list to judge it before rating (#647). Covered
+    /// again once the tile leaves the list or is rated.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPreviewHidden))]
+    private bool _isPreviewRevealed;
+
+    partial void OnIsInUnratedViewChanged(bool value)
+    {
+        if (!value) IsPreviewRevealed = false;
+    }
+
+    [RelayCommand]
+    private void RevealPreview() => IsPreviewRevealed = true;
+
+    /// <summary>Whether the tile covers its picture: Show NSFW is off and the tile counts as hidden.</summary>
+    public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent && !IsPreviewRevealed;
+
+    /// <summary>The cover's text: an unrated picture is not known to be NSFW, only not known to be safe.</summary>
+    public string PreviewCoverText => IsUnrated ? "Unrated — preview hidden" : "NSFW preview hidden";
+
+    /// <summary>
+    /// Raised when the user rates this LoRA SFW (<c>false</c>) or NSFW (<c>true</c>). The Installed
+    /// tab records the rating for every model of the tile and filters again.
+    /// </summary>
+    public event EventHandler<bool>? NsfwRatingRequested;
+
+    [RelayCommand]
+    private void RateSfw() => NsfwRatingRequested?.Invoke(this, false);
+
+    [RelayCommand]
+    private void RateNsfw() => NsfwRatingRequested?.Invoke(this, true);
+
+    /// <summary>
+    /// Records the user's rating on every model row this tile groups, in memory — the database
+    /// already has it for all of them. Keeps each row's first original rating.
+    /// </summary>
+    internal void ApplyUserNsfwRating(bool isNsfw, string originalRating)
+    {
+        foreach (var model in _allGroupedModels.Append(ModelEntity).OfType<Model>().Distinct())
+        {
+            model.UserNsfwRating = isNsfw;
+            model.OriginalNsfwRating ??= originalRating;
+        }
+        IsPreviewRevealed = false;
+        NotifyNsfwVerdictChanged();
+    }
+
+    /// <summary>Re-announces everything that follows from <see cref="NsfwVerdict"/>.</summary>
+    internal void NotifyNsfwVerdictChanged()
+    {
+        OnPropertyChanged(nameof(NsfwVerdict));
+        OnPropertyChanged(nameof(HasNsfwContent));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(UnratedTooltip));
+        OnPropertyChanged(nameof(IsRatedByUser));
+        OnPropertyChanged(nameof(ShowCreatorNsfwBadge));
+        OnPropertyChanged(nameof(UserRatingBadge));
+        OnPropertyChanged(nameof(UserRatingTooltip));
+        OnPropertyChanged(nameof(NsfwRatingSummary));
+        OnPropertyChanged(nameof(IsPreviewHidden));
+        OnPropertyChanged(nameof(PreviewCoverText));
+    }
 
     /// <summary>
     /// Whether this model has multiple versions.
@@ -1018,6 +1159,14 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Gets all model entity IDs across the group, including re-discovery
     /// duplicates dropped during grouping. Use this for any destructive DB op.
     /// </summary>
+    /// <summary>
+    /// The rows a rating is saved to (#647): <see cref="GetAllModelIds"/> plus any row that joined
+    /// the tile after load (<see cref="RefreshModelData"/>) — <see cref="ApplyUserNsfwRating"/>
+    /// rates those in memory, so the database must have them too.
+    /// </summary>
+    internal List<int> GetRatingModelIds() =>
+        GetAllModelIds().Union(_allGroupedModels.Select(m => m.Id)).ToList();
+
     public List<int> GetAllModelIds()
     {
         if (_allDatabaseModelIds.Count > 0)
@@ -1095,7 +1244,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(ModelTypeDisplay));
         OnPropertyChanged(nameof(BaseModelsDisplay));
         OnPropertyChanged(nameof(IsNsfw));
-        OnPropertyChanged(nameof(IsPreviewHidden));
+        NotifyNsfwVerdictChanged();
         OnPropertyChanged(nameof(HasMultipleVersions));
         OnPropertyChanged(nameof(IsGrouped));
         OnPropertyChanged(nameof(VersionCountDisplay));
@@ -1128,7 +1277,7 @@ public partial class ModelTileViewModel : ViewModelBase
 
     partial void OnSelectedVersionChanged(ModelVersion? value)
     {
-        OnPropertyChanged(nameof(IsPreviewHidden));
+        NotifyNsfwVerdictChanged();
         OnPropertyChanged(nameof(FileName));
         OnPropertyChanged(nameof(RealFileName));
         OnPropertyChanged(nameof(BaseModelsDisplay));

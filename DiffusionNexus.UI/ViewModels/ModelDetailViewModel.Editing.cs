@@ -934,6 +934,9 @@ public partial class ModelDetailViewModel
         model.CivitaiModelPageId = null;
         model.Description = null;
         model.IsNsfw = false;
+        // Civitai's label kept beside the user's rating (#647) goes with the rest of Civitai's
+        // data; the user's own rating stays.
+        model.OriginalNsfwRating = null;
         model.IsPoi = false;
         model.LastSyncedAt = null;
         model.AllowNoCredit = false;

@@ -64,6 +64,9 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Files)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // One small row per model: the images step's stamp is how the grid tells "not rated
+            // yet" from "Civitai had no rating" (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .Where(m => m.Versions.Any(v => v.Files.Any(f => f.LocalPath != null && f.LocalPath != "")))
             .AsSplitQuery()
             .AsNoTracking()
@@ -217,6 +220,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Images)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // The images step's stamp: a tile refreshed from this load tells "not rated yet" from
+            // "Civitai had no rating" by it (#647, NsfwPolicy.Judge). Tracked like the rest, so the
+            // sync steps' GetOrCreate finds this instance instead of loading a second one.
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             .ConfigureAwait(false);
@@ -252,6 +259,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(
                 m => m.Versions.Any(v => v.Files.Any(f =>
@@ -282,6 +291,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == modelId.Value, cancellationToken)
             .ConfigureAwait(false);
@@ -466,6 +477,23 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.TotalVersionCount, totalVersionCount)
                 .SetProperty(m => m.LastCheckedForUpdatesUtc, checkedAtUtc),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> SetUserNsfwRatingAsync(
+        IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default)
+    {
+        if (modelIds.Count == 0) return 0;
+
+        return await Context.Models
+            .Where(m => modelIds.Contains(m.Id))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.UserNsfwRating, (bool?)isNsfw)
+                .SetProperty(m => m.OriginalNsfwRating, m => m.OriginalNsfwRating ?? originalRating)
+                // ExecuteUpdate bypasses SaveChanges, which stamps UpdatedAt for every other change.
+                .SetProperty(m => m.UpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
                 cancellationToken)
             .ConfigureAwait(false);
     }

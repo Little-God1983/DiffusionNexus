@@ -31,6 +31,14 @@ public interface IModelRepository : IRepository<Model>
     Task<IReadOnlyList<Model>> GetModelsWithLocalFilesLightAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Writes the user's rating (<see cref="Model.UserNsfwRating"/>) for these models in one
+    /// statement — a tile's whole group at once (#647). <paramref name="originalRating"/> — what
+    /// Civitai says now — is stored only where no original is kept yet, so it stays the rating from
+    /// before the user's first change. Returns the number of models updated.
+    /// </summary>
+    Task<int> SetUserNsfwRatingAsync(IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Loads a single image's ThumbnailData from the database.
     /// Used for on-demand lazy loading when a tile scrolls into view.
     /// </summary>

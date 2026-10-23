@@ -694,21 +694,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         foreach (var oldTile in AllTiles)
         {
-            oldTile.Deleted -= OnTileDeleted;
-            oldTile.DetailRequested -= OnTileDetailRequested;
+            DetachTile(oldTile);
         }
 
         AllTiles.Clear();
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Sum(t => t.ModelCount);
         RebuildAvailableBaseModels();
-        ApplyFilters();
+        ApplyFilters(ratingsChanged: true);
     }
 
     /// <summary>
@@ -1702,22 +1696,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Unsubscribe from old tiles
             foreach (var oldTile in AllTiles)
             {
-                oldTile.Deleted -= OnTileDeleted;
-                oldTile.DetailRequested -= OnTileDetailRequested;
+                DetachTile(oldTile);
             }
 
             AllTiles.Clear();
 
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                AllTiles.Add(tile);
-            }
+            foreach (var tile in tiles) AddTile(tile);
 
             TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
-            ApplyFilters();
+            ApplyFilters(ratingsChanged: true);
         });
 
         return distinctModels;
@@ -2408,48 +2396,217 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     partial void OnShowNsfwChanged(bool value)
     {
-        ApplyFilters();
+        // With everything shown nothing is hidden for want of a rating; leaving that view filters again.
+        if (value && ShowUnratedOnly) ShowUnratedOnly = false;
+        else ApplyFilters();
 
         // Once per switch to "off", not per filter pass: the count follows the search box, and a
         // line per keystroke would bury the Unified Console.
-        if (!value && HiddenUnratedCount > 0)
-        {
-            _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
-                $"{HiddenUnratedCount} LoRA(s) are hidden while Show NSFW is off because their preview has no rating yet. Run Download Metadata to rate them."));
-        }
+        if (!value) LogHiddenInView();
     }
 
-    /// <summary>Tiles the last filter pass hid only because their Civitai picture is not rated yet.</summary>
-    internal int HiddenUnratedCount { get; private set; }
+    /// <summary>
+    /// Whether the grid lists only the unrated LoRAs in the current view (#647) — pictures
+    /// covered, each with an Unrated badge saying why and the SFW / NSFW buttons.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowUnratedHint))]
+    private bool _showUnratedOnly;
 
-    /// <summary>Whether "Show NSFW" off is hiding LoRAs only because their pictures are not rated yet.</summary>
-    public bool HasHiddenUnrated => HiddenUnratedCount > 0;
+    partial void OnShowUnratedOnlyChanged(bool value) => ApplyFilters();
+
+    [RelayCommand]
+    private void ShowUnrated() => ShowUnratedOnly = true;
+
+    [RelayCommand]
+    private void BackToAll() => ShowUnratedOnly = false;
 
     /// <summary>
-    /// The hint shown under the toolbar while <see cref="HasHiddenUnrated"/>. The bulk run reaches
-    /// every version Civitai has an id for; a LoRA with no Civitai id at all is only reached by the
-    /// detail view's Download Metadata, which looks the file up by hash — hence the second sentence.
+    /// How many LoRAs in the current view — what the search and base-model filters let through —
+    /// are hidden because they have no rating at all. Counted in models, the toolbar's unit ("N of
+    /// M models"), and exactly what <see cref="ShowUnratedCommand"/> lists (#647).
     /// </summary>
-    public string HiddenUnratedMessage => FormattableString.Invariant(
-        $"{HiddenUnratedCount} {(HiddenUnratedCount == 1 ? "LoRA is" : "LoRAs are")} hidden because the preview has no NSFW rating yet. Download Metadata rates them; if one stays hidden, use Download Metadata in its details.");
+    public int UnratedCount { get; private set; }
+
+    /// <summary>How many LoRAs in the current view "Show NSFW" off hides, for any reason (models).</summary>
+    internal int HiddenCount { get; private set; }
+
+    /// <summary>Whether the hint under the toolbar shows: unrated LoRAs are hidden and the list is not open.</summary>
+    public bool ShowUnratedHint => UnratedCount > 0 && !ShowUnratedOnly;
+
+    /// <summary>The hint under the toolbar.</summary>
+    public string UnratedHint => UnratedCount == 1
+        ? "1 LoRA in this view has no NSFW rating and is hidden."
+        : FormattableString.Invariant($"{UnratedCount} LoRAs in this view have no NSFW rating and are hidden.");
+
+    /// <summary>The hint's button.</summary>
+    public string ShowUnratedButtonText => FormattableString.Invariant($"Show unrated ({UnratedCount})");
+
+    /// <summary>The bar above the unrated list.</summary>
+    public string UnratedViewTitle => UnratedCount == 1
+        ? "Showing the 1 unrated LoRA in this view — rate it SFW or NSFW"
+        : FormattableString.Invariant($"Showing the {UnratedCount} unrated LoRAs in this view — rate them SFW or NSFW");
 
     /// <summary>
     /// What the empty grid says. "Add LoRA source folders" only when there are no LoRAs at all — a
-    /// library whose every tile is filtered out is not an empty library (#631 made that state common
-    /// until the first Download Metadata run rates the pictures).
+    /// library whose every tile is filtered out is not an empty library.
     /// </summary>
     public string EmptyStateMessage =>
         AllTiles.Count == 0 ? "Add LoRA source folders in Settings, then click Refresh."
-        : HasHiddenUnrated ? "Their previews have no NSFW rating yet. Run Download Metadata to rate them, or turn Show NSFW on."
-        : "No LoRAs match the current filters.";
+        : HiddenCount > 0 && !ShowUnratedOnly
+            ? (HiddenCount == 1
+                ? "The only LoRA in this view is hidden by Show NSFW. Turn Show NSFW on to see it."
+                : FormattableString.Invariant($"All {HiddenCount} LoRAs in this view are hidden by Show NSFW. Turn Show NSFW on to see them."))
+            : "No LoRAs match the current filters.";
 
-    /// <summary>Publishes the count the hint shows; the Unified Console line is written by the toggle.</summary>
-    private void ReportHiddenUnrated(int count)
+    /// <summary>The hidden tiles of the last filter pass, for the Unified Console breakdown.</summary>
+    private List<ModelTileViewModel> _hiddenInView = [];
+
+    /// <summary>Publishes the counts the hint, its button, the list's title and the empty state show.</summary>
+    private void ReportHidden(List<ModelTileViewModel> hidden)
     {
-        if (count == HiddenUnratedCount) return;
-        HiddenUnratedCount = count;
-        OnPropertyChanged(nameof(HasHiddenUnrated));
-        OnPropertyChanged(nameof(HiddenUnratedMessage));
+        _hiddenInView = hidden;
+        HiddenCount = hidden.Sum(t => t.ModelCount);
+        var unrated = hidden.Where(t => t.IsUnrated).Sum(t => t.ModelCount);
+        if (unrated == UnratedCount) return;
+        UnratedCount = unrated;
+        OnPropertyChanged(nameof(UnratedCount));
+        OnPropertyChanged(nameof(ShowUnratedHint));
+        OnPropertyChanged(nameof(UnratedHint));
+        OnPropertyChanged(nameof(ShowUnratedButtonText));
+        OnPropertyChanged(nameof(UnratedViewTitle));
+    }
+
+    /// <summary>One Unified Console line: how many are hidden in this view, by reason (models).</summary>
+    private void LogHiddenInView()
+    {
+        if (HiddenCount == 0) return;
+        var byReason = string.Join(", ", _hiddenInView
+            .GroupBy(t => t.NsfwVerdict.Reason)
+            .Select(g => (g.Key, Models: g.Sum(t => t.ModelCount)))
+            .OrderByDescending(r => r.Models)
+            .Select(r => FormattableString.Invariant($"{r.Models} {r.Key}")));
+        _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+            $"Show NSFW off hides {HiddenCount} LoRA(s) in this view ({UnratedCount} unrated): {byReason}"));
+    }
+
+    /// <summary>
+    /// Records the user's rating for every model of <paramref name="tile"/> (#647): SFW or NSFW —
+    /// the LoRA's rating from then on. What Civitai says now is kept as the original, unless an
+    /// earlier change kept one already. Saved first; the tile changes once the database has it.
+    /// </summary>
+    internal async Task SetUserNsfwRatingAsync(ModelTileViewModel tile, bool isNsfw)
+    {
+        // One rating at a time: two quick clicks (SFW, then NSFW) must land in the database and on
+        // screen in the same order, or the tile shows one rating while the row holds the other.
+        await _ratingGate.WaitAsync();
+        try
+        {
+            await SetUserNsfwRatingCoreAsync(tile, isNsfw);
+        }
+        finally
+        {
+            _ratingGate.Release();
+        }
+    }
+
+    private readonly SemaphoreSlim _ratingGate = new(1, 1);
+
+    private async Task SetUserNsfwRatingCoreAsync(ModelTileViewModel tile, bool isNsfw)
+    {
+        // Every tile of this LoRA, the clicked one first: one per source folder, possibly over
+        // duplicate model rows that share the Civitai model page. Each tile's rows keep what Civitai
+        // says about the picture that tile shows; a row two tiles share goes with the first.
+        var sameLora = AllTiles.Where(t => t != tile && IsSameLora(t, tile)).Prepend(tile).ToList();
+        var claimed = new HashSet<int>();
+        var writes = sameLora
+            .Select(t => (Tile: t, Ids: t.GetRatingModelIds().Where(claimed.Add).ToList(), Original: CivitaiRatingLabel(t)))
+            .ToList();
+        var modelIds = claimed.ToList();
+        var label = isNsfw ? "NSFW" : "SFW";
+        var original = writes[0].Original;
+        try
+        {
+            if (_scopeFactory is not null && modelIds.Count > 0)
+            {
+                var updated = await Task.Run(async () =>
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    // All or nothing: the screen shows the rating only when every row has it.
+                    await unitOfWork.BeginTransactionAsync().ConfigureAwait(false);
+                    try
+                    {
+                        var rows = 0;
+                        foreach (var write in writes.Where(w => w.Ids.Count > 0))
+                            rows += await unitOfWork.Models.SetUserNsfwRatingAsync(write.Ids, isNsfw, write.Original).ConfigureAwait(false);
+                        await unitOfWork.CommitTransactionAsync().ConfigureAwait(false);
+                        return rows;
+                    }
+                    catch
+                    {
+                        await unitOfWork.RollbackTransactionAsync().ConfigureAwait(false);
+                        throw;
+                    }
+                });
+                if (updated == 0 && modelIds.Any(id => id > 0))
+                {
+                    // The rows are gone (deleted or rebuilt meanwhile): showing a rating that is not
+                    // stored would vanish on the next start.
+                    _logger?.Warn(LogCategory.General, "LoraViewerNsfw",
+                        $"Could not rate '{tile.DisplayName}' {label}: no model row was found to save it in");
+                    SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: it is no longer in the library — click Refresh.";
+                    return;
+                }
+                _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+                    $"Rated '{tile.DisplayName}' {label} (Civitai: {original}; {updated} model row(s))"));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "LoraViewerNsfw",
+                $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}", ex);
+            // On screen too: a click that silently does nothing invites clicking again.
+            SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}";
+            return;
+        }
+
+        foreach (var write in writes)
+            write.Tile.ApplyUserNsfwRating(isNsfw, write.Original);
+        ApplyFilters(ratingsChanged: true);
+    }
+
+    /// <summary>What Civitai says about the picture <paramref name="tile"/> shows, in words.</summary>
+    private static string CivitaiRatingLabel(ModelTileViewModel tile) =>
+        tile.ModelEntity is { } entity ? NsfwPolicy.CivitaiRatingLabel(entity, tile.SelectedVersion) : "unrated";
+
+    /// <summary>
+    /// Whether two tiles show the same LoRA: the same model object, a shared saved row (id), or
+    /// the same Civitai model page (duplicate rows of one LoRA in different source folders).
+    /// </summary>
+    private static bool IsSameLora(ModelTileViewModel a, ModelTileViewModel b)
+    {
+        if (a == b) return true;
+        if (a.ModelEntity is null || b.ModelEntity is null) return false;
+        if (ReferenceEquals(a.ModelEntity, b.ModelEntity)) return true;
+        if (a.ModelEntity.CivitaiModelPageId is { } page && page == b.ModelEntity.CivitaiModelPageId) return true;
+        var ids = b.GetAllModelIds().Where(id => id > 0).ToHashSet();
+        return a.GetAllModelIds().Any(ids.Contains);
+    }
+
+    private async void OnTileNsfwRatingRequested(object? sender, bool isNsfw)
+    {
+        // async void: an exception here would take the app down. Log it and say so instead.
+        if (sender is not ModelTileViewModel tile) return;
+        try
+        {
+            await SetUserNsfwRatingAsync(tile, isNsfw);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "LoraViewerNsfw", $"Rating '{tile.DisplayName}' failed: {ex.Message}", ex);
+            SyncStatus = $"Rating '{tile.DisplayName}' failed: {ex.Message}";
+        }
     }
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
@@ -2460,6 +2617,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     #region Private Methods
 
+    /// <summary>Adds a tile to the library and listens to it.</summary>
+    internal void AddTile(ModelTileViewModel tile)
+    {
+        tile.Deleted += OnTileDeleted;
+        tile.DetailRequested += OnTileDetailRequested;
+        tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged += OnTileNsfwVerdictChanged;
+        AllTiles.Add(tile);
+    }
+
+    /// <summary>Stops listening to a tile that left the library (replaced, refreshed or deleted).</summary>
+    private void DetachTile(ModelTileViewModel tile)
+    {
+        tile.Deleted -= OnTileDeleted;
+        tile.DetailRequested -= OnTileDetailRequested;
+        tile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged -= OnTileNsfwVerdictChanged;
+    }
+
+    private void OnTileNsfwVerdictChanged(object? sender, EventArgs e) => ApplyFilters(ratingsChanged: true);
+
     /// <summary>
     /// Handles the <see cref="ModelTileViewModel.Deleted"/> event by removing the tile
     /// from both <see cref="AllTiles"/> and <see cref="FilteredTiles"/>, then updating counts.
@@ -2468,7 +2646,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         if (sender is not ModelTileViewModel tile) return;
 
-        tile.Deleted -= OnTileDeleted;
+        DetachTile(tile);
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -2481,6 +2659,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Deleting the last LoRA turns "no match" into "add source folders".
             OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
+            // A hidden tile is counted by the unrated hint and may be the unrated list's last one.
+            if (_hiddenInView.Contains(tile)) ApplyFilters(ratingsChanged: true);
         });
     }
 
@@ -2881,7 +3061,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         return ordered.ToList();
     }
 
-    private void ApplyFilters()
+    /// <param name="ratingsChanged">
+    /// The pass follows a change of ratings — a rating, a refresh, a delete, a reload — rather than
+    /// of the search or filters: an unrated list it emptied closes (#647).
+    /// </param>
+    private void ApplyFilters(bool ratingsChanged = false)
     {
         // A direct apply supersedes any pending debounced search pass.
         _searchDebounceCts?.Cancel();
@@ -2921,18 +3105,28 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         // rating" count covers only the LoRAs the search and base-model filters let through.
         var candidates = query.ToList();
         foreach (var tile in AllTiles) tile.HideNsfwPreviews = !ShowNsfw;
-        var hiddenUnrated = 0;
+        var hidden = new List<ModelTileViewModel>();
         if (!ShowNsfw)
         {
-            var safe = new List<ModelTileViewModel>(candidates.Count);
+            var shown = new List<ModelTileViewModel>(candidates.Count);
             foreach (var tile in candidates)
-            {
-                if (!tile.HasNsfwContent) safe.Add(tile);
-                else if (!tile.IsNsfw && tile.ShowsUnratedImage) hiddenUnrated++;
-            }
-            candidates = safe;
+                (tile.HasNsfwContent ? hidden : shown).Add(tile);
+            // The unrated list (#647) shows exactly the tiles the hint counts.
+            candidates = ShowUnratedOnly ? hidden.Where(t => t.IsUnrated).ToList() : shown;
         }
-        ReportHiddenUnrated(hiddenUnrated);
+        foreach (var tile in AllTiles) tile.IsInUnratedView = ShowUnratedOnly && !ShowNsfw;
+        ReportHidden(hidden);
+
+        // Once ratings changed and no unrated LoRA is left in this view — the last one rated by the
+        // user or by Download Metadata, or deleted — the unrated list closes instead of showing "the
+        // 0 unrated LoRAs", even when unrated LoRAs outside the view remain. Not on a search or
+        // filter change: a search that matches none for a moment must not close it under the user.
+        // Closing it runs this pass again through OnShowUnratedOnlyChanged.
+        if (ratingsChanged && ShowUnratedOnly && UnratedCount == 0)
+        {
+            ShowUnratedOnly = false;
+            return;
+        }
 
         var filtered = SortTiles(candidates);
 
@@ -3052,12 +3246,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         // Use the same grouping pipeline as real data
         var tiles = GroupModelsIntoTiles(allDemoModels);
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Count;
         RebuildAvailableBaseModels();

@@ -271,7 +271,7 @@
               <!-- Metadata -->
               <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top">
                 <Grid ColumnDefinitions="Auto,*"
-                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                      RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                       Margin="0">
 
                   <TextBlock Grid.Row="0" Grid.Column="0"
@@ -377,6 +377,20 @@
                                        Foreground="White"
                                        TextWrapping="Wrap"
                                        ToolTip.Tip="{Binding FolderPathDisplay}"/>
+
+                  <!-- #647: SFW or NSFW, and whether the user changed it (from what). Rate it via the
+                       tile's right-click menu; the line follows the tile. -->
+                  <TextBlock Grid.Row="9" Grid.Column="0"
+                             Text="NSFW rating:"
+                             Foreground="#FF66AA"
+                             FontWeight="SemiBold"
+                             Margin="0,6,12,0"/>
+                  <TextBlock Grid.Row="9" Grid.Column="1"
+                             Text="{Binding SourceTile.NsfwRatingSummary, FallbackValue=''}"
+                             Foreground="White"
+                             TextWrapping="Wrap"
+                             Margin="0,6,0,0"
+                             ToolTip.Tip="Change it with right-click → Rate SFW / Rate NSFW on the tile"/>
                 </Grid>
               </StackPanel>
             </Grid>

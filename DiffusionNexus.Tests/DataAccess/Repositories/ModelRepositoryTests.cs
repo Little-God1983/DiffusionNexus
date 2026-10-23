@@ -603,6 +603,158 @@ public class ModelRepositoryTests : IDisposable
         image.ThumbnailData.Should().BeNull("a row that never got bytes is not deferred, it is empty");
     }
 
+    /// <summary>
+    /// #647: the grid tells "not rated yet" (the bulk run will fetch it) from "no rating" (Civitai
+    /// was asked and had nothing) by the images step's stamp, so the light load carries the sync
+    /// state — and the user's rating with the original.
+    /// </summary>
+    [Fact]
+    public async Task GetModelsWithLocalFilesLight_CarriesSyncStateAndTheUsersRating()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
+            model.UserNsfwRating = false;
+            model.OriginalNsfwRating = "XXX";
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+
+        var model1 = loaded.Should().ContainSingle().Subject;
+        model1.UserNsfwRating.Should().BeFalse();
+        model1.OriginalNsfwRating.Should().Be("XXX");
+        model1.SyncState.Should().NotBeNull();
+        model1.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>
+    /// #647: rating a LoRA SFW or NSFW applies to every model row its tile stands for and survives
+    /// a reload. The original rating (what Civitai said) is kept from the first change: flipping
+    /// SFW to NSFW later does not overwrite it.
+    /// </summary>
+    [Fact]
+    public async Task SetUserNsfwRating_PersistsForEveryModelOfTheTile_KeepingTheFirstOriginal()
+    {
+        int a, b, other;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var ma = CreateModelWithLocalFile("Same", @"C:\m\a.safetensors");
+            var mb = CreateModelWithLocalFile("Same", @"C:\m\b.safetensors");
+            var mo = CreateModelWithLocalFile("Other", @"C:\m\o.safetensors");
+            foreach (var m in new[] { ma, mb, mo }) await seed.Models.AddAsync(m);
+            await seed.SaveChangesAsync();
+            (a, b, other) = (ma.Id, mb.Id, mo.Id);
+        }
+
+        async Task<Dictionary<int, (bool? Rating, string? Original)>> ReadAsync()
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var models = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
+            return models.ToDictionary(m => m.Id, m => (m.UserNsfwRating, m.OriginalNsfwRating));
+        }
+
+        using (var scope = _serviceProvider.CreateScope())
+            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: false, originalRating: "XXX"))
+                .Should().Be(2);
+        var afterSfw = await ReadAsync();
+        afterSfw[a].Should().Be((false, "XXX"));
+        afterSfw[b].Should().Be((false, "XXX"));
+        afterSfw[other].Should().Be(((bool?)null, (string?)null));
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: true, originalRating: "PG");
+        (await ReadAsync())[a].Should().Be((true, "XXX"), "the original is what Civitai said before the user's first change");
+    }
+
+    /// <summary>
+    /// Review: a tile refreshed after Download Metadata in the details is reloaded through
+    /// GetByIdWithIncludesAsync. Without the sync state the unrated-reason reads "never checked" and
+    /// promises Download Metadata again for a LoRA Civitai already answered (deleted).
+    /// </summary>
+    [Fact]
+    public async Task GetByIdWithIncludes_CarriesTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Reloaded", @"C:\m\reloaded.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(id);
+
+        loaded!.SyncState.Should().NotBeNull();
+        loaded.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>
+    /// Review round 2: the detail view refreshes a tile after a download through the file-path and
+    /// file-hash lookups too; they carry the sync state for the same reason as GetByIdWithIncludes.
+    /// </summary>
+    [Fact]
+    public async Task FindByLocalFilePathAndHash_CarryTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        const string path = @"C:\m\found.safetensors";
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Found", path);
+            model.Versions.First().Files.First().HashSHA256 = "ABCDEF";
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        (await uow.Models.FindByLocalFilePathAsync(path))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+        (await uow.Models.FindByFileHashAsync("ABCDEF"))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>Review: a rating is a change to the model row like any other save — it stamps UpdatedAt.</summary>
+    [Fact]
+    public async Task SetUserNsfwRating_StampsUpdatedAt()
+    {
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamp", @"C:\m\stamp.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+        var before = DateTimeOffset.UtcNow;
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([id], isNsfw: false, originalRating: "XXX");
+
+        using var readScope = _serviceProvider.CreateScope();
+        var saved = await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdAsync(id);
+        saved!.UpdatedAt.Should().NotBeNull();
+        saved.UpdatedAt!.Value.Should().BeOnOrAfter(before);
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

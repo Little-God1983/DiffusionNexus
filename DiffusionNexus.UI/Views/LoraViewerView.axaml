@@ -226,9 +226,9 @@
 
           </WrapPanel>
 
-          <!-- #631: "Show NSFW" off hides pictures with no rating yet. Until Download Metadata
-               rates them that can be most of the library, so say so and offer the fix. -->
-          <Border IsVisible="{Binding HasHiddenUnrated}"
+          <!-- #647: how many LoRAs in this view are hidden because they have no rating at all, and
+               the way to see exactly those and rate them. The number is what the list shows. -->
+          <Border IsVisible="{Binding ShowUnratedHint}"
                   Background="#2A2A1A"
                   BorderBrush="#5A5A2A"
                   BorderThickness="1"
@@ -236,13 +236,33 @@
                   Padding="10,6"
                   Margin="0,8,0,0">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="{Binding HiddenUnratedMessage}"
+              <TextBlock Text="{Binding UnratedHint}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center"/>
               <Button Grid.Column="1"
-                      Content="Download Metadata"
-                      Command="{Binding DownloadMissingMetadataCommand}"
-                      ToolTip.Tip="Fetch metadata and preview ratings from Civitai"
+                      Content="{Binding ShowUnratedButtonText}"
+                      Command="{Binding ShowUnratedCommand}"
+                      ToolTip.Tip="List the unrated LoRAs so you can rate them SFW or NSFW"
+                      Margin="12,0,0,0"
+                      VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+
+          <!-- #647: the unrated list is open. -->
+          <Border IsVisible="{Binding ShowUnratedOnly}"
+                  Background="#1F2A33"
+                  BorderBrush="#2E4A5E"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="0,8,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="{Binding UnratedViewTitle}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+              <Button Grid.Column="1"
+                      Content="Back to all"
+                      Command="{Binding BackToAllCommand}"
                       Margin="12,0,0,0"
                       VerticalAlignment="Center"/>
             </Grid>

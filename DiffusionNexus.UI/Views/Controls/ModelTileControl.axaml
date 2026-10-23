@@ -17,7 +17,19 @@
           BorderThickness="1"
           ClipToBounds="True"
           Cursor="Hand"
-          Classes="tile">
+          Classes="tile"
+          Classes.inUnratedView="{Binding IsInUnratedView}">
+    <!-- #647: rate the LoRA yourself. A LoRA is SFW or NSFW; your rating replaces Civitai's. -->
+    <Border.ContextMenu>
+      <ContextMenu>
+        <MenuItem Header="Rate SFW"
+                  Command="{Binding RateSfwCommand}"
+                  ToolTip.Tip="This LoRA is SFW: shown even with Show NSFW off"/>
+        <MenuItem Header="Rate NSFW"
+                  Command="{Binding RateNsfwCommand}"
+                  ToolTip.Tip="This LoRA is NSFW: hidden while Show NSFW is off"/>
+      </ContextMenu>
+    </Border.ContextMenu>
     <Border.Styles>
       <!-- The action buttons are laid out only while the tile is hovered. During scroll
            they are collapsed (IsVisible=False → not measured/arranged), which removes the
@@ -28,6 +40,13 @@
       </Style>
       <Style Selector="Border.tile:pointerover Grid.tileActions">
         <Setter Property="IsVisible" Value="True"/>
+      </Style>
+      <!-- #647: in the "Show unrated" list the bar stays collapsed. Revealing it on hover lifts the
+           whole info area (it is bottom-anchored), so the Safe to show / NSFW buttons jumped away
+           from under the cursor and the click hit Copy Trigger Words instead. Declared after the
+           hover style so it wins; the right-click menu and the details stay available. -->
+      <Style Selector="Border.tile.inUnratedView Grid.tileActions">
+        <Setter Property="IsVisible" Value="False"/>
       </Style>
     </Border.Styles>
 
@@ -78,8 +97,17 @@
                     Background="#252525">
               <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                 <Border Background="#333" CornerRadius="8" Padding="12,8">
-                  <TextBlock Text="NSFW preview hidden" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
+                  <TextBlock Text="{Binding PreviewCoverText}" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
                 </Border>
+                <!-- #647: in the unrated list, look at the picture before rating it. -->
+                <Button Content="Show preview"
+                        Command="{Binding RevealPreviewCommand}"
+                        IsVisible="{Binding IsInUnratedView}"
+                        ToolTip.Tip="Uncover this picture to judge it before you rate the LoRA"
+                        HorizontalAlignment="Center"
+                        Margin="0,8,0,0"
+                        FontSize="11"
+                        Padding="10,3"/>
               </StackPanel>
             </Border>
 
@@ -161,6 +189,28 @@
                        ToolTip.Tip="{Binding FileName}"/>
           </StackPanel>
 
+          <!-- #647: in the "Show unrated" list, the user's two choices. -->
+          <StackPanel IsVisible="{Binding IsInUnratedView}" Margin="8,0,8,6" Spacing="4">
+            <Grid ColumnDefinitions="*,6,*">
+              <Button Grid.Column="0"
+                      Content="SFW"
+                      Command="{Binding RateSfwCommand}"
+                      ToolTip.Tip="This LoRA is SFW: shown even with Show NSFW off"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      FontSize="11"
+                      Padding="4,3"/>
+              <Button Grid.Column="2"
+                      Content="NSFW"
+                      Command="{Binding RateNsfwCommand}"
+                      ToolTip.Tip="This LoRA is NSFW: hidden while Show NSFW is off"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      FontSize="11"
+                      Padding="4,3"/>
+            </Grid>
+          </StackPanel>
+
           <!-- Action buttons: collapsed during scroll, shown on pointer-over (see .tileActions style). -->
           <Grid Classes="tileActions"
                 ColumnDefinitions="*,*,*,*,*"
@@ -184,8 +234,28 @@
                   VerticalAlignment="Top"
                   Margin="4"
                   Spacing="4">
+        <!-- #647: no rating at all — the tooltip says why and how to rate it. -->
+        <Border IsVisible="{Binding IsUnrated}"
+                Background="#8D6E00"
+                CornerRadius="4"
+                Padding="6,2"
+                HorizontalAlignment="Right"
+                ToolTip.Tip="{Binding UnratedTooltip}">
+          <TextBlock Text="Unrated" FontSize="9" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
+        <!-- #647: the user rated this LoRA; the tooltip names the original rating. -->
+        <Border IsVisible="{Binding IsRatedByUser}"
+                Background="#37474F"
+                CornerRadius="4"
+                Padding="6,2"
+                HorizontalAlignment="Right"
+                ToolTip.Tip="{Binding UserRatingTooltip}">
+          <TextBlock Text="{Binding UserRatingBadge}" FontSize="9" FontWeight="Bold" Foreground="White"/>
+        </Border>
+
         <!-- NSFW Badge -->
-        <Border IsVisible="{Binding IsNsfw}"
+        <Border IsVisible="{Binding ShowCreatorNsfwBadge}"
                 Background="#E53935"
                 CornerRadius="4"
                 Padding="6,2"
