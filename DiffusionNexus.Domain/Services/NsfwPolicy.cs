@@ -48,9 +48,20 @@ public static class NsfwPolicy
     }
 
     /// <summary>
-    /// Whether "Show NSFW" off hides this LoRA, and why (#647) — the one answer for the grid, the
-    /// hint's count and the "Show hidden" list. In order: the user's own choice
-    /// (<see cref="Entities.Model.NsfwOverride"/>), the creator's flag, then the picture the tile
+    /// The LoRA's rating, and whether "Show NSFW" off hides it (#647) — the one answer for the
+    /// grid, the unrated hint and its list. A LoRA is SFW or NSFW: the user's rating
+    /// (<see cref="Entities.Model.UserNsfwRating"/>) when they gave one, otherwise Civitai's
+    /// (<see cref="JudgeCivitai"/>). A LoRA neither rated is unrated, and hidden.
+    /// </summary>
+    public static NsfwVerdict Judge(Entities.Model model, Entities.ModelVersion? shownVersion) => model.UserNsfwRating switch
+    {
+        false => new NsfwVerdict(NsfwHideReason.None),
+        true => new NsfwVerdict(NsfwHideReason.RatedNsfwByYou),
+        null => JudgeCivitai(model, shownVersion),
+    };
+
+    /// <summary>
+    /// What Civitai says, whatever the user rated: the creator's flag, then the picture the tile
     /// shows (<paramref name="shownVersion"/>'s <see cref="Entities.ModelVersion.PrimaryImage"/>).
     /// </summary>
     /// <remarks>
@@ -60,10 +71,8 @@ public static class NsfwPolicy
     /// deleted model) or cannot be asked: <see cref="NsfwHideReason.NoRating"/>. Promising a fix
     /// the button cannot deliver is what made the #646 hint wrong.
     /// </remarks>
-    public static NsfwVerdict Judge(Entities.Model model, Entities.ModelVersion? shownVersion)
+    public static NsfwVerdict JudgeCivitai(Entities.Model model, Entities.ModelVersion? shownVersion)
     {
-        if (model.NsfwOverride == false) return new NsfwVerdict(NsfwHideReason.None);
-        if (model.NsfwOverride == true) return new NsfwVerdict(NsfwHideReason.MarkedNsfwByYou);
         if (model.IsNsfw) return new NsfwVerdict(NsfwHideReason.FlaggedByCreator);
 
         if (shownVersion?.PrimaryImage is not { } picture || !shownVersion.IsImageNsfw(picture))
@@ -89,6 +98,36 @@ public static class NsfwPolicy
         return new NsfwVerdict(bulkRunWillFetch ? NsfwHideReason.NotRatedYet : NsfwHideReason.NoRating);
     }
 
+    /// <summary>
+    /// Civitai's rating of the LoRA in words ("XXX", "PG-13", "NSFW (creator's flag)", "unrated"),
+    /// ignoring the user's — what <see cref="Entities.Model.OriginalNsfwRating"/> keeps when the
+    /// user changes it.
+    /// </summary>
+    public static string CivitaiRatingLabel(Entities.Model model, Entities.ModelVersion? shownVersion)
+    {
+        var civitai = JudgeCivitai(model, shownVersion);
+        return civitai.Reason switch
+        {
+            NsfwHideReason.FlaggedByCreator => "NSFW (creator's flag)",
+            NsfwHideReason.RatedOnCivitai => RatingLabel(civitai.Rating),
+            NsfwHideReason.None when shownVersion?.PrimaryImage is { NsfwLevel: not NsfwLevel.None } picture
+                => RatingLabel(picture.NsfwLevel),
+            _ => "unrated",
+        };
+    }
+
+    /// <summary>The strongest level in a rating, as Civitai names it.</summary>
+    public static string RatingLabel(NsfwLevel rating) => rating switch
+    {
+        _ when rating.HasFlag(NsfwLevel.Blocked) => "Blocked",
+        _ when rating.HasFlag(NsfwLevel.XXX) => "XXX",
+        _ when rating.HasFlag(NsfwLevel.X) => "X",
+        _ when rating.HasFlag(NsfwLevel.R) => "R",
+        _ when rating.HasFlag(NsfwLevel.PG13) => "PG-13",
+        _ when rating.HasFlag(NsfwLevel.PG) => "PG",
+        _ => "unrated",
+    };
+
     /// <summary>Whether the image lives on the web (a Civitai image) rather than on this machine.</summary>
     public static bool IsWebImage(string? url) =>
         url is not null
@@ -113,7 +152,7 @@ public static class NsfwPolicy
 public enum NsfwHideReason
 {
     None = 0,
-    MarkedNsfwByYou,
+    RatedNsfwByYou,
     FlaggedByCreator,
     RatedOnCivitai,
     NotRatedYet,
@@ -127,4 +166,7 @@ public readonly record struct NsfwVerdict(NsfwHideReason Reason, NsfwLevel Ratin
 {
     /// <summary>Whether "Show NSFW" off hides the LoRA.</summary>
     public bool IsHidden => Reason != NsfwHideReason.None;
+
+    /// <summary>Whether the LoRA has no rating at all — neither the user's nor Civitai's.</summary>
+    public bool IsUnrated => Reason is NsfwHideReason.NotRatedYet or NsfwHideReason.NoRating;
 }

@@ -37,11 +37,17 @@ public class Model : BaseEntity
     public bool IsNsfw { get; set; }
 
     /// <summary>
-    /// The user's own verdict for "Show NSFW" off (#647): <c>false</c> = safe to show,
-    /// <c>true</c> = NSFW, <c>null</c> = automatic (Civitai's ratings and the creator's flag).
-    /// Beats both, and no metadata sync writes it.
+    /// The user's rating of this LoRA (#647): <c>false</c> = SFW, <c>true</c> = NSFW, <c>null</c> =
+    /// the user never rated it, so Civitai's ratings and the creator's flag decide. Once set it is
+    /// the LoRA's rating; no metadata sync writes it.
     /// </summary>
-    public bool? NsfwOverride { get; set; }
+    public bool? UserNsfwRating { get; set; }
+
+    /// <summary>
+    /// What Civitai said when the user first rated the LoRA ("XXX", "PG-13", "unrated", …), kept to
+    /// show that the rating was changed and from what. Null while the user never rated it.
+    /// </summary>
+    public string? OriginalNsfwRating { get; set; }
 
     /// <summary>Whether this is a person of interest model.</summary>
     public bool IsPoi { get; set; }

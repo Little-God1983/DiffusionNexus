@@ -357,8 +357,9 @@ public sealed class DatabaseRecoveryService
         {
             { "LastCheckedForUpdatesUtc", "ALTER TABLE Models ADD COLUMN LastCheckedForUpdatesUtc TEXT" },
             { "TotalVersionCount",        "ALTER TABLE Models ADD COLUMN TotalVersionCount INTEGER NOT NULL DEFAULT 0" },
-            // Migration AddModelNsfwOverride (#647) — null is "automatic"
-            { "NsfwOverride",             "ALTER TABLE Models ADD COLUMN NsfwOverride INTEGER" },
+            // Migration AddModelUserNsfwRating (#647) — null is "the user never rated it"
+            { "UserNsfwRating",           "ALTER TABLE Models ADD COLUMN UserNsfwRating INTEGER" },
+            { "OriginalNsfwRating",       "ALTER TABLE Models ADD COLUMN OriginalNsfwRating TEXT" },
         };
 
         foreach (var col in requiredModelsColumns)

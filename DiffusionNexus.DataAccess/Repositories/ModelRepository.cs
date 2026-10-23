@@ -474,14 +474,17 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
     }
 
     /// <inheritdoc />
-    public async Task<int> SetNsfwOverrideAsync(
-        IReadOnlyCollection<int> modelIds, bool? choice, CancellationToken cancellationToken = default)
+    public async Task<int> SetUserNsfwRatingAsync(
+        IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default)
     {
         if (modelIds.Count == 0) return 0;
 
         return await Context.Models
             .Where(m => modelIds.Contains(m.Id))
-            .ExecuteUpdateAsync(s => s.SetProperty(m => m.NsfwOverride, choice), cancellationToken)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.UserNsfwRating, (bool?)isNsfw)
+                .SetProperty(m => m.OriginalNsfwRating, m => m.OriginalNsfwRating ?? originalRating),
+                cancellationToken)
             .ConfigureAwait(false);
     }
 

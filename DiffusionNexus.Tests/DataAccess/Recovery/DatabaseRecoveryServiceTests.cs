@@ -204,20 +204,22 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
     }
 
     /// <summary>
-    /// #647: AddModelNsfwOverride stamped as applied without its ALTER running would fail every
-    /// LoRA query on "no such column". The self-heal re-adds it, and every LoRA is automatic again.
+    /// #647: AddModelUserNsfwRating stamped as applied without its ALTERs running would fail every
+    /// LoRA query on "no such column". The self-heal re-adds both columns.
     /// </summary>
     [Fact]
-    public void CheckAndRepairSchema_ReAddsMissingNsfwOverrideColumn()
+    public void CheckAndRepairSchema_ReAddsMissingUserNsfwRatingColumns()
     {
         MigrateFresh();
-        Exec("ALTER TABLE Models DROP COLUMN NsfwOverride;");
-        Assert.DoesNotContain("NsfwOverride", Columns("Models"));
+        Exec("ALTER TABLE Models DROP COLUMN UserNsfwRating;");
+        Exec("ALTER TABLE Models DROP COLUMN OriginalNsfwRating;");
+        Assert.DoesNotContain("UserNsfwRating", Columns("Models"));
 
         var logger = new CapturingRecoveryLogger();
         using (var ctx = NewContext()) new DatabaseRecoveryService(logger).CheckAndRepairSchema(ctx);
 
-        Assert.Contains("NsfwOverride", Columns("Models"));
+        Assert.Contains("UserNsfwRating", Columns("Models"));
+        Assert.Contains("OriginalNsfwRating", Columns("Models"));
         Assert.Empty(logger.Errors);
         using (var ctx = NewContext()) Assert.Empty(ctx.Models.ToList());
     }

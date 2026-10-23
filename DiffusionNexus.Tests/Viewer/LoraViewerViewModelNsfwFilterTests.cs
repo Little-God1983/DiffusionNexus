@@ -10,6 +10,11 @@ namespace DiffusionNexus.Tests.Viewer;
 /// model is flagged NSFW or when the picture the tile shows is not rated safe (PG/PG-13); a tile
 /// that stays shows a safe picture. Before, only the creator's model flag was checked, so an
 /// SFW-flagged model with an XXX preview stayed on screen.
+/// <para>
+/// #647: a LoRA is SFW or NSFW. Unrated LoRAs — no rating from Civitai or the user — are hidden,
+/// counted in a hint and listed by "Show unrated" so the user can rate them. A rating the user
+/// gives is the LoRA's rating from then on, marked as changed by them with the original kept.
+/// </para>
 /// </summary>
 public class LoraViewerViewModelNsfwFilterTests
 {
@@ -34,6 +39,17 @@ public class LoraViewerViewModelNsfwFilterTests
         model.Versions.Add(version);
         return model;
     }
+
+    /// <summary>An unrated LoRA the bulk Download Metadata run would still fetch.</summary>
+    private static Model NotRatedYet(string name)
+    {
+        var model = NewModel(name, flaggedNsfw: false, Image(name, NsfwLevel.None));
+        model.Versions.First().CivitaiId = 700;
+        return model;
+    }
+
+    /// <summary>An unrated LoRA Civitai has no rating for (no version id: it cannot be asked).</summary>
+    private static Model NoRating(string name) => NewModel(name, flaggedNsfw: false, Image(name, NsfwLevel.None));
 
     private static LoraViewerViewModel ViewModelWith(params Model[] models)
     {
@@ -103,129 +119,162 @@ public class LoraViewerViewModelNsfwFilterTests
     {
         var local = new ModelImage { Url = "file:///E:/Loras/local.preview.png", MediaType = "image" };
         var vm = ViewModelWith(
-            NewModel("unrated", flaggedNsfw: false, Image("u", NsfwLevel.None)),
+            NoRating("unrated"),
             NewModel("local preview", flaggedNsfw: false, local),
             NewModel("no images", flaggedNsfw: false));
 
         vm.ShowNsfw = false;
 
         Visible(vm).Should().BeEquivalentTo("local preview", "no images");
-        vm.HiddenCount.Should().Be(1);
+        vm.UnratedCount.Should().Be(1);
     }
 
     /// <summary>
-    /// #647: the hint's number is exactly what "Show hidden" lists — whatever the reason a LoRA is
-    /// hidden — and the hint promises nothing about Download Metadata.
+    /// #647: the hint and its list are about unrated LoRAs only — not ones Civitai or the creator
+    /// rated NSFW — and the number is exactly what the list shows.
     /// </summary>
     [Fact]
-    public void TheHintCount_IsExactlyWhatShowHiddenLists()
+    public void TheHintAndTheList_CoverOnlyUnratedLoras()
     {
         var vm = ViewModelWith(
             NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)),
             NewModel("creator flag", flaggedNsfw: true, Image("pg", NsfwLevel.PG)),
-            NewModel("unrated", flaggedNsfw: false, Image("u", NsfwLevel.None)),
+            NoRating("deleted from civitai"),
+            NotRatedYet("not fetched yet"),
             NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG13)));
 
         vm.ShowNsfw = false;
-        vm.HiddenCount.Should().Be(3);
-        vm.HasHiddenInView.Should().BeTrue();
-        vm.HiddenHint.Should().Be("3 LoRAs in this view are hidden by Show NSFW.");
+        vm.UnratedCount.Should().Be(2);
+        vm.ShowUnratedHint.Should().BeTrue();
+        vm.UnratedHint.Should().Be("2 LoRAs in this view have no NSFW rating and are hidden.");
+        vm.ShowUnratedButtonText.Should().Be("Show unrated (2)");
 
-        vm.ShowHiddenCommand.Execute(null);
+        vm.ShowUnratedCommand.Execute(null);
 
-        vm.ShowHiddenOnly.Should().BeTrue();
-        Visible(vm).Should().BeEquivalentTo("rated xxx", "creator flag", "unrated");
-        vm.FilteredTiles.Should().OnlyContain(t => t.IsInHiddenView && t.IsPreviewHidden,
-            "every picture stays covered in the hidden list");
-        vm.FilteredTiles.Select(t => t.HiddenReasonText).Should().BeEquivalentTo(
-            "Rated XXX on Civitai", "Flagged NSFW by its creator", "No rating from Civitai");
+        vm.ShowUnratedOnly.Should().BeTrue();
+        vm.ShowUnratedHint.Should().BeFalse();
+        Visible(vm).Should().BeEquivalentTo("deleted from civitai", "not fetched yet");
+        vm.FilteredModelCount.Should().Be(2, "the list shows exactly what the hint counted");
+        vm.FilteredTiles.Should().OnlyContain(t => t.IsInUnratedView && t.IsPreviewHidden && t.IsUnrated,
+            "pictures stay covered until the user rates the LoRA");
 
         vm.BackToAllCommand.Execute(null);
         Visible(vm).Should().BeEquivalentTo("safe");
-        vm.FilteredTiles.Should().OnlyContain(t => !t.IsInHiddenView);
+        vm.FilteredTiles.Should().OnlyContain(t => !t.IsInUnratedView);
+    }
+
+    /// <summary>Each unrated tile says why it has no rating, in its tooltip.</summary>
+    [Fact]
+    public void AnUnratedTile_SaysWhyItHasNoRating()
+    {
+        var vm = ViewModelWith(NoRating("deleted"), NotRatedYet("pending"));
+
+        var deleted = vm.AllTiles.Single(t => t.DisplayName == "deleted");
+        var pending = vm.AllTiles.Single(t => t.DisplayName == "pending");
+
+        deleted.IsUnrated.Should().BeTrue();
+        deleted.UnratedTooltip.Should().Contain("Civitai has no NSFW rating").And.Contain("Rate SFW");
+        pending.UnratedTooltip.Should().Contain("Not rated yet").And.Contain("Download Metadata");
     }
 
     /// <summary>
-    /// #647: the user's choice per LoRA. Safe to show brings it back (with its usual picture),
-    /// NSFW hides it with that reason, Automatic returns to Civitai's verdict.
+    /// #647: a LoRA is SFW or NSFW — the user's rating replaces Civitai's, both ways, and there is
+    /// no third state. The tile shows that the rating was changed by the user, and from what.
     /// </summary>
     [Fact]
-    public async Task MarkingALora_SafeNsfwOrAutomatic_ChangesWhatIsHidden()
+    public async Task RatingALora_ReplacesCivitaisRating_AndShowsTheOriginal()
     {
         var vm = ViewModelWith(
             NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)),
-            NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
+            NoRating("unrated"));
         vm.ShowNsfw = false;
         var xxx = vm.AllTiles.Single(t => t.DisplayName == "rated xxx");
-        var safe = vm.AllTiles.Single(t => t.DisplayName == "safe");
+        var unrated = vm.AllTiles.Single(t => t.DisplayName == "unrated");
 
-        await vm.SetNsfwOverrideAsync(xxx, false);
-        Visible(vm).Should().BeEquivalentTo("rated xxx", "safe");
-        xxx.IsPreviewHidden.Should().BeFalse("the user decided it is safe to show");
+        await vm.SetUserNsfwRatingAsync(xxx, isNsfw: false);
+        await vm.SetUserNsfwRatingAsync(unrated, isNsfw: false);
 
-        await vm.SetNsfwOverrideAsync(safe, true);
-        Visible(vm).Should().BeEquivalentTo("rated xxx");
-        vm.ShowHiddenCommand.Execute(null);
-        vm.FilteredTiles.Should().ContainSingle().Which.HiddenReasonText.Should().Be("Marked NSFW by you");
+        Visible(vm).Should().BeEquivalentTo("rated xxx", "unrated");
+        vm.UnratedCount.Should().Be(0);
+        xxx.IsPreviewHidden.Should().BeFalse("the user rated it SFW");
+        xxx.IsRatedByUser.Should().BeTrue();
+        xxx.UserRatingBadge.Should().Be("SFW · by you");
+        xxx.UserRatingTooltip.Should().Be("Rated SFW by you. Civitai: XXX.");
+        unrated.UserRatingTooltip.Should().Be("Rated SFW by you. Civitai: unrated.");
 
-        await vm.SetNsfwOverrideAsync(safe, null);
-        await vm.SetNsfwOverrideAsync(xxx, null);
-        vm.FilteredTiles.Should().ContainSingle().Which.DisplayName.Should().Be("rated xxx");
+        await vm.SetUserNsfwRatingAsync(xxx, isNsfw: true);
+
+        Visible(vm).Should().BeEquivalentTo("unrated");
+        xxx.UserRatingBadge.Should().Be("NSFW · by you");
+        xxx.UserRatingTooltip.Should().Be("Rated NSFW by you. Civitai: XXX.", "the original stays what Civitai said first");
+    }
+
+    /// <summary>The tile's buttons and menu ask the Installed tab to record the rating.</summary>
+    [Fact]
+    public void TheTilesRateCommands_RequestTheRating()
+    {
+        var tile = ModelTileViewModel.FromModel(NoRating("t"));
+        var requested = new List<bool>();
+        tile.NsfwRatingRequested += (_, isNsfw) => requested.Add(isNsfw);
+
+        tile.RateSfwCommand.Execute(null);
+        tile.RateNsfwCommand.Execute(null);
+
+        requested.Should().Equal(false, true);
+    }
+
+    /// <summary>The detail view's line: what the LoRA is rated, and by whom.</summary>
+    [Fact]
+    public async Task TheRatingSummary_SaysWhatTheLoraIsRatedAndByWhom()
+    {
+        var vm = ViewModelWith(
+            NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)),
+            NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)),
+            NoRating("unrated"));
+        var xxx = vm.AllTiles.Single(t => t.DisplayName == "rated xxx");
+
+        xxx.NsfwRatingSummary.Should().Be("NSFW (Civitai: XXX)");
+        vm.AllTiles.Single(t => t.DisplayName == "safe").NsfwRatingSummary.Should().Be("SFW (Civitai: PG)");
+        vm.AllTiles.Single(t => t.DisplayName == "unrated").NsfwRatingSummary.Should().Be("Unrated");
+
+        await vm.SetUserNsfwRatingAsync(xxx, isNsfw: false);
+        xxx.NsfwRatingSummary.Should().Be("SFW — changed by you (Civitai: XXX)");
+    }
+
+    [Fact]
+    public void TurningShowNsfwOn_LeavesTheUnratedList()
+    {
+        var vm = ViewModelWith(NoRating("unrated"));
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+
+        vm.ShowNsfw = true;
+
+        vm.ShowUnratedOnly.Should().BeFalse();
+        vm.UnratedCount.Should().Be(0);
+        Visible(vm).Should().BeEquivalentTo("unrated");
     }
 
     /// <summary>
     /// The hint counts models, like the toolbar's "N of M models": a tile that groups two model
-    /// rows of the same LoRA counts twice, so shown + hidden adds up to what the view holds.
+    /// rows of the same LoRA counts twice.
     /// </summary>
     [Fact]
     public void TheHintCounts_Models_LikeTheToolbar()
     {
         var vm = new LoraViewerViewModel();
         vm.AllTiles.Clear();
-        vm.AllTiles.Add(ModelTileViewModel.FromModelGroup(
-        [
-            NewModel("same lora", flaggedNsfw: false, Image("x1", NsfwLevel.XXX)),
-            NewModel("same lora", flaggedNsfw: false, Image("x2", NsfwLevel.XXX)),
-        ]));
+        vm.AllTiles.Add(ModelTileViewModel.FromModelGroup([NoRating("same lora"), NoRating("same lora")]));
         vm.AllTiles.Add(ModelTileViewModel.FromModel(NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG))));
 
         vm.ShowNsfw = false;
 
         vm.FilteredModelCount.Should().Be(1);
-        vm.HiddenCount.Should().Be(2);
-        vm.ShowHiddenButtonText.Should().Be("Show hidden (2)");
+        vm.UnratedCount.Should().Be(2);
+        vm.ShowUnratedButtonText.Should().Be("Show unrated (2)");
 
-        vm.ShowHiddenCommand.Execute(null);
-        vm.FilteredModelCount.Should().Be(2, "the list shows exactly what the hint counted");
-    }
-
-    /// <summary>The tile's buttons and menu ask the Installed tab to record the choice.</summary>
-    [Fact]
-    public void TheTilesMarkCommands_RequestTheChoice()
-    {
-        var tile = ModelTileViewModel.FromModel(NewModel("t", flaggedNsfw: false, Image("x", NsfwLevel.XXX)));
-        var requested = new List<bool?>();
-        tile.NsfwOverrideRequested += (_, choice) => requested.Add(choice);
-
-        tile.MarkSafeToShowCommand.Execute(null);
-        tile.MarkNsfwCommand.Execute(null);
-        tile.MarkNsfwAutomaticCommand.Execute(null);
-
-        requested.Should().Equal(false, true, null);
-    }
-
-    [Fact]
-    public void TurningShowNsfwOn_LeavesTheHiddenList()
-    {
-        var vm = ViewModelWith(NewModel("rated xxx", flaggedNsfw: false, Image("x", NsfwLevel.XXX)));
-        vm.ShowNsfw = false;
-        vm.ShowHiddenCommand.Execute(null);
-
-        vm.ShowNsfw = true;
-
-        vm.ShowHiddenOnly.Should().BeFalse();
-        vm.HiddenCount.Should().Be(0);
-        Visible(vm).Should().BeEquivalentTo("rated xxx");
+        vm.ShowUnratedCommand.Execute(null);
+        vm.FilteredModelCount.Should().Be(2);
     }
 
     /// <summary>
@@ -233,15 +282,15 @@ public class LoraViewerViewModelNsfwFilterTests
     /// library were gone.
     /// </summary>
     [Fact]
-    public void EmptyState_PointsToShowHidden_WhenEverythingInViewIsHidden()
+    public void EmptyState_SaysEverythingInViewIsHidden()
     {
         var vm = ViewModelWith(
-            NewModel("one", flaggedNsfw: false, Image("u1", NsfwLevel.None)),
+            NoRating("one"),
             NewModel("two", flaggedNsfw: false, Image("x2", NsfwLevel.X)));
 
         vm.ShowNsfw = false;
 
-        vm.EmptyStateMessage.Should().Be("All 2 LoRAs in this view are hidden by Show NSFW. Click Show hidden to see them, or turn Show NSFW on.");
+        vm.EmptyStateMessage.Should().Be("All 2 LoRAs in this view are hidden by Show NSFW. Turn Show NSFW on to see them.");
     }
 
     [Fact]
@@ -259,19 +308,19 @@ public class LoraViewerViewModelNsfwFilterTests
     /// search that matches nothing is "no match", even while LoRAs elsewhere are hidden.
     /// </summary>
     [Fact]
-    public async Task HiddenCount_OnlyCountsWhatTheOtherFiltersLetThrough()
+    public async Task UnratedCount_OnlyCountsWhatTheOtherFiltersLetThrough()
     {
         var vm = ViewModelWith(
-            NewModel("alpha", flaggedNsfw: false, Image("u", NsfwLevel.None)),
+            NoRating("alpha"),
             NewModel("beta", flaggedNsfw: false, Image("pg", NsfwLevel.PG)));
         vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
         vm.ShowNsfw = false;
-        vm.HiddenCount.Should().Be(1);
+        vm.UnratedCount.Should().Be(1);
 
         vm.SearchText = "zzz";
         await vm.SearchDebounceTask!;
 
-        vm.HiddenCount.Should().Be(0);
+        vm.UnratedCount.Should().Be(0);
         vm.EmptyStateMessage.Should().Be("No LoRAs match the current filters.");
     }
 
@@ -288,7 +337,7 @@ public class LoraViewerViewModelNsfwFilterTests
         var raised = new List<string?>();
         vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
 
-        vm.AllTiles.Add(ModelTileViewModel.FromModel(NewModel("unrated", flaggedNsfw: false, Image("u", NsfwLevel.None))));
+        vm.AllTiles.Add(ModelTileViewModel.FromModel(NoRating("unrated")));
         vm.SearchText = "unrated";
         await vm.SearchDebounceTask!;
 
@@ -346,6 +395,6 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.ShowNsfw = true;
 
         Visible(vm).Should().HaveCount(2);
-        vm.HiddenCount.Should().Be(0);
+        vm.UnratedCount.Should().Be(0);
     }
 }

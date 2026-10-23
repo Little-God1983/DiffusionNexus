@@ -226,9 +226,9 @@
 
           </WrapPanel>
 
-          <!-- #647: how many LoRAs in this view Show NSFW off hides, and the way to see exactly
-               those. The number is what the list shows; the list says why each is hidden. -->
-          <Border IsVisible="{Binding ShowHiddenHint}"
+          <!-- #647: how many LoRAs in this view are hidden because they have no rating at all, and
+               the way to see exactly those and rate them. The number is what the list shows. -->
+          <Border IsVisible="{Binding ShowUnratedHint}"
                   Background="#2A2A1A"
                   BorderBrush="#5A5A2A"
                   BorderThickness="1"
@@ -236,20 +236,20 @@
                   Padding="10,6"
                   Margin="0,8,0,0">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="{Binding HiddenHint}"
+              <TextBlock Text="{Binding UnratedHint}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center"/>
               <Button Grid.Column="1"
-                      Content="{Binding ShowHiddenButtonText}"
-                      Command="{Binding ShowHiddenCommand}"
-                      ToolTip.Tip="List the LoRAs Show NSFW hides, with the reason for each"
+                      Content="{Binding ShowUnratedButtonText}"
+                      Command="{Binding ShowUnratedCommand}"
+                      ToolTip.Tip="List the unrated LoRAs so you can rate them SFW or NSFW"
                       Margin="12,0,0,0"
                       VerticalAlignment="Center"/>
             </Grid>
           </Border>
 
-          <!-- #647: the hidden list is open. -->
-          <Border IsVisible="{Binding ShowHiddenOnly}"
+          <!-- #647: the unrated list is open. -->
+          <Border IsVisible="{Binding ShowUnratedOnly}"
                   Background="#1F2A33"
                   BorderBrush="#2E4A5E"
                   BorderThickness="1"
@@ -257,7 +257,7 @@
                   Padding="10,6"
                   Margin="0,8,0,0">
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="{Binding HiddenViewTitle}"
+              <TextBlock Text="{Binding UnratedViewTitle}"
                          TextWrapping="Wrap"
                          VerticalAlignment="Center"/>
               <Button Grid.Column="1"

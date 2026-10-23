@@ -399,9 +399,10 @@ public partial class ModelTileViewModel : ViewModelBase
     public bool IsNsfw => ModelEntity?.IsNsfw ?? false;
 
     /// <summary>
-    /// Whether "Show NSFW" off hides this tile, and why (#631, #647): <see cref="NsfwPolicy.Judge"/>
-    /// on the picture the tile shows — the user's own choice first, then the creator's flag, then
-    /// the version's <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still.
+    /// The LoRA's rating and whether "Show NSFW" off hides it (#631, #647):
+    /// <see cref="NsfwPolicy.Judge"/> on the picture the tile shows — the user's rating when they gave
+    /// one, otherwise the creator's flag, then the version's <see cref="ModelVersion.PrimaryImage"/>,
+    /// which already prefers a safe still.
     /// </summary>
     public NsfwVerdict NsfwVerdict =>
         ModelEntity is { } model ? NsfwPolicy.Judge(model, SelectedVersion) : new NsfwVerdict(NsfwHideReason.None);
@@ -409,34 +410,56 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>Whether "Show NSFW" off hides this tile (<see cref="NsfwVerdict"/>).</summary>
     public bool HasNsfwContent => NsfwVerdict.IsHidden;
 
-    /// <summary>Why the tile is hidden, as the "Show hidden" list says it under the name.</summary>
-    public string HiddenReasonText => DescribeHideReason(NsfwVerdict);
+    /// <summary>The LoRA has no rating at all — neither Civitai's nor the user's (#647).</summary>
+    public bool IsUnrated => NsfwVerdict.IsUnrated;
 
-    internal static string DescribeHideReason(NsfwVerdict verdict) => verdict.Reason switch
+    /// <summary>Why an unrated LoRA has no rating, and what the user can do about it.</summary>
+    public string UnratedTooltip => NsfwVerdict.Reason switch
     {
-        NsfwHideReason.MarkedNsfwByYou => "Marked NSFW by you",
-        NsfwHideReason.FlaggedByCreator => "Flagged NSFW by its creator",
-        NsfwHideReason.RatedOnCivitai => $"Rated {RatingLabel(verdict.Rating)} on Civitai",
-        NsfwHideReason.NotRatedYet => "Not rated yet — Download Metadata",
-        NsfwHideReason.NoRating => "No rating from Civitai",
+        NsfwHideReason.NotRatedYet =>
+            "Not rated yet — Download Metadata can rate it, or rate it yourself: right-click → Rate SFW or Rate NSFW.",
+        NsfwHideReason.NoRating =>
+            "Civitai has no NSFW rating for this LoRA (it may no longer be on Civitai). Rate it yourself: right-click → Rate SFW or Rate NSFW.",
         _ => string.Empty,
     };
 
-    /// <summary>The strongest level in a rating, as Civitai names it.</summary>
-    private static string RatingLabel(Domain.Enums.NsfwLevel rating) => rating switch
+    /// <summary>The user rated this LoRA themselves (<see cref="Model.UserNsfwRating"/>).</summary>
+    public bool IsRatedByUser => ModelEntity?.UserNsfwRating is not null;
+
+    /// <summary>The small badge on a LoRA the user rated.</summary>
+    public string UserRatingBadge => ModelEntity?.UserNsfwRating switch
     {
-        _ when rating.HasFlag(Domain.Enums.NsfwLevel.Blocked) => "Blocked",
-        _ when rating.HasFlag(Domain.Enums.NsfwLevel.XXX) => "XXX",
-        _ when rating.HasFlag(Domain.Enums.NsfwLevel.X) => "X",
-        _ when rating.HasFlag(Domain.Enums.NsfwLevel.R) => "R",
-        _ when rating.HasFlag(Domain.Enums.NsfwLevel.PG13) => "PG-13",
-        _ => "PG",
+        false => "SFW · by you",
+        true => "NSFW · by you",
+        null => string.Empty,
     };
+
+    /// <summary>The badge's tooltip: the user's rating and the original one it replaced.</summary>
+    public string UserRatingTooltip => ModelEntity?.UserNsfwRating is { } isNsfw
+        ? $"Rated {(isNsfw ? "NSFW" : "SFW")} by you. Civitai: {ModelEntity.OriginalNsfwRating ?? "unrated"}."
+        : string.Empty;
+
+    /// <summary>The detail view's line: what the LoRA is rated, and by whom.</summary>
+    public string NsfwRatingSummary
+    {
+        get
+        {
+            if (ModelEntity is not { } model) return string.Empty;
+            if (model.UserNsfwRating is { } isNsfw)
+                return $"{(isNsfw ? "NSFW" : "SFW")} — changed by you (Civitai: {model.OriginalNsfwRating ?? "unrated"})";
+
+            var verdict = NsfwVerdict;
+            if (verdict.IsUnrated) return "Unrated";
+            if (verdict.Reason == NsfwHideReason.FlaggedByCreator) return "NSFW (creator's flag)";
+            var label = NsfwPolicy.CivitaiRatingLabel(model, SelectedVersion);
+            return $"{(verdict.IsHidden ? "NSFW" : "SFW")} (Civitai: {label})";
+        }
+    }
 
     /// <summary>
     /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
     /// it is not hidden, but the version chips can switch it to a version whose picture is not safe,
-    /// and the "Show hidden" list shows hidden tiles on purpose; <see cref="IsPreviewHidden"/>
+    /// and the "Show unrated" list shows hidden tiles on purpose; <see cref="IsPreviewHidden"/>
     /// covers the picture in both cases.
     /// </summary>
     [ObservableProperty]
@@ -444,37 +467,38 @@ public partial class ModelTileViewModel : ViewModelBase
     private bool _hideNsfwPreviews;
 
     /// <summary>
-    /// Set by the Installed tab while it lists only the hidden LoRAs (#647): the tile shows why it is
-    /// hidden and the Safe to show / NSFW buttons.
+    /// Set by the Installed tab while it lists only the unrated LoRAs (#647): the tile shows the
+    /// SFW / NSFW buttons.
     /// </summary>
     [ObservableProperty]
-    private bool _isInHiddenView;
+    private bool _isInUnratedView;
 
     /// <summary>Whether the tile covers its picture: Show NSFW is off and the tile counts as hidden.</summary>
     public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent;
 
     /// <summary>
-    /// Raised when the user marks this LoRA safe to show (<c>false</c>), NSFW (<c>true</c>) or back
-    /// to automatic (<c>null</c>). The Installed tab records the choice for every model of the tile
-    /// and filters again.
+    /// Raised when the user rates this LoRA SFW (<c>false</c>) or NSFW (<c>true</c>). The Installed
+    /// tab records the rating for every model of the tile and filters again.
     /// </summary>
-    public event EventHandler<bool?>? NsfwOverrideRequested;
+    public event EventHandler<bool>? NsfwRatingRequested;
 
     [RelayCommand]
-    private void MarkSafeToShow() => NsfwOverrideRequested?.Invoke(this, false);
+    private void RateSfw() => NsfwRatingRequested?.Invoke(this, false);
 
     [RelayCommand]
-    private void MarkNsfw() => NsfwOverrideRequested?.Invoke(this, true);
-
-    [RelayCommand]
-    private void MarkNsfwAutomatic() => NsfwOverrideRequested?.Invoke(this, null);
+    private void RateNsfw() => NsfwRatingRequested?.Invoke(this, true);
 
     /// <summary>Re-announces everything that follows from <see cref="NsfwVerdict"/>.</summary>
     internal void NotifyNsfwVerdictChanged()
     {
         OnPropertyChanged(nameof(NsfwVerdict));
         OnPropertyChanged(nameof(HasNsfwContent));
-        OnPropertyChanged(nameof(HiddenReasonText));
+        OnPropertyChanged(nameof(IsUnrated));
+        OnPropertyChanged(nameof(UnratedTooltip));
+        OnPropertyChanged(nameof(IsRatedByUser));
+        OnPropertyChanged(nameof(UserRatingBadge));
+        OnPropertyChanged(nameof(UserRatingTooltip));
+        OnPropertyChanged(nameof(NsfwRatingSummary));
         OnPropertyChanged(nameof(IsPreviewHidden));
     }
 

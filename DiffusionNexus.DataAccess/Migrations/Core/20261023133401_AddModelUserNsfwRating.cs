@@ -5,13 +5,20 @@
 namespace DiffusionNexus.DataAccess.Migrations.Core
 {
     /// <inheritdoc />
-    public partial class AddModelNsfwOverride : Migration
+    public partial class AddModelUserNsfwRating : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AddColumn<string>(
+                name: "OriginalNsfwRating",
+                table: "Models",
+                type: "TEXT",
+                maxLength: 40,
+                nullable: true);
+
             migrationBuilder.AddColumn<bool>(
-                name: "NsfwOverride",
+                name: "UserNsfwRating",
                 table: "Models",
                 type: "INTEGER",
                 nullable: true);
@@ -21,7 +28,11 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(
-                name: "NsfwOverride",
+                name: "OriginalNsfwRating",
+                table: "Models");
+
+            migrationBuilder.DropColumn(
+                name: "UserNsfwRating",
                 table: "Models");
         }
     }

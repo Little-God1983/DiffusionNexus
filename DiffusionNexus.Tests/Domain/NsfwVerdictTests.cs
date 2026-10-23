@@ -7,9 +7,9 @@ using Xunit;
 namespace DiffusionNexus.Tests.Domain;
 
 /// <summary>
-/// #647: whether "Show NSFW" off hides a LoRA, and why — one answer for the grid, the hint count
-/// and the "Show hidden" list. The user's own choice wins over everything; then the creator's flag;
-/// then the picture the tile shows.
+/// #647: a LoRA is SFW or NSFW. The rating comes from the user when they gave one, otherwise from
+/// Civitai (the creator's flag, then the picture the tile shows). A LoRA with no rating at all is
+/// unrated — hidden with "Show NSFW" off, and listed so the user can rate it.
 /// </summary>
 public sealed class NsfwVerdictTests
 {
@@ -19,12 +19,12 @@ public sealed class NsfwVerdictTests
         new() { Id = id, Url = $"https://image.civitai.com/t/u{id}/original=true/{id}.jpeg", MediaType = "image", NsfwLevel = level };
 
     private static (Model Model, ModelVersion Version) Lora(
-        bool? userChoice = null, bool creatorFlag = false, int? versionCivitaiId = 700,
+        bool? userRatedNsfw = null, bool creatorFlag = false, int? versionCivitaiId = 700,
         DateTimeOffset? imagesCheckedAt = null, params ModelImage[] images)
     {
         var model = new Model
         {
-            Id = 1, Name = "lora", IsNsfw = creatorFlag, NsfwOverride = userChoice,
+            Id = 1, Name = "lora", IsNsfw = creatorFlag, UserNsfwRating = userRatedNsfw,
             SyncState = new ModelSyncState { ModelId = 1, ImagesCheckedAt = imagesCheckedAt },
         };
         var version = new ModelVersion { Id = 10, CivitaiId = versionCivitaiId, Model = model };
@@ -42,19 +42,21 @@ public sealed class NsfwVerdictTests
     }
 
     [Fact]
-    public void MarkedSafeByTheUser_IsShown_WhateverCivitaiOrTheCreatorSays()
+    public void RatedSfwByTheUser_IsShown_WhateverCivitaiOrTheCreatorSays()
     {
-        var (model, version) = Lora(userChoice: false, creatorFlag: true, images: Web(1, NsfwLevel.XXX));
+        var (model, version) = Lora(userRatedNsfw: false, creatorFlag: true, images: Web(1, NsfwLevel.XXX));
 
         NsfwPolicy.Judge(model, version).IsHidden.Should().BeFalse();
     }
 
     [Fact]
-    public void MarkedNsfwByTheUser_IsHidden_EvenWithASafePicture()
+    public void RatedNsfwByTheUser_IsHidden_EvenWithASafePicture()
     {
-        var (model, version) = Lora(userChoice: true, images: Web(1, NsfwLevel.PG));
+        var (model, version) = Lora(userRatedNsfw: true, images: Web(1, NsfwLevel.PG));
 
-        NsfwPolicy.Judge(model, version).Reason.Should().Be(NsfwHideReason.MarkedNsfwByYou);
+        var verdict = NsfwPolicy.Judge(model, version);
+        verdict.Reason.Should().Be(NsfwHideReason.RatedNsfwByYou);
+        verdict.IsUnrated.Should().BeFalse();
     }
 
     [Fact]
@@ -66,13 +68,14 @@ public sealed class NsfwVerdictTests
     }
 
     [Fact]
-    public void ARatedNsfwPicture_IsHiddenWithItsRating()
+    public void ARatedNsfwPicture_IsHiddenWithItsRating_AndIsNotUnrated()
     {
-        // The case behind the bogus "no rating yet" count: one other picture is unrated, but the
-        // shown one is rated XXX — that rating is the reason.
+        // One other picture is unrated, but the shown one is rated XXX: the LoRA is rated.
         var (model, version) = Lora(imagesCheckedAt: Checked, images: [Web(1, NsfwLevel.XXX), Web(2)]);
 
-        NsfwPolicy.Judge(model, version).Should().Be(new NsfwVerdict(NsfwHideReason.RatedOnCivitai, NsfwLevel.XXX));
+        var verdict = NsfwPolicy.Judge(model, version);
+        verdict.Should().Be(new NsfwVerdict(NsfwHideReason.RatedOnCivitai, NsfwLevel.XXX));
+        verdict.IsUnrated.Should().BeFalse();
     }
 
     [Fact]
@@ -80,7 +83,9 @@ public sealed class NsfwVerdictTests
     {
         var (model, version) = Lora(versionCivitaiId: 700, imagesCheckedAt: null, images: Web(1));
 
-        NsfwPolicy.Judge(model, version).Reason.Should().Be(NsfwHideReason.NotRatedYet);
+        var verdict = NsfwPolicy.Judge(model, version);
+        verdict.Reason.Should().Be(NsfwHideReason.NotRatedYet);
+        verdict.IsUnrated.Should().BeTrue();
     }
 
     [Fact]
@@ -89,7 +94,9 @@ public sealed class NsfwVerdictTests
         // Deleted from Civitai: the images step asked, got nothing, and stamped the model.
         var (model, version) = Lora(versionCivitaiId: 700, imagesCheckedAt: Checked, images: Web(1));
 
-        NsfwPolicy.Judge(model, version).Reason.Should().Be(NsfwHideReason.NoRating);
+        var verdict = NsfwPolicy.Judge(model, version);
+        verdict.Reason.Should().Be(NsfwHideReason.NoRating);
+        verdict.IsUnrated.Should().BeTrue();
     }
 
     [Fact]
@@ -101,7 +108,7 @@ public sealed class NsfwVerdictTests
     }
 
     [Fact]
-    public void ALocalPreviewBesideAnNsfwGallery_IsHiddenByTheGallerysSafestRating()
+    public void ALocalPreviewBesideAnNsfwGallery_IsHiddenByTheGallerysMildestRating()
     {
         var local = new ModelImage { Id = 1, Url = "file:///E:/l/a.preview.png", MediaType = "image" };
         var (model, version) = Lora(imagesCheckedAt: Checked, images: [local, Web(2, NsfwLevel.XXX), Web(3, NsfwLevel.X)]);
@@ -116,5 +123,28 @@ public sealed class NsfwVerdictTests
 
         NsfwPolicy.Judge(model, version).IsHidden.Should().BeFalse();
         NsfwPolicy.Judge(model, shownVersion: null).IsHidden.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// What Civitai says about the LoRA, whatever the user rated it — the "original rating" kept
+    /// when the user changes it.
+    /// </summary>
+    [Fact]
+    public void CivitaiRatingLabel_DescribesCivitaisVerdict_IgnoringTheUsersRating()
+    {
+        NsfwPolicy.CivitaiRatingLabel(Lora(userRatedNsfw: false, images: Web(1, NsfwLevel.XXX)).Model,
+            Lora(userRatedNsfw: false, images: Web(1, NsfwLevel.XXX)).Version).Should().Be("XXX");
+
+        var (pgModel, pgVersion) = Lora(userRatedNsfw: true, images: Web(1, NsfwLevel.PG13));
+        NsfwPolicy.CivitaiRatingLabel(pgModel, pgVersion).Should().Be("PG-13");
+
+        var (flagged, flaggedVersion) = Lora(creatorFlag: true, images: Web(1, NsfwLevel.PG));
+        NsfwPolicy.CivitaiRatingLabel(flagged, flaggedVersion).Should().Be("NSFW (creator's flag)");
+
+        var (unrated, unratedVersion) = Lora(imagesCheckedAt: Checked, images: Web(1));
+        NsfwPolicy.CivitaiRatingLabel(unrated, unratedVersion).Should().Be("unrated");
+
+        var (none, noneVersion) = Lora();
+        NsfwPolicy.CivitaiRatingLabel(none, noneVersion).Should().Be("unrated");
     }
 }

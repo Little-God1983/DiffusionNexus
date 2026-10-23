@@ -31,11 +31,12 @@ public interface IModelRepository : IRepository<Model>
     Task<IReadOnlyList<Model>> GetModelsWithLocalFilesLightAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Writes the user's NSFW verdict (<see cref="Model.NsfwOverride"/>) for these models in one
-    /// statement — a tile's whole group at once (#647). <c>null</c> returns them to automatic.
-    /// Returns the number of models updated.
+    /// Writes the user's rating (<see cref="Model.UserNsfwRating"/>) for these models in one
+    /// statement — a tile's whole group at once (#647). <paramref name="originalRating"/> — what
+    /// Civitai says now — is stored only where no original is kept yet, so it stays the rating from
+    /// before the user's first change. Returns the number of models updated.
     /// </summary>
-    Task<int> SetNsfwOverrideAsync(IReadOnlyCollection<int> modelIds, bool? choice, CancellationToken cancellationToken = default);
+    Task<int> SetUserNsfwRatingAsync(IReadOnlyCollection<int> modelIds, bool isNsfw, string originalRating, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Loads a single image's ThumbnailData from the database.

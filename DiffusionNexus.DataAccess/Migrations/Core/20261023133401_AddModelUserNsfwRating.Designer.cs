@@ -11,8 +11,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DiffusionNexus.DataAccess.Migrations.Core
 {
     [DbContext(typeof(DiffusionNexusCoreDbContext))]
-    [Migration("20261023114553_AddModelNsfwOverride")]
-    partial class AddModelNsfwOverride
+    [Migration("20261023133401_AddModelUserNsfwRating")]
+    partial class AddModelUserNsfwRating
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -599,8 +599,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<bool?>("NsfwOverride")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("OriginalNsfwRating")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Source")
                         .IsRequired()
@@ -623,6 +624,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("UserCategory")
                         .HasMaxLength(20)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool?>("UserNsfwRating")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 

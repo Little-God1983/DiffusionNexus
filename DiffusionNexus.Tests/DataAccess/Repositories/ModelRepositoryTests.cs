@@ -606,17 +606,18 @@ public class ModelRepositoryTests : IDisposable
     /// <summary>
     /// #647: the grid tells "not rated yet" (the bulk run will fetch it) from "no rating" (Civitai
     /// was asked and had nothing) by the images step's stamp, so the light load carries the sync
-    /// state — and the user's NSFW choice.
+    /// state — and the user's rating with the original.
     /// </summary>
     [Fact]
-    public async Task GetModelsWithLocalFilesLight_CarriesSyncStateAndNsfwOverride()
+    public async Task GetModelsWithLocalFilesLight_CarriesSyncStateAndTheUsersRating()
     {
         var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
         using (var seedScope = _serviceProvider.CreateScope())
         {
             var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
             var model = CreateModelWithLocalFile("Stamped", @"C:\m\stamped.safetensors");
-            model.NsfwOverride = false;
+            model.UserNsfwRating = false;
+            model.OriginalNsfwRating = "XXX";
             await seed.Models.AddAsync(model);
             await seed.SaveChangesAsync();
             var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
@@ -628,17 +629,19 @@ public class ModelRepositoryTests : IDisposable
         var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
 
         var model1 = loaded.Should().ContainSingle().Subject;
-        model1.NsfwOverride.Should().BeFalse();
+        model1.UserNsfwRating.Should().BeFalse();
+        model1.OriginalNsfwRating.Should().Be("XXX");
         model1.SyncState.Should().NotBeNull();
         model1.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
     }
 
     /// <summary>
-    /// #647: marking a LoRA safe or NSFW applies to every model row its tile stands for, survives a
-    /// reload, and "Automatic" clears it again.
+    /// #647: rating a LoRA SFW or NSFW applies to every model row its tile stands for and survives
+    /// a reload. The original rating (what Civitai said) is kept from the first change: flipping
+    /// SFW to NSFW later does not overwrite it.
     /// </summary>
     [Fact]
-    public async Task SetNsfwOverride_PersistsForEveryModelOfTheTile()
+    public async Task SetUserNsfwRating_PersistsForEveryModelOfTheTile_KeepingTheFirstOriginal()
     {
         int a, b, other;
         using (var seedScope = _serviceProvider.CreateScope())
@@ -652,21 +655,24 @@ public class ModelRepositoryTests : IDisposable
             (a, b, other) = (ma.Id, mb.Id, mo.Id);
         }
 
-        async Task<Dictionary<int, bool?>> ReadAsync()
+        async Task<Dictionary<int, (bool? Rating, string? Original)>> ReadAsync()
         {
             using var scope = _serviceProvider.CreateScope();
             var models = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetModelsWithLocalFilesLightAsync();
-            return models.ToDictionary(m => m.Id, m => m.NsfwOverride);
+            return models.ToDictionary(m => m.Id, m => (m.UserNsfwRating, m.OriginalNsfwRating));
         }
 
         using (var scope = _serviceProvider.CreateScope())
-            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetNsfwOverrideAsync([a, b], false))
+            (await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: false, originalRating: "XXX"))
                 .Should().Be(2);
-        (await ReadAsync()).Should().BeEquivalentTo(new Dictionary<int, bool?> { [a] = false, [b] = false, [other] = null });
+        var afterSfw = await ReadAsync();
+        afterSfw[a].Should().Be((false, "XXX"));
+        afterSfw[b].Should().Be((false, "XXX"));
+        afterSfw[other].Should().Be(((bool?)null, (string?)null));
 
         using (var scope = _serviceProvider.CreateScope())
-            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetNsfwOverrideAsync([a, b], null);
-        (await ReadAsync()).Values.Should().AllSatisfy(v => v.Should().BeNull());
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([a, b], isNsfw: true, originalRating: "PG");
+        (await ReadAsync())[a].Should().Be((true, "XXX"), "the original is what Civitai said before the user's first change");
     }
 
     public void Dispose()

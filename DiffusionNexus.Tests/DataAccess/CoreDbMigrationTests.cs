@@ -341,11 +341,11 @@ public class CoreDbMigrationTests
     }
 
     /// <summary>
-    /// #647: the user's NSFW verdict per LoRA is a new nullable column; every existing LoRA starts
-    /// automatic (null), and nothing else in Models changes.
+    /// #647: the user's rating per LoRA and the original rating are two new nullable columns; every
+    /// existing LoRA starts not rated by the user (null), and nothing else in Models changes.
     /// </summary>
     [Fact]
-    public void AddModelNsfwOverride_ExistingLorasStartAutomatic()
+    public void AddModelUserNsfwRating_ExistingLorasAreNotRatedByTheUser()
     {
         var tempDir = Directory.CreateTempSubdirectory();
         var dbPath = Path.Combine(tempDir.FullName, "nsfw-override-test.db");
@@ -368,7 +368,8 @@ public class CoreDbMigrationTests
             using (var ctx = new DiffusionNexusCoreDbContext(options))
             {
                 var model = ctx.Models.AsNoTracking().Single();
-                model.NsfwOverride.Should().BeNull("an existing LoRA keeps the automatic verdict");
+                model.UserNsfwRating.Should().BeNull("the user never rated an existing LoRA");
+                model.OriginalNsfwRating.Should().BeNull();
                 model.IsNsfw.Should().BeTrue("the creator flag is untouched");
             }
         }
