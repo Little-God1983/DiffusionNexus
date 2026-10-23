@@ -1435,7 +1435,19 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         => _metadataSyncCts = cts;
 
     /// <summary>
-    /// Opens the Civitai URL download dialog, lets the user preview the LoRA, and starts the download.
+    /// Index of the selected LoRA Viewer tab (0 Installed, 1 Browse Civitai, 2 LoRA Sorter),
+    /// bound two-way so the "Download LoRA has moved" dialog can switch to Browse Civitai.
+    /// </summary>
+    [ObservableProperty]
+    private int _selectedTabIndex;
+
+    /// <summary>Tab index of Browse Civitai in <c>LoraViewerView</c>'s TabControl.</summary>
+    internal const int BrowseCivitaiTabIndex = 1;
+
+    /// <summary>
+    /// The Installed tab's "Download LoRA" button. Downloading from a link moved to Browse
+    /// Civitai, whose search box takes the link (issue #630); the button stays so a user who
+    /// looks for it here is told where it went, and can jump there.
     /// </summary>
     [RelayCommand]
     private async Task DownloadLoraAsync()
@@ -1447,90 +1459,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             return;
         }
 
-        IReadOnlyList<string> sourceFolders = [];
-        if (_settingsService is not null)
+        _logger?.Info(LogCategory.General, "LoraViewer", "Download LoRA clicked on the Installed tab — showing the \"moved to Browse Civitai\" dialog.");
+        if (await dialogService.ShowDownloadLoraMovedDialogAsync())
         {
-            sourceFolders = await _settingsService.GetEnabledLoraSourcesAsync();
+            _logger?.Info(LogCategory.General, "LoraViewer", "Switching to the Browse Civitai tab from the \"moved\" dialog.");
+            SelectedTabIndex = BrowseCivitaiTabIndex;
         }
-
-        var result = await dialogService.ShowDownloadLoraDialogAsync(sourceFolders);
-        if (!result.Confirmed || result.Version is null || string.IsNullOrWhiteSpace(result.DownloadUrl) || string.IsNullOrWhiteSpace(result.TargetFolder))
-            return;
-
-        // Same gate as the detail panel: a gated version can't be downloaded by the app
-        // (Civitai serves paid files through the website only), so offer the shared
-        // waitlist/website preflight instead of running a transfer that ends in a red line.
-        if (result.Version.IsEarlyAccessActive())
-        {
-            var preflight = new GatedDownloadPreflight(BrowserViewModel.Waitlist, _logger);
-            var outcome = await preflight.RunAsync(GatedSubjectFrom(result));
-            if (outcome.StatusMessage is not null) SyncStatus = outcome.StatusMessage;
-            if (!outcome.Proceed) return;
-        }
-
-        var fileName = !string.IsNullOrWhiteSpace(result.FileName)
-            ? result.FileName
-            : $"{result.ModelName}_{result.Version.Name}.safetensors";
-
-        if (_modelDownloader is null)
-        {
-            SyncStatus = "Download service not available.";
-            return;
-        }
-
-        SyncStatus = $"Downloading {fileName}...";
-
-        // The one download path (spec §4.4) owns the coordinator enqueue — so this must NOT
-        // wrap it in one — plus verification, persistence and the library-changed signal.
-        // The Installed tab rebuilds off that signal, so there is no manual refresh here.
-        var downloader = _modelDownloader;
-        _ = Task.Run(async () =>
-        {
-            // One hop to the dispatcher, not two. A Progress<T> built inside this Task.Run has no
-            // SynchronizationContext to capture, so Report would hop to the thread pool before its
-            // handler even enqueued the dispatcher post — while the terminal post below is a single
-            // hop from the awaiting thread. A report issued just before completion could therefore
-            // land after it and leave the toolbar reading "Downloading …" forever.
-            var progress = new UiThreadProgress<DownloadProgress>(
-                p => SyncStatus = $"Downloading {fileName}: {p.Message}");
-
-            var request = new DownloadRequest(result.Version, result.TargetFolder, DownloadTrigger.Dialog)
-            {
-                FileNameOverride = fileName,
-            };
-
-            var outcome = await downloader.DownloadAsync(request, progress).ConfigureAwait(false);
-
-            // Cancelling is not failing, and a hash mismatch is not a clean download: Task 5 made
-            // those distinguishable, so don't collapse them back into one red line here.
-            Dispatcher.UIThread.Post(() => SyncStatus = outcome.Status switch
-            {
-                DownloadStatus.ReusedExisting => $"Already downloaded: {fileName}",
-                DownloadStatus.HashMismatch => $"Downloaded {fileName} — hash mismatch, file kept for inspection",
-                DownloadStatus.Cancelled => $"Download cancelled: {fileName}",
-                DownloadStatus.Failed => $"Download failed: {fileName}",
-                _ => $"Downloaded {fileName}",
-            });
-        });
     }
 
     /// <summary>
-    /// Maps the URL dialog's result onto the shared preflight subject. The version DTO names
-    /// its own model; the dialog's resolved model id is the fallback for payloads that omit
-    /// it, and the label follows the detail tabs' rule (version name, else base model).
-    /// Internal so the mapping is testable without showing either dialog.
-    /// </summary>
-    internal static GatedDownloadPreflight.Subject GatedSubjectFrom(Views.Dialogs.DownloadLoraResult result) => new(
-        ModelId: result.Version!.ModelId > 0 ? result.Version.ModelId : result.ModelId,
-        ModelName: result.ModelName,
-        VersionLabel: string.IsNullOrWhiteSpace(result.Version.Name) ? result.Version.BaseModel : result.Version.Name,
-        Version: result.Version,
-        Category: result.Category,
-        IsNsfw: result.IsNsfw);
-
-    /// <summary>
     /// Rebuilds the Installed tab whenever any surface adds a model to the library — the
-    /// toolbar dialog, the detail panel, the Browse queue (which never notified anything
+    /// detail panel, the Browse queue (which never notified anything
     /// before, spec RC5), the waitlist. Coalesced: a queue batch raises one signal per file,
     /// and a full rebuild per file would make a 20-item batch unusable, so the first arrival
     /// schedules a rebuild ~1.5s out and every arrival during that window rides along with it.

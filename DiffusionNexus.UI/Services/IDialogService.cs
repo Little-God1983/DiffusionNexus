@@ -360,11 +360,11 @@ public interface IDialogService
         string? category = null);
 
     /// <summary>
-    /// Shows the Download LoRA dialog for resolving a Civitai URL, previewing it, and choosing a destination.
+    /// Tells the user that downloading a LoRA from a link moved to the Browse Civitai tab
+    /// (issue #630), with a screenshot of a link pasted into its search box.
     /// </summary>
-    /// <param name="sourceFolders">Available LoRA source folders from settings.</param>
-    /// <returns>Download result with selected version and target folder, or cancelled result.</returns>
-    Task<DownloadLoraResult> ShowDownloadLoraDialogAsync(IReadOnlyList<string> sourceFolders);
+    /// <returns>True when the user chose "Go to Browse Civitai".</returns>
+    Task<bool> ShowDownloadLoraMovedDialogAsync();
 
     /// <summary>
     /// Shows the duplicate fixer window for resolving duplicate image clusters.

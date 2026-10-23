@@ -205,7 +205,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             transport.Object, Coordinator().Object, sync.Object, notifier, ScopeFactory(77));
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel));
         await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
@@ -275,7 +275,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             transport.Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(4));
 
         var outcome = await downloader.DownloadAsync(
-            new DownloadRequest(Version(sha256: Sha256Of("already-here")), dir, DownloadTrigger.Dialog));
+            new DownloadRequest(Version(sha256: Sha256Of("already-here")), dir, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.ReusedExisting);
         outcome.Success.Should().BeTrue();
@@ -311,7 +311,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             new LibraryChangeNotifier(), ScopeFactory(4));
 
         var outcome = await downloader.DownloadAsync(
-            new DownloadRequest(Version(sha256: Sha256Of("already-here")), dir, DownloadTrigger.Dialog));
+            new DownloadRequest(Version(sha256: Sha256Of("already-here")), dir, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.CompletedMetadataIncomplete);
         outcome.Success.Should().BeTrue("the file is on disk — only its metadata is missing");
@@ -382,7 +382,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             transport.Object, null, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(3));
 
         var outcome = await downloader.DownloadAsync(
-            new DownloadRequest(Version(), dir, DownloadTrigger.Dialog), progress: null, ct: cts.Token);
+            new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel), progress: null, ct: cts.Token);
 
         outcome.Status.Should().Be(DownloadStatus.Cancelled);
         outcome.ModelId.Should().BeNull();
@@ -462,7 +462,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
 
         var act = async () => await downloader.DownloadAsync(
-            new DownloadRequest(Version(sha256: Sha256Of("downloaded-bytes")), dir, DownloadTrigger.Dialog),
+            new DownloadRequest(Version(sha256: Sha256Of("downloaded-bytes")), dir, DownloadTrigger.DetailPanel),
             progress: null, ct: cts.Token);
 
         var outcome = (await act.Should().NotThrowAsync()).Subject;
@@ -558,7 +558,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
             Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
 
         var reuse = await reuseDownloader.DownloadAsync(
-            new DownloadRequest(Version(sha256: reuseHash.ToLowerInvariant()), reuseDir, DownloadTrigger.Dialog));
+            new DownloadRequest(Version(sha256: reuseHash.ToLowerInvariant()), reuseDir, DownloadTrigger.DetailPanel));
 
         reuse.Status.Should().Be(DownloadStatus.ReusedExisting);
         reuse.VerifiedSha256.Should().Be(reuseHash,
@@ -704,7 +704,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             transport.Object, null, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(8));
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         transport.Verify(
@@ -724,7 +724,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             transport.Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(8));
 
-        await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel));
 
         transport.Verify(
             t => t.DownloadFileAsync(
@@ -746,7 +746,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             Transport().Object, Coordinator().Object, sync.Object, notifier, scopeFactory: null);
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel));
         await Settle(downloader);
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
@@ -767,7 +767,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(version, dir, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(version, dir, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.Failed);
         outcome.Error.Should().Be("no download URL");
@@ -785,7 +785,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), blocked, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(Version(), blocked, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.Failed);
         outcome.Error.Should().Be("target directory unavailable");
@@ -825,7 +825,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             Transport().Object, Coordinator().Object, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(2));
 
-        var outcome = await downloader.DownloadAsync(new DownloadRequest(version, dir, DownloadTrigger.Dialog));
+        var outcome = await downloader.DownloadAsync(new DownloadRequest(version, dir, DownloadTrigger.DetailPanel));
 
         outcome.Status.Should().Be(DownloadStatus.Completed);
         outcome.FinalPath.Should().Be(Path.Combine(dir, "model_555.safetensors"));
@@ -840,7 +840,7 @@ public sealed class CivitaiModelDownloaderTests : IDisposable
         var downloader = new CivitaiModelDownloader(
             Transport().Object, null, Sync().Object, new LibraryChangeNotifier(), ScopeFactory(1));
 
-        await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.Dialog), progress);
+        await downloader.DownloadAsync(new DownloadRequest(Version(), dir, DownloadTrigger.DetailPanel), progress);
 
         progress.Reports.Should().ContainSingle();
         progress.Reports[0].Percent.Should().Be(50);

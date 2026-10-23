@@ -260,7 +260,8 @@
       <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
         <TextBox Grid.Column="0"
                  Text="{Binding SearchText, Mode=TwoWay}"
-                 Watermark="Search Civitai (debounced)..."
+                 Watermark="Search Civitai, or paste a Civitai link, model ID or version ID..."
+                 ToolTip.Tip="Type a name to search. Paste a Civitai link (…/models/123?modelVersionId=456) or a plain model or version ID to show exactly that model — filters are ignored for links and IDs."
                  Margin="0,0,12,0"/>
 
         <StackPanel Grid.Column="1"
@@ -323,6 +324,21 @@
 
       <ScrollViewer Grid.Row="0">
         <StackPanel Margin="12">
+          <!-- Link / ID lookup notice (issue #630): the filters do not apply to these results. -->
+          <Border IsVisible="{Binding LinkLookupNotice, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                  Background="#1A0EA5E9"
+                  BorderBrush="#550EA5E9"
+                  BorderThickness="1"
+                  CornerRadius="4"
+                  Padding="10,6"
+                  Margin="6,0,6,6">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="&#x1F517;" VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding LinkLookupNotice}"
+                         TextWrapping="Wrap"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+          </Border>
           <ItemsControl ItemsSource="{Binding Results}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -373,11 +389,18 @@
                                     HorizontalAlignment="Right"
                                     VerticalAlignment="Top"
                                     Margin="8">
+                          <Border IsVisible="{Binding LinkMatchLabel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                                  Background="#CC0EA5E9"
+                                  CornerRadius="4"
+                                  Padding="6,2"
+                                  ToolTip.Tip="This card is the model your pasted link or ID points at">
+                            <TextBlock Text="{Binding LinkMatchLabel}" FontSize="10" Foreground="White"/>
+                          </Border>
                           <Border IsVisible="{Binding IsInstalled}"
                                   Background="#AA22C55E"
                                   CornerRadius="4"
                                   Padding="6,2">
-                            <TextBlock Text="Installed" FontSize="10" Foreground="White"/>
+                            <TextBlock Text="{Binding InstalledBadgeText}" FontSize="10" Foreground="White"/>
                           </Border>
                           <Border IsVisible="{Binding ShowEarlyAccessBadge}"
                                   Background="#AA9333EA"

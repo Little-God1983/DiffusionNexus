@@ -212,14 +212,87 @@ public partial class CivitaiResultViewModel : ObservableObject
     /// </summary>
     public void ApplyInstalledIndex(CivitaiInstalledIndex index)
     {
-        var any = false;
+        var installed = 0;
         foreach (var v in Versions)
         {
             v.IsInstalled = index.IsInstalled(v.Version);
-            any |= v.IsInstalled;
+            if (v.IsInstalled) installed++;
         }
-        IsInstalled = any;
+        IsInstalled = installed > 0;
+        InstalledBadgeText = installed == 0 || Versions.Count <= 1 || installed == Versions.Count
+            ? "Installed"
+            : $"{installed} of {Versions.Count} installed";
     }
+
+    /// <summary>
+    /// Card badge text: "Installed" when every version (or the only one) is in the library,
+    /// "2 of 3 installed" when only some are — so a multi-version model does not read as done.
+    /// </summary>
+    [ObservableProperty]
+    private string _installedBadgeText = "Installed";
+
+    /// <summary>
+    /// Why this card is on screen when it came from a pasted link or id ("Version ID 123"), so
+    /// the two cards a bare number can yield are told apart. Null for name-search cards.
+    /// </summary>
+    [ObservableProperty]
+    private string? _linkMatchLabel;
+
+    /// <summary>
+    /// Selection for a card a link or id produced (issue #630): tick the version the link named,
+    /// or the latest, unless it is already installed — the user can still tick it to download it
+    /// again. With <paramref name="selectCard"/> the card itself is selected whenever a version is
+    /// ticked, so "Add selection to queue" takes it in one click; the browser passes false when a
+    /// bare number yielded several cards, or that one click would download unrelated models.
+    /// Call after <see cref="ApplyInstalledIndex"/>.
+    /// </summary>
+    public void PreselectForLink(int? versionId, string matchLabel, bool selectCard = true)
+    {
+        LinkMatchLabel = matchLabel;
+        _linkVersionId = versionId;
+        _linkSelectCard = selectCard;
+        var target = (versionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+                     ?? Versions.FirstOrDefault();
+        foreach (var v in Versions)
+        {
+            v.IsSelected = ReferenceEquals(v, target) && !v.IsInstalled;
+        }
+        IsSelected = selectCard && HasSelectedVersions;
+        NotifyVersionSummaryChanged();
+        _linkPreselection = CaptureSelection();
+    }
+
+    /// <summary>
+    /// Redoes <see cref="PreselectForLink"/> after a newer installed snapshot was applied — the
+    /// browser shows link cards without waiting for the first library scan — but only while the
+    /// card's ticks are still exactly what the pre-tick set: anything the user ticked or unticked
+    /// since is theirs and stays. Returns true when the redo changed the ticks (for the log).
+    /// </summary>
+    public bool ReapplyLinkPreselectIfUntouched()
+    {
+        if (_linkPreselection is null || LinkMatchLabel is null) return false;
+        var before = CaptureSelection();
+        if (before != _linkPreselection) return false;
+        PreselectForLink(_linkVersionId, LinkMatchLabel, _linkSelectCard);
+        return CaptureSelection() != before;
+    }
+
+    /// <summary>
+    /// The version "Add selection to queue" takes from a selected card with nothing ticked: the
+    /// one a link named (the badge's version, even when installed — the queue then asks before
+    /// re-downloading it), otherwise the latest.
+    /// </summary>
+    public CivitaiVersionPickItemViewModel? DefaultPick =>
+        (_linkVersionId is int id ? Versions.FirstOrDefault(v => v.Version.Id == id) : null)
+        ?? Versions.FirstOrDefault();
+
+    private int? _linkVersionId;
+    private bool _linkSelectCard;
+    private string? _linkPreselection;
+
+    /// <summary>The card tick plus the ticked version ids, as one comparable value.</summary>
+    private string CaptureSelection() =>
+        $"{IsSelected}|{string.Join(",", Versions.Where(v => v.IsSelected).Select(v => v.Version.Id))}";
 
     [RelayCommand]
     private void SelectAllVersions()

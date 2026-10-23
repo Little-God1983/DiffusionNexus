@@ -301,7 +301,113 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         _lastClickedItem = null;   // anchor invalidated by clear
         OnSelectionChanged();
         _nextCursor = null;
+
+        if (CivitaiLinkQuery.TryParse(SearchText, out var link))
+        {
+            await LoadLinkAsync(link!, ct);
+            return;
+        }
+
+        IsLinkLookup = false;
+        LinkLookupNotice = null;
         await LoadNextAsync(ct);
+    }
+
+    /// <summary>
+    /// True while the results come from a pasted link or id instead of a name search (issue #630).
+    /// Every filter is ignored then — the API filters are never sent, the Show toggles hide
+    /// nothing (or "hide installed" would hide the very model the user pasted to check), and a
+    /// filter change does not re-run the lookup, which would rebuild the cards and drop the
+    /// user's version ticks.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isLinkLookup;
+
+    /// <summary>Banner above link/id results; null during a name search and when a lookup shows nothing.</summary>
+    [ObservableProperty]
+    private string? _linkLookupNotice;
+
+    private const string LinkLookupNoticeText =
+        "Showing the model from your link or ID. Filters are ignored. Clear the search box to go back to your filtered search.";
+
+    /// <summary>
+    /// Resolves a pasted link or bare id into ordinary result cards — version rows, installed
+    /// badges and the queue buttons all work as they do for a name search. The cards appear as
+    /// soon as Civitai answers, built against whatever installed snapshot exists; on the first
+    /// visit the library scan may not have landed yet (gating the grid on it was the "browser opens
+    /// empty" regression), so <see cref="RefreshInstalledSetAsync"/> redoes the pre-tick on every
+    /// link card the user has not touched whenever a new snapshot arrives.
+    /// </summary>
+    private async Task LoadLinkAsync(CivitaiLinkQuery link, CancellationToken ct)
+    {
+        IsLinkLookup = true;
+        LinkLookupNotice = null;
+        // SearchAsync dropped the cursor; a name search announces that at the end of its fetch,
+        // this path has no pages at all, so say it now or the previous search's "Load more" stays.
+        OnPropertyChanged(nameof(HasMore));
+        ApplyClientSideFilters(); // nothing on screen yet, but reset the hidden counters
+        if (_civitaiClient is null)
+        {
+            IsBusy = false;
+            StatusMessage = "Civitai client is not available.";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Link lookup skipped — ICivitaiClient is null in this DI scope.");
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            StatusMessage = "Looking up the link on Civitai...";
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            var apiKey = await GetApiKeyAsync();
+            var result = await new CivitaiLinkLookup(_civitaiClient, _logger).ResolveAsync(link, apiKey, ct);
+            if (ct.IsCancellationRequested) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                // Same late-cancellation re-check as LoadNextAsync's dispatch.
+                if (ct.IsCancellationRequested) return;
+                // Two cards from one bare number are two different models: tick each one's version
+                // but select neither, so one "Add selection to queue" click can't take both.
+                var selectCards = result.Matches.Count == 1;
+                foreach (var match in result.Matches)
+                {
+                    var card = CreateResultCard(match.Model);
+                    card.PreselectForLink(match.VersionId, match.MatchLabel, selectCards);
+                    Results.Add(card);
+                }
+            });
+            if (ct.IsCancellationRequested) return;
+
+            LinkLookupNotice = Results.Count > 0 ? LinkLookupNoticeText : null;
+            ApplyClientSideFilters();
+            OnSelectionChanged();
+            StatusMessage = result.Message;
+            _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                $"Link lookup complete: {Results.Count} card(s), {Results.Sum(r => r.Versions.Count(v => v.IsSelected))} version(s) pre-ticked, " +
+                $"{Results.Sum(r => r.Versions.Count(v => v.IsInstalled))} already installed ({sw.ElapsedMilliseconds} ms)");
+
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // user typed again — silently drop
+        }
+        catch (HttpRequestException ex)
+        {
+            StatusMessage = $"Civitai request failed: {ex.StatusCode} {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Link lookup HTTP {ex.StatusCode} — {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Link lookup failed: {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiBrowser", $"Link lookup failed: {ex.Message}", ex.ToString());
+        }
+        finally
+        {
+            // A superseded lookup leaves IsBusy to the search that cancelled it (see LoadNextAsync).
+            if (!ct.IsCancellationRequested) IsBusy = false;
+        }
     }
 
     private void CancelAllPreviews()
@@ -400,10 +506,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         foreach (var result in Results.Where(r => r.IsSelected))
         {
             var picks = result.Versions.Where(v => v.IsSelected).ToList();
-            if (picks.Count == 0 && result.Versions.Count > 0)
+            if (picks.Count == 0 && result.DefaultPick is { } fallback)
             {
-                picks.Add(result.Versions[0]);
-                result.Versions[0].IsSelected = true;
+                picks.Add(fallback);
+                fallback.IsSelected = true;
             }
             foreach (var pick in picks)
             {
@@ -842,6 +948,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMore));
         OnPropertyChanged(nameof(CanReset));
         if (_suppressFilterChangeSearch) return;
+        if (IsLinkLookup) return; // link results ignore the filters; re-running would drop the user's ticks
         _ = DebouncedSearchAsync();
     }
     // All four Show-flyout toggles are client-side filters (the API call always
@@ -904,6 +1011,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     {
         if (_civitaiClient is null)
         {
+            IsBusy = false;
             StatusMessage = "Civitai client is not available.";
             _logger?.Warn(LogCategory.Network, "CivitaiBrowser", "Search skipped — ICivitaiClient is null in this DI scope.");
             return;
@@ -997,6 +1105,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                 && lastQuery is not null)
             {
                 await RunTagFallbackAsync(lastQuery, apiKey, existingIds, ct);
+                // The fallback swallows its own cancellation; a superseded search must not go on to
+                // re-sort and re-status the results of the search (or link lookup) that replaced it.
+                if (ct.IsCancellationRequested) return;
             }
 
             // The REST API silently ignores sort= whenever query= is present — pages come
@@ -1006,7 +1117,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             // correct, so don't touch it.
             if (!string.IsNullOrWhiteSpace(SearchText))
             {
-                await ResortResultsAsync();
+                await ResortResultsAsync(ct);
+                if (ct.IsCancellationRequested) return;
             }
 
             var addedThisBatch = Results.Count - preBatchCount;
@@ -1034,7 +1146,9 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            // Only a newer SearchAsync cancels this token, and it sets IsBusy for its own fetch;
+            // clearing it here would mark that one idle while it is still running.
+            if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }
 
@@ -1062,10 +1176,13 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// Re-sorts the result list on the UI thread by the currently selected sort option.
     /// Move-based so bound cards keep their instances (selection, loaded previews).
     /// </summary>
-    private async Task ResortResultsAsync()
+    private async Task ResortResultsAsync(CancellationToken ct)
     {
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
+            // A superseded search must not re-order the cards of the search (or link lookup) that
+            // replaced it — they may already be in Results when this callback runs.
+            if (ct.IsCancellationRequested) return;
             if (Results.Count < 2) return;
             var desired = CivitaiSearchResultSorter.Sort(Results, r => r.Model, SelectedSort);
             CivitaiSearchResultSorter.ApplyOrder(Results, desired);
@@ -1226,7 +1343,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(CanReset));
         if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
             RebuildFlyoutBaseModels();
-        _ = SearchAsync();
+        if (!IsLinkLookup) _ = SearchAsync();
     }
 
     /// <summary>
@@ -1395,7 +1512,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(BaseModelFilterSearchText))
             RebuildFlyoutBaseModels();
 
-        if (_initialized) _ = SearchAsync();
+        if (_initialized && !IsLinkLookup) _ = SearchAsync();
     }
 
     private void ApplyClientSideFilters()
@@ -1411,10 +1528,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             // IsEarlyAccess && !IsPermanentlyPaid) — filtering on the raw IsEarlyAccess
             // flag here would make the Paywalled toggle a no-op for permanently-paid
             // cards, since they'd already be caught by Early Access.
-            var hide = (!ShowInstalled && result.IsInstalled)
-                       || (!ShowEarlyAccess && result.ShowEarlyAccessBadge)
-                       || (!ShowPaywalled && result.IsPermanentlyPaid)
-                       || (!ShowNsfw && result.IsNsfw);
+            var hide = !IsLinkLookup
+                       && ((!ShowInstalled && result.IsInstalled)
+                           || (!ShowEarlyAccess && result.ShowEarlyAccessBadge)
+                           || (!ShowPaywalled && result.IsPermanentlyPaid)
+                           || (!ShowNsfw && result.IsNsfw));
             result.IsHidden = hide;
         }
         OnPropertyChanged(nameof(VisibleCount));
@@ -1654,7 +1772,20 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             {
                 // Refreshes the card badge AND every version row — a download that just
                 // finished must light up the row it landed in, not only the card.
-                foreach (var r in Results) r.ApplyInstalledIndex(_installed);
+                var repicked = new List<string>();
+                foreach (var r in Results)
+                {
+                    r.ApplyInstalledIndex(_installed);
+                    // A link card built before this snapshot may have ticked a version that is in
+                    // fact installed; redo its pre-tick unless the user has changed it since.
+                    if (r.ReapplyLinkPreselectIfUntouched()) repicked.Add($"\"{r.Name}\" → {r.SelectedVersionSummary}");
+                }
+                if (repicked.Count > 0)
+                {
+                    _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                        $"Installed library refreshed: link pre-ticks redone on {repicked.Count} card(s) — {string.Join("; ", repicked)}");
+                }
+                OnSelectionChanged();
                 ApplyClientSideFilters();
             });
         }

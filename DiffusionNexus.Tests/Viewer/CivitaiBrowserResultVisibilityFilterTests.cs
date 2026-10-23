@@ -239,4 +239,49 @@ public sealed class CivitaiBrowserResultVisibilityFilterTests
         vm.ShowNsfw.Should().BeTrue();
         vm.IsShowFilterActive.Should().BeFalse();
     }
+
+    /// <summary>
+    /// Issue #630: a pasted link or ID shows exactly that model whatever the filters say —
+    /// "hide installed" must not hide the very model the user pasted to check.
+    /// </summary>
+    [Fact]
+    public void LinkLookup_IgnoresEveryShowToggle()
+    {
+        var vm = CreateVm();
+        var installed = Card(1);
+        installed.IsInstalled = true;
+        var nsfw = Card(2, nsfw: true);
+        var permanentlyPaid = Card(3, permanentPaid: true);
+        foreach (var card in new[] { installed, nsfw, permanentlyPaid })
+            vm.Results.Add(card);
+        vm.ShowInstalled = false;
+        vm.ShowNsfw = false;
+        vm.ShowPaywalled = false;
+        vm.Results.Should().OnlyContain(r => r.IsHidden, "the toggles hide all three during a name search");
+
+        vm.IsLinkLookup = true;
+        ApplyFilters(vm);
+
+        vm.Results.Should().OnlyContain(r => !r.IsHidden);
+        vm.HasHiddenResults.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review round 2: the filters are ignored for link results, so changing one must not re-run the
+    /// lookup — that rebuilt the cards and threw away the versions the user had ticked.
+    /// </summary>
+    [Fact]
+    public async Task LinkLookup_ChangingAFilter_KeepsTheCardsAndTheirTicks()
+    {
+        var vm = CreateVm();
+        vm.IsLinkLookup = true;
+        var card = Card(1);
+        vm.Results.Add(card);
+
+        vm.SelectedSort = CivitaiModelSort.HighestRated;
+        vm.SelectedPeriod = CivitaiPeriod.Month;
+        await Task.Delay(700); // past the 400 ms search debounce
+
+        vm.Results.Should().ContainSingle().Which.Should().BeSameAs(card);
+    }
 }

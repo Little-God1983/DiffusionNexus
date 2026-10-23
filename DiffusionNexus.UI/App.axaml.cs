@@ -105,6 +105,9 @@ public partial class App : Application
                 Serilog.Log.Information("Disabling data annotation validation...");
                 DisableAvaloniaDataAnnotationValidation();
 
+                // Auto-height dialogs stay on the owner's screen as their content grows (issue #630).
+                Behaviors.DialogPlacement.Register();
+
                 // Configure services
                 Serilog.Log.Information("Configuring services...");
                 var services = new ServiceCollection();
