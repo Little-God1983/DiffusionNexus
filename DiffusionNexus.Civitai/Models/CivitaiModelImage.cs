@@ -15,9 +15,8 @@ public sealed record CivitaiModelImage
     [JsonPropertyName("url")]
     public string Url { get; init; } = string.Empty;
 
-    /// <summary>Whether the image is NSFW.</summary>
-    [JsonPropertyName("nsfw")]
-    public bool Nsfw { get; init; }
+    // No "nsfw" boolean: the API stopped sending one for images, and reading it is what stored
+    // every synced picture as SFW (#631). NsfwLevel below is the rating; NsfwPolicy judges it.
 
     /// <summary>
     /// Browsing-level bitmask of this image: 1=PG, 2=PG13, 4=R, 8=X, 16=XXX.

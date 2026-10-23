@@ -547,7 +547,8 @@ public class ModelRepositoryTests : IDisposable
 
     private static readonly string[] ExpectedLightImageColumns =
     [
-        "Id", "ModelVersionId", "CivitaiId", "Url", "MediaType", "IsNsfw", "NsfwLevel",
+        // NsfwRating is the rating (#631); the dead IsNsfw / NsfwLevel columns are never read.
+        "Id", "ModelVersionId", "CivitaiId", "Url", "MediaType", "NsfwRating",
         "Width", "Height", "BlurHash", "SortOrder", "CreatedAt", "PostId", "Username",
         "ThumbnailMimeType", "ThumbnailWidth", "ThumbnailHeight",
         "ThumbnailAttemptedAt", "ThumbnailFailure",

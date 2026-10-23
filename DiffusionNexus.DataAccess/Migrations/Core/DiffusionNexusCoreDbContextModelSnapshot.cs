@@ -15,7 +15,7 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
 
             modelBuilder.Entity("DiffusionNexus.Domain.Entities.AppSettings", b =>
                 {
@@ -793,8 +793,15 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<bool>("IsLocalCacheValid")
                         .HasColumnType("INTEGER");
 
-                    b.Property<bool>("IsNsfw")
-                        .HasColumnType("INTEGER");
+                    b.Property<bool>("LegacyIsNsfw")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("IsNsfw");
+
+                    b.Property<string>("LegacyNsfwLevel")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("NsfwLevel");
 
                     b.Property<int>("LikeCount")
                         .HasColumnType("INTEGER");
@@ -813,10 +820,9 @@ namespace DiffusionNexus.DataAccess.Migrations.Core
                     b.Property<string>("NegativePrompt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("NsfwLevel")
-                        .IsRequired()
-                        .HasMaxLength(10)
-                        .HasColumnType("TEXT");
+                    b.Property<int>("NsfwLevel")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("NsfwRating");
 
                     b.Property<int?>("PostId")
                         .HasColumnType("INTEGER");

@@ -80,7 +80,6 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         Id = id,
         Url = url,
         Type = "image",
-        Nsfw = false,
         Width = 512,
         Height = 768,
         Hash = "blurhash",
@@ -672,6 +671,91 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
             images.Should().HaveCount(2);
             images.Select(i => i.CivitaiId).Should().BeEquivalentTo(new long?[] { 5, 6 });
             images.Single(i => i.CivitaiId == 6).SortOrder.Should().Be(1);
+        }
+    }
+
+    /// <summary>
+    /// #631, the per-model Download Metadata button: Civitai sends no image id any more, so a
+    /// second forced identify used to append the whole gallery again, unrated. Now it keeps one
+    /// row per picture and stores Civitai's rating.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_RunTwiceWithoutImageIds_KeepsOneRowPerImageWithItsRating()
+    {
+        int modelId, fileId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("rerun", @"C:\m\rerun.safetensors");
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            fileId = model.Versions.First().Files.First().Id;
+        }
+
+        var civVersion = NewCivitaiVersion(images:
+        [
+            NewImage(5, "https://img/5.jpeg") with { Id = null, NsfwLevel = 16 },
+            NewImage(6, "https://img/6.jpeg") with { Id = null, NsfwLevel = 1 },
+        ]);
+        var applier = NewApplier(NewCivitaiModel(civVersion));
+
+        for (var run = 0; run < 2; run++)
+        {
+            using var scope = NewScope();
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyAsync(uow, modelId, fileId, civVersion, apiKey: null)).Should().BeTrue();
+        }
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var images = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single().Images
+                .OrderBy(i => i.SortOrder).ToList();
+
+            images.Select(i => i.Url).Should().Equal("https://img/5.jpeg", "https://img/6.jpeg");
+            images.Select(i => i.NsfwLevel).Should().Equal(NsfwLevel.XXX, NsfwLevel.PG);
+            images.Select(i => i.IsNsfw).Should().Equal(true, false);
+        }
+    }
+
+    /// <summary>
+    /// #631, healing a library: the images step re-fetches a version whose images were stored
+    /// unrated (and duplicated). The copies collapse to one row and the rating is saved, even though
+    /// nothing new was added.
+    /// </summary>
+    [Fact]
+    public async Task ApplyImagesAsync_RatesStoredImagesAndDeletesDuplicateRows()
+    {
+        int modelId, versionId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = NewLocalModel("heal", @"C:\m\heal.safetensors");
+            var version = model.Versions.First();
+            for (var copy = 0; copy < 3; copy++)
+                version.Images.Add(new ModelImage { Url = "https://img/5.jpeg", SortOrder = copy });
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+            versionId = version.Id;
+        }
+
+        var civVersion = NewCivitaiVersion(images: [NewImage(5, "https://img/5.jpeg") with { Id = null, NsfwLevel = 4 }]);
+        var applier = NewApplier(version: civVersion);
+
+        using (var scope = NewScope())
+        {
+            var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            (await applier.ApplyImagesAsync(uow, modelId, versionId, civitaiVersionId: 700, apiKey: null))
+                .Should().Be(0, "nothing was added");
+        }
+
+        using (var scope = NewScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+            var rows = context.ModelImages.AsNoTracking().Where(i => i.ModelVersionId == versionId).ToList();
+            rows.Should().ContainSingle().Which.NsfwLevel.Should().Be(NsfwLevel.R);
         }
     }
 

@@ -19,7 +19,17 @@ internal sealed class ModelImageConfiguration : IEntityTypeConfiguration<ModelIm
         // Properties
         entity.Property(e => e.Url).IsRequired().HasMaxLength(2000);
         entity.Property(e => e.MediaType).HasMaxLength(20);
-        entity.Property(e => e.NsfwLevel).HasConversion<string>().HasMaxLength(10);
+        // Civitai's bitmask as a plain integer, in a column of its own (#631). IsNsfw is derived
+        // from it, never stored.
+        entity.Property(e => e.NsfwLevel).HasColumnName("NsfwRating").HasConversion<int>();
+        entity.Ignore(e => e.IsNsfw);
+
+        // Dead columns kept for downgrade safety — see ModelImage.LegacyIsNsfw. Configured by name
+        // so nothing compiles against the [Obsolete(error: true)] properties, and shaped exactly as
+        // the snapshot had them (IsNsfw INTEGER NOT NULL, NsfwLevel TEXT NOT NULL max 10), so the
+        // migration leaves both columns alone.
+        entity.Property<bool>("LegacyIsNsfw").HasColumnName("IsNsfw");
+        entity.Property<string>("LegacyNsfwLevel").HasColumnName("NsfwLevel").IsRequired().HasMaxLength(10);
         entity.Property(e => e.BlurHash).HasMaxLength(100);
         entity.Property(e => e.Username).HasMaxLength(200);
         entity.Property(e => e.LocalCachePath).HasMaxLength(500);

@@ -393,9 +393,25 @@ public partial class ModelTileViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Whether this model has NSFW content.
+    /// Whether the model is flagged NSFW by its creator on Civitai. This alone says nothing about
+    /// the pictures; see <see cref="HasNsfwContent"/>.
     /// </summary>
     public bool IsNsfw => ModelEntity?.IsNsfw ?? false;
+
+    /// <summary>
+    /// Whether the tile would put NSFW content on screen (#631): the model is flagged NSFW, or the
+    /// picture the tile shows is not rated safe. The tile shows its version's
+    /// <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still, so a tile that
+    /// passes this test shows a safe picture. A tile without a picture shows a placeholder.
+    /// </summary>
+    public bool HasNsfwContent => IsNsfw || SelectedVersion?.PrimaryImage is { IsNsfw: true };
+
+    /// <summary>
+    /// The picture this tile shows is a Civitai image whose rating was never stored — a library
+    /// synced before #631. Download Metadata rates it.
+    /// </summary>
+    internal bool ShowsUnratedImage =>
+        SelectedVersion?.PrimaryImage is { NsfwLevel: Domain.Enums.NsfwLevel.None, IsNsfw: true };
 
     /// <summary>
     /// Whether this model has multiple versions.

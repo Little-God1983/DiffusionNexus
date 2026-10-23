@@ -255,6 +255,28 @@ public sealed class DatabaseRecoveryServiceTests : IDisposable
     }
 
     /// <summary>
+    /// #631: AddNsfwRating stamped as applied without its ALTER running (the recovery path a
+    /// rollback-and-upgrade takes) would leave every LoRA query failing on "no such column". The
+    /// self-heal re-adds it, unrated.
+    /// </summary>
+    [Fact]
+    public void CheckAndRepairSchema_ReAddsMissingNsfwRatingColumn()
+    {
+        MigrateFresh();
+        Exec("ALTER TABLE ModelImages DROP COLUMN NsfwRating;");
+        Assert.DoesNotContain("NsfwRating", Columns("ModelImages"));
+
+        var logger = new CapturingRecoveryLogger();
+        var svc = new DatabaseRecoveryService(logger);
+        using (var ctx = NewContext()) svc.CheckAndRepairSchema(ctx);
+
+        Assert.Contains("NsfwRating", Columns("ModelImages"));
+        Assert.Empty(logger.Errors);
+        // The repaired column must be readable through EF.
+        using (var ctx = NewContext()) Assert.Empty(ctx.ModelImages.ToList());
+    }
+
+    /// <summary>
     /// The four Plan E settings columns each have a self-heal entry (#521 WP6). Dropping them all
     /// and repairing pins the SQL inside those entries — a typo'd column name or type would leave
     /// the app crashing on "no such column" with the repair silently missing it.

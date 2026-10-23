@@ -113,14 +113,19 @@ public enum ScanResult
 }
 
 /// <summary>
-/// NSFW content level.
+/// Civitai's browsing-level bitmask for a piece of content. <see cref="None"/> means unrated.
+/// Whether a rating counts as safe is <see cref="Services.NsfwPolicy"/>'s answer, nobody else's.
 /// </summary>
+[Flags]
 public enum NsfwLevel
 {
     None = 0,
-    Soft,
-    Mature,
-    X
+    PG = 1,
+    PG13 = 2,
+    R = 4,
+    X = 8,
+    XXX = 16,
+    Blocked = 32
 }
 
 /// <summary>

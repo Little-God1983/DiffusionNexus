@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Service.Services.Sync.Thumbnails;
 using DiffusionNexus.UI.ViewModels;
@@ -422,7 +423,7 @@ public class ModelTileThumbnailTests
         Url = FormattableString.Invariant($"https://image.civitai.com/abc/width=450/{id}.jpeg"),
         MediaType = "image",
         SortOrder = sortOrder,
-        IsNsfw = nsfw,
+        NsfwLevel = nsfw ? NsfwLevel.XXX : NsfwLevel.PG,
         ThumbnailData = thumbnail,
     };
 

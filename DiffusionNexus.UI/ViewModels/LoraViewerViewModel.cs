@@ -2411,6 +2411,24 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         ApplyFilters();
     }
 
+    /// <summary>Tiles the last filter pass hid only because their Civitai picture is not rated yet.</summary>
+    internal int HiddenUnratedCount { get; private set; }
+
+    /// <summary>
+    /// Says in the Unified Console how many LoRAs "Show NSFW" off hides only for want of a rating,
+    /// and what fixes it. Logged when the number changes, not on every filter pass (each keystroke
+    /// in the search box runs one).
+    /// </summary>
+    private void ReportHiddenUnrated(int count)
+    {
+        if (count == HiddenUnratedCount) return;
+        HiddenUnratedCount = count;
+        if (count == 0) return;
+
+        _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+            $"{count} LoRA(s) are hidden while Show NSFW is off because their preview has no rating yet. Run Download Metadata to rate them."));
+    }
+
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
 
     partial void OnOnlyInstalledBaseModelsChanged(bool value) => RebuildFlyoutBaseModels();
@@ -2858,10 +2876,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 t.TagNames.Any(tag => tag.Contains(search, StringComparison.OrdinalIgnoreCase)));
         }
 
+        // Nothing NSFW on screen with the toggle off (#631): not the creator's flag alone, but the
+        // picture each tile shows too.
+        var hiddenUnrated = 0;
         if (!ShowNsfw)
         {
-            query = query.Where(t => !t.IsNsfw);
+            query = query.Where(t => !t.HasNsfwContent);
+            hiddenUnrated = AllTiles.Count(t => !t.IsNsfw && t.ShowsUnratedImage);
         }
+        ReportHiddenUnrated(hiddenUnrated);
 
         var activeBaseModels = AvailableBaseModels
             .Where(f => f.IsSelected)
@@ -3061,6 +3084,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 Width = 512,
                 Height = 768,
                 SortOrder = 0,
+                NsfwLevel = NsfwLevel.PG, // rated, so "Show NSFW" off still shows the demo
                 ModelVersion = version
             });
 
@@ -3150,6 +3174,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             Width = 512,
             Height = 768,
             SortOrder = 0,
+            NsfwLevel = NsfwLevel.PG,
             ModelVersion = version,
         });
 

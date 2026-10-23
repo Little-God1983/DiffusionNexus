@@ -181,6 +181,36 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         saved.LastSyncedAt.Should().NotBeNull();
     }
 
+    /// <summary>
+    /// #631: a downloaded LoRA's preview images keep Civitai's rating. They were stored from the
+    /// image "nsfw" field the API no longer sends, so every one of them read as SFW.
+    /// </summary>
+    [Fact]
+    public async Task Persist_StoresEachImagesRating()
+    {
+        var civVersion = NewCivitaiVersion() with
+        {
+            Images =
+            [
+                new CivitaiModelImage { Url = "https://img/xxx.jpeg", NsfwLevel = 16 },
+                new CivitaiModelImage { Url = "https://img/pg13.jpeg", NsfwLevel = 2 },
+            ],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+        var newFile = NewRealFile("rated-download.safetensors");
+
+        var outcome = await service.PersistDownloadedModelAsync(newFile, civVersion);
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        context.ModelImages.AsNoTracking()
+            .OrderBy(i => i.SortOrder)
+            .Select(i => i.NsfwLevel)
+            .ToList()
+            .Should().Equal(NsfwLevel.XXX, NsfwLevel.PG13);
+    }
+
     [Fact]
     public async Task Persist_ExistingUneditedModel_TakesCivitaiText()
     {

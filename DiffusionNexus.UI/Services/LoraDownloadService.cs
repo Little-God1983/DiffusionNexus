@@ -524,31 +524,8 @@ public sealed class LoraDownloadService : ILoraDownloadService
                 version.TriggerWords.Add(new TriggerWord { Word = word, Order = order++ });
             }
 
-            var sortOrder = 0;
-            foreach (var civImage in bestVersion.Images)
-            {
-                if (string.IsNullOrEmpty(civImage.Url)) continue;
-                version.Images.Add(new ModelImage
-                {
-                    CivitaiId = civImage.Id,
-                    Url = civImage.Url,
-                    MediaType = civImage.Type,
-                    IsNsfw = civImage.Nsfw,
-                    Width = civImage.Width ?? 0,
-                    Height = civImage.Height ?? 0,
-                    BlurHash = civImage.Hash,
-                    SortOrder = sortOrder++,
-                    CreatedAt = civImage.CreatedAt,
-                    PostId = civImage.PostId,
-                    Username = civImage.Username,
-                    Prompt = civImage.Meta?.Prompt,
-                    NegativePrompt = civImage.Meta?.NegativePrompt,
-                    Seed = civImage.Meta?.Seed,
-                    Steps = civImage.Meta?.Steps,
-                    Sampler = civImage.Meta?.Sampler,
-                    CfgScale = civImage.Meta?.CfgScale,
-                });
-            }
+            // The one writer of Civitai images, so a download stores their ratings too (#631).
+            CivitaiImageMerger.Merge(version, bestVersion.Images);
 
             var modelFile = new ModelFile
             {

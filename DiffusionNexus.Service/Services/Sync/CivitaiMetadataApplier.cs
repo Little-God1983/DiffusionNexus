@@ -193,8 +193,9 @@ public sealed class CivitaiMetadataApplier
                 }
             }
 
-            // Add images from Civitai (use the version with the richest data)
-            AppendImages(dbVersion, bestCivitaiVersion.Images);
+            // Images from Civitai (use the version with the richest data): new ones added, stored
+            // ones re-rated, duplicate copies dropped — see CivitaiImageMerger (#631).
+            MergeImages(dbVersion, bestCivitaiVersion.Images);
 
             // Update file hashes from Civitai data
             var civFile = bestCivitaiVersion.Files.FirstOrDefault(f => f.Primary == true);
@@ -283,9 +284,10 @@ public sealed class CivitaiMetadataApplier
     }
 
     /// <summary>
-    /// Images only (FetchImages step): fetch the version and append every image not yet
-    /// present by <see cref="ModelImage.CivitaiId"/>. Saves. Returns the number added, or
-    /// <c>null</c> when Civitai has no such version any more.
+    /// Images only (FetchImages step): fetch the version and merge its images through
+    /// <see cref="CivitaiImageMerger"/> — new ones added, stored ones rated, duplicates dropped.
+    /// Saves when anything changed. Returns the number added, or <c>null</c> when Civitai has no
+    /// such version any more.
     /// </summary>
     public async Task<int?> ApplyImagesAsync(
         IUnitOfWork uow,
@@ -304,13 +306,13 @@ public sealed class CivitaiMetadataApplier
         var dbVersion = dbModel?.Versions.FirstOrDefault(v => v.Id == versionId);
         if (dbVersion is null) return 0;
 
-        var added = AppendImages(dbVersion, civitaiVersion.Images);
-        if (added > 0)
+        var merge = MergeImages(dbVersion, civitaiVersion.Images);
+        if (merge.Changed)
         {
             await uow.SaveChangesAsync(ct);
         }
 
-        return added;
+        return merge.Added;
     }
 
     /// <summary>
@@ -344,7 +346,7 @@ public sealed class CivitaiMetadataApplier
         // both before and after this change.
         var dbModel = await uow.Models.GetByIdWithIncludesAsync(versions[0].ModelId, ct);
 
-        var anyAdded = false;
+        var anyChanged = false;
 
         foreach (var (_, versionId, civitaiVersionId) in versions)
         {
@@ -364,17 +366,32 @@ public sealed class CivitaiMetadataApplier
                 continue;
             }
 
-            var added = AppendImages(dbVersion, civitaiVersion.Images);
-            if (added > 0) anyAdded = true;
-            results[civitaiVersionId] = added;
+            var merge = MergeImages(dbVersion, civitaiVersion.Images);
+            if (merge.Changed) anyChanged = true;
+            results[civitaiVersionId] = merge.Added;
         }
 
-        // One save for the whole group rather than one per version that added something — the
+        // One save for the whole group rather than one per version that changed something — the
         // per-version counts above are already computed from the in-memory graph, so batching the
         // write changes nothing about what is returned, only how many round-trips it costs.
-        if (anyAdded) await uow.SaveChangesAsync(ct);
+        if (anyChanged) await uow.SaveChangesAsync(ct);
 
         return results;
+    }
+
+    /// <summary>
+    /// <see cref="CivitaiImageMerger.Merge"/> plus a line for what healing did: an image re-rated or
+    /// a duplicate copy dropped is the #631 repair, and a bulk run should show that it happened.
+    /// </summary>
+    private ImageMergeResult MergeImages(ModelVersion dbVersion, IReadOnlyList<CivitaiModelImage> civitaiImages)
+    {
+        var merge = CivitaiImageMerger.Merge(dbVersion, civitaiImages);
+        if (merge.Rated > 0 || merge.Removed > 0)
+        {
+            _logger?.Debug(LogCategory.Network, LogSource, FormattableString.Invariant(
+                $"Images for '{dbVersion.Name}': {merge.Added} added, {merge.Rated} rated, {merge.Removed} duplicate(s) removed"));
+        }
+        return merge;
     }
 
     /// <summary>
@@ -390,54 +407,6 @@ public sealed class CivitaiMetadataApplier
     /// version keeps the rest of the model syncing normally.
     /// </summary>
     private static bool CanWriteVersionText(ModelVersion dbVersion) => !dbVersion.IsUserEdited;
-
-    /// <summary>
-    /// Appends the Civitai images that are not already present by <see cref="ModelImage.CivitaiId"/>,
-    /// continuing the existing <see cref="ModelImage.SortOrder"/>. Returns how many were added.
-    /// </summary>
-    private static int AppendImages(ModelVersion dbVersion, IReadOnlyList<CivitaiModelImage> civitaiImages)
-    {
-        var existingImageIds = dbVersion.Images
-            .Where(i => i.CivitaiId.HasValue)
-            .Select(i => i.CivitaiId!.Value)
-            .ToHashSet();
-        var sortOrder = dbVersion.Images.Count;
-        var added = 0;
-
-        foreach (var civImage in civitaiImages)
-        {
-            if (string.IsNullOrEmpty(civImage.Url))
-                continue;
-
-            if (civImage.Id.HasValue && existingImageIds.Contains(civImage.Id.Value))
-                continue;
-
-            dbVersion.Images.Add(new ModelImage
-            {
-                ModelVersionId = dbVersion.Id,
-                CivitaiId = civImage.Id,
-                Url = civImage.Url,
-                MediaType = civImage.Type,
-                IsNsfw = civImage.Nsfw,
-                Width = civImage.Width ?? 0,
-                Height = civImage.Height ?? 0,
-                BlurHash = civImage.Hash,
-                SortOrder = sortOrder++,
-                CreatedAt = civImage.CreatedAt,
-                PostId = civImage.PostId,
-                Username = civImage.Username,
-                Prompt = civImage.Meta?.Prompt,
-                NegativePrompt = civImage.Meta?.NegativePrompt,
-                Seed = civImage.Meta?.Seed,
-                Steps = civImage.Meta?.Steps,
-                Sampler = civImage.Meta?.Sampler,
-                CfgScale = civImage.Meta?.CfgScale,
-            });
-            added++;
-        }
-
-        return added;
-    }
 
     /// <summary>
     /// Replaces a model's tags with the Civitai tag list, reusing existing <see cref="Tag"/>

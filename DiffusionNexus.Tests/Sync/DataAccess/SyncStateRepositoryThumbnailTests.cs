@@ -60,7 +60,7 @@ public sealed class SyncStateRepositoryThumbnailTests : IDisposable
             Url = url,
             SortOrder = sortOrder,
             MediaType = mediaType,
-            IsNsfw = nsfw,
+            NsfwLevel = nsfw ? NsfwLevel.XXX : NsfwLevel.PG,
             ThumbnailData = thumbnail,
             ThumbnailAttemptedAt = attemptedAt,
             ThumbnailFailure = failure,

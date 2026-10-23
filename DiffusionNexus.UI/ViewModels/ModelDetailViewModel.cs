@@ -857,7 +857,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             {
                 Id = img.CivitaiId,
                 Url = img.Url,
-                Nsfw = img.IsNsfw,
+                NsfwLevel = img.NsfwLevel == NsfwLevel.None ? null : (int)img.NsfwLevel,
                 Width = img.Width,
                 Height = img.Height,
                 Hash = img.BlurHash,

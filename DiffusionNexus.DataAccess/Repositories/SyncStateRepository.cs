@@ -3,6 +3,7 @@ using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.DataAccess.Repositories.Interfaces;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using DiffusionNexus.Domain.Services.Sync;
 using DiffusionNexus.Domain.Utilities;
 using Microsoft.EntityFrameworkCore;
@@ -412,8 +413,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
             .Where(m => m.CivitaiId != null);
 
         // Joined from ModelVersions rather than SelectMany-ed off the navigation: see SelectIdentifyCandidatesAsync.
+        // A version is due when it holds no images, or holds a Civitai image with no rating (#631):
+        // libraries synced before ratings were stored get them from the next run. The images step's
+        // stamp still decides when to ask, so a version Civitai cannot rate is asked once, not forever.
         var rows = await (from v in Context.ModelVersions.AsNoTracking()
-                          where v.CivitaiId != null && !v.Images.Any()
+                          where v.CivitaiId != null
+                                && (!v.Images.Any()
+                                    || v.Images.Any(i => i.NsfwLevel == NsfwLevel.None
+                                                         && (EF.Functions.Like(i.Url, "http://%")
+                                                             || EF.Functions.Like(i.Url, "https://%"))))
                           join m in models on v.ModelId equals m.Id
                           select new
                           {
@@ -484,7 +492,8 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                               v.Name,
                               i.Url,
                               i.MediaType,
-                              i.IsNsfw,
+                              // The rating, not IsNsfw: that one is derived in C# and has no column.
+                              i.NsfwLevel,
                               HasThumbnail = i.ThumbnailData != null && i.ThumbnailData != ThumbnailBlobs.Empty,
                               i.ThumbnailAttemptedAt,
                               i.ThumbnailFailure,
@@ -501,7 +510,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
 
         return rows
             .GroupBy(r => r.VersionId)
-            .Select(g => g.OrderBy(r => PrimaryImageRank(r.IsNsfw, r.MediaType, r.Url)).ThenBy(r => r.ImageId).First())
+            .Select(g => g.OrderBy(r => PrimaryImageRank(NsfwPolicy.IsNsfwImage(r.NsfwLevel, r.Url), r.MediaType, r.Url)).ThenBy(r => r.ImageId).First())
             // Asked of the primary only. The other images of the version are not work: the tile
             // shows the primary, so bytes for the rest render nowhere and would multiply a
             // library-wide run by the image count per version.

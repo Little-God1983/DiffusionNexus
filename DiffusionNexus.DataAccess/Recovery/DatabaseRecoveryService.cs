@@ -386,11 +386,13 @@ public sealed class DatabaseRecoveryService
             return;
         }
 
-        // Migration 20260821112114_AddModelSyncStateAndThumbnailAttempts
         var requiredColumns = new Dictionary<string, string>
         {
+            // Migration 20260821112114_AddModelSyncStateAndThumbnailAttempts
             { "ThumbnailAttemptedAt", "ALTER TABLE ModelImages ADD COLUMN ThumbnailAttemptedAt TEXT" },
             { "ThumbnailFailure",     "ALTER TABLE ModelImages ADD COLUMN ThumbnailFailure TEXT" },
+            // Migration 20261023081307_AddNsfwRating (#631) — 0 is "unrated"
+            { "NsfwRating",           "ALTER TABLE ModelImages ADD COLUMN NsfwRating INTEGER NOT NULL DEFAULT 0" },
         };
 
         foreach (var col in requiredColumns)

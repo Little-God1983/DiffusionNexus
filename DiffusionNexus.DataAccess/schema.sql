@@ -180,6 +180,7 @@ CREATE TABLE "ModelImages" (
     "LikeCount" INTEGER NOT NULL,
     "HeartCount" INTEGER NOT NULL,
     "CommentCount" INTEGER NOT NULL,
+    "NsfwRating" INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT "FK_ModelImages_ModelVersions_ModelVersionId" FOREIGN KEY ("ModelVersionId") REFERENCES "ModelVersions" ("Id") ON DELETE CASCADE
 );
 
