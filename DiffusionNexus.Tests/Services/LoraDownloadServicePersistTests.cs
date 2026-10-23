@@ -287,6 +287,46 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
             .Which.NsfwLevel.Should().Be(NsfwLevel.XXX);
     }
 
+    /// <summary>
+    /// The hash fallback can land on a version already linked to a DIFFERENT Civitai version (the
+    /// same bytes re-listed upstream). That version keeps its own pictures: another version's
+    /// gallery, with its ratings, would make its tile show and be judged by images not its own.
+    /// </summary>
+    [Fact]
+    public async Task Persist_HashMatchOnAVersionLinkedElsewhere_LeavesItsImagesAlone()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model { Name = "relisted", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var seedVersion = new ModelVersion { CivitaiId = 699, Name = "v", BaseModelRaw = "Pony" };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = "old.safetensors", LocalPath = @"C:\m\relisted.safetensors", IsLocalFileValid = true,
+                IsPrimary = true, HashSHA256 = "ABC",
+            });
+            seedVersion.Images.Add(new ModelImage { Url = "https://img/own.jpeg", NsfwLevel = NsfwLevel.PG });
+            model.Versions.Add(seedVersion);
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion(id: 700, sha256: "ABC") with
+        {
+            Images = [new CivitaiModelImage { Url = "https://img/other.jpeg", NsfwLevel = 16 }],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+
+        await service.PersistDownloadedModelAsync(NewRealFile("relisted-again.safetensors"), civVersion, existingModelId: modelId);
+
+        using var scope = NewScope();
+        var saved = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Single(v => v.CivitaiId == 699).Images.Select(i => i.Url)
+            .Should().Equal("https://img/own.jpeg");
+    }
+
     [Fact]
     public async Task Persist_DuplicateVersionUserEdited_KeepsItsBaseModel()
     {

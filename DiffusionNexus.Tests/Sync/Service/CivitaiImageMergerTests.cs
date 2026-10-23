@@ -126,6 +126,36 @@ public sealed class CivitaiImageMergerTests
         version.Images.Should().ContainSingle();
     }
 
+    /// <summary>
+    /// Civitai's CDN puts a transform segment in the URL (<c>width=450</c>, <c>original=true</c>).
+    /// A few stored rows carry a different one than the API sends today; the picture is the same,
+    /// so it is matched — rated, not added a second time.
+    /// </summary>
+    [Fact]
+    public void TheSamePictureUnderADifferentCdnTransform_IsMatched()
+    {
+        var stored = new ModelImage { Id = 1, Url = "https://image.civitai.com/tok/uuid-1/width=450/123.jpeg" };
+        var version = Version(stored);
+
+        var result = CivitaiImageMerger.Merge(version,
+            [Civ("https://image.civitai.com/tok/uuid-1/original=true/123.jpeg", 4)]);
+
+        version.Images.Should().ContainSingle().Which.Should().BeSameAs(stored);
+        stored.NsfwLevel.Should().Be(NsfwLevel.R);
+        result.Added.Should().Be(0);
+    }
+
+    [Fact]
+    public void CopiesUnderDifferentCdnTransforms_CollapseToOne()
+    {
+        var version = Version(
+            new ModelImage { Id = 1, Url = "https://image.civitai.com/tok/uuid-1/original=true/123.jpeg" },
+            new ModelImage { Id = 2, Url = "https://image.civitai.com/tok/uuid-1/width=450/123.jpeg" });
+
+        CivitaiImageMerger.Merge(version, []).Removed.Should().Be(1);
+        version.Images.Should().ContainSingle();
+    }
+
     [Fact]
     public void ARepeatedUrlInTheResponse_IsAddedOnce()
     {

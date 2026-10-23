@@ -187,7 +187,8 @@ public sealed class FetchImagesStep : ISyncStep
             // none of that batch's versions are kept, even ones the page did describe; only the
             // per-version ApplyImagesAsync fallback (versions the model page omitted) saves as it
             // goes, so those keep whatever landed before the fault. Either way, re-asking a version
-            // that already has images is free: the repository no longer selects it. The tracker is
+            // is harmless: the merge matches what landed by URL instead of adding it twice, and a
+            // version whose images all landed rated is no longer selected (#631). The tracker is
             // dropped first: the applier interleaves reads with mutations, and after a rejected save
             // the context is still holding exactly the rows the database refused.
             uow.ClearChangeTracker();

@@ -589,7 +589,13 @@ public sealed class LoraDownloadService : ILoraDownloadService
 
                 // The new version (and its freshly rated images) is discarded below; the existing
                 // one gets the images instead — ratings are facts about Civitai, not user text (#631).
-                CivitaiImageMerger.Merge(duplicateVersion, bestVersion.Images);
+                // Only when it IS that Civitai version (or an unlinked orphan about to be linked to
+                // it): the hash fallback can land on a version linked to a different id, and another
+                // version's gallery would then decide what its tile shows.
+                if (duplicateVersion.CivitaiId is null || duplicateVersion.CivitaiId == version.CivitaiId)
+                {
+                    CivitaiImageMerger.Merge(duplicateVersion, bestVersion.Images);
+                }
 
                 // Backfill Civitai linkage onto an orphan version we just matched
                 // by hash, so future installed-checks work via CivitaiId (the

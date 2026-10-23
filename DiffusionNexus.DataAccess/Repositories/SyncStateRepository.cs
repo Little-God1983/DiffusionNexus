@@ -48,6 +48,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         return created;
     }
 
+    /// <summary>
+    /// A Civitai (web) image with no rating yet (#631). Shared by the backfill projection and the
+    /// images-step selection so the two cannot disagree; the migration and recovery repeat it in
+    /// raw SQL, the tile in memory (<c>NsfwPolicy.IsWebImage</c>). LIKE is case-insensitive for ASCII.
+    /// </summary>
+    private static readonly Expression<Func<ModelImage, bool>> IsUnratedCivitaiImage =
+        i => i.NsfwLevel == NsfwLevel.None
+             && (EF.Functions.Like(i.Url, "http://%") || EF.Functions.Like(i.Url, "https://%"));
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<SyncDerivationInput>> GetDerivationInputsAsync(
         IReadOnlyList<int> modelIds, CancellationToken ct = default)
@@ -73,10 +82,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
                 m.Versions.Any(v => v.BaseModelRaw != null
                                     && v.BaseModelRaw.Trim() != ""
                                     && v.BaseModelRaw != "???"),
-                // Same "unrated Civitai image" test as SelectImageCandidatesAsync (#631).
-                m.Versions.Any(v => v.Images.Any(i => i.NsfwLevel == NsfwLevel.None
-                                                      && (EF.Functions.Like(i.Url, "http://%")
-                                                          || EF.Functions.Like(i.Url, "https://%"))))))
+                m.Versions.Any(v => v.Images.AsQueryable().Any(IsUnratedCivitaiImage))))
             .ToListAsync(ct).ConfigureAwait(false);
     }
 
@@ -423,10 +429,7 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
         // stamp still decides when to ask, so a version Civitai cannot rate is asked once, not forever.
         var rows = await (from v in Context.ModelVersions.AsNoTracking()
                           where v.CivitaiId != null
-                                && (!v.Images.Any()
-                                    || v.Images.Any(i => i.NsfwLevel == NsfwLevel.None
-                                                         && (EF.Functions.Like(i.Url, "http://%")
-                                                             || EF.Functions.Like(i.Url, "https://%"))))
+                                && (!v.Images.Any() || v.Images.AsQueryable().Any(IsUnratedCivitaiImage))
                           join m in models on v.ModelId equals m.Id
                           select new
                           {

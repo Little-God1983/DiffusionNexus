@@ -48,7 +48,10 @@ public static class NsfwPolicy
     }
 
     /// <summary>Whether the image lives on the web (a Civitai image) rather than on this machine.</summary>
-    public static bool IsWebImage(string? url) => IsRemote(url);
+    public static bool IsWebImage(string? url) =>
+        url is not null
+        && (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("http://", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Maps the rating strings older Civitai payloads (and sidecars written from them) carried
@@ -62,9 +65,4 @@ public static class NsfwPolicy
         "x" => NsfwLevel.X,
         _ => NsfwLevel.None,
     };
-
-    private static bool IsRemote(string? url) =>
-        url is not null
-        && (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-            || url.StartsWith("http://", StringComparison.OrdinalIgnoreCase));
 }

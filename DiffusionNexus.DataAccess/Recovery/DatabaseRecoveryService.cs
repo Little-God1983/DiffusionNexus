@@ -323,7 +323,11 @@ public sealed class DatabaseRecoveryService
             RepairModelsTableColumns(dbContext, connection);
             RepairModelImagesTableColumns(dbContext, connection);
             EnsureModelSyncStatesTable(dbContext);
-            if (migrationsTouchedThisStart) NormalizeModelFileHashCasing(dbContext, connection);
+            if (migrationsTouchedThisStart)
+            {
+                NormalizeModelFileHashCasing(dbContext, connection);
+                ReopenImagesStepForUnratedCivitaiImages(dbContext, connection);
+            }
         }
         catch (Exception ex)
         {
@@ -452,6 +456,36 @@ public sealed class DatabaseRecoveryService
     /// everything that stores a SHA256 uppercases it first, so on a healthy database the probe
     /// answers no.
     /// </remarks>
+    /// <summary>
+    /// The data half of migration AddNsfwRating (#631), redone here because a migration stamped as
+    /// applied — after a rollback and re-upgrade, or any failed migration — never ran its body.
+    /// Clears the images step's stamp for models whose Civitai pictures are still unrated, so the
+    /// next Download Metadata run rates them. Narrower than the migration (which had no ratings to
+    /// look at) and, like <see cref="NormalizeModelFileHashCasing"/>, only on starts that touched
+    /// migrations, so a picture Civitai cannot rate is asked about once per upgrade, not per launch.
+    /// </summary>
+    private void ReopenImagesStepForUnratedCivitaiImages(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
+    {
+        if (ReadColumnNames(connection, "ModelSyncStates").Count == 0 || !ReadColumnNames(connection, "ModelImages").Contains("NsfwRating"))
+        {
+            return;
+        }
+
+        try
+        {
+            var reopened = dbContext.Database.ExecuteSqlRaw(
+                "UPDATE ModelSyncStates SET ImagesCheckedAt = NULL WHERE ImagesCheckedAt IS NOT NULL AND ModelId IN (" +
+                "SELECT v.ModelId FROM ModelVersions v JOIN ModelImages i ON i.ModelVersionId = v.Id " +
+                "WHERE i.NsfwRating = 0 AND (i.Url LIKE 'http://%' OR i.Url LIKE 'https://%'));");
+            if (reopened > 0)
+                _log.Information($"CheckAndRepairSchema: Reopened the images step for {reopened} model(s) with unrated Civitai images");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "CheckAndRepairSchema: Failed to reopen the images step for unrated Civitai images");
+        }
+    }
+
     private void NormalizeModelFileHashCasing(DiffusionNexusCoreDbContext dbContext, DbConnection connection)
     {
         if (ReadColumnNames(connection, "ModelFiles").Count == 0)

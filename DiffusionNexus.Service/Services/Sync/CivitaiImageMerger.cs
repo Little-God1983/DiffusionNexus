@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
@@ -36,7 +37,7 @@ public static class CivitaiImageMerger
 
         var byUrl = dbVersion.Images
             .Where(i => !string.IsNullOrEmpty(i.Url))
-            .ToDictionary(i => i.Url, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(i => MatchKey(i.Url), StringComparer.OrdinalIgnoreCase);
         var byCivitaiId = dbVersion.Images
             .Where(i => i.CivitaiId.HasValue)
             .GroupBy(i => i.CivitaiId!.Value)
@@ -52,7 +53,7 @@ public static class CivitaiImageMerger
 
             var level = (NsfwLevel)(civImage.NsfwLevel ?? 0);
 
-            if (byUrl.TryGetValue(civImage.Url, out var existing)
+            if (byUrl.TryGetValue(MatchKey(civImage.Url), out var existing)
                 || (civImage.Id.HasValue && byCivitaiId.TryGetValue(civImage.Id.Value, out existing)))
             {
                 // An unrated answer is no answer: it never erases a rating already stored.
@@ -86,12 +87,22 @@ public static class CivitaiImageMerger
                 CfgScale = civImage.Meta?.CfgScale,
             };
             dbVersion.Images.Add(image);
-            byUrl[image.Url] = image;
+            byUrl[MatchKey(image.Url)] = image;
             added++;
         }
 
         return new ImageMergeResult(added, rated, removed);
     }
+
+    /// <summary>
+    /// The URL without Civitai's CDN transform segment (<c>/width=450/</c>, <c>/original=true/</c>):
+    /// the same picture is served under several, and a few stored rows carry another one than the
+    /// API sends today. Anything else is compared as it is.
+    /// </summary>
+    internal static string MatchKey(string url) => CdnTransform.Replace(url, "/");
+
+    private static readonly Regex CdnTransform = new(
+        @"/(?:width=\d+|original=true)[^/]*/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     /// <summary>
     /// Keeps one row per URL: the copy that holds a thumbnail (loaded or deferred), else the first
@@ -101,7 +112,7 @@ public static class CivitaiImageMerger
     {
         var extras = dbVersion.Images
             .Where(i => !string.IsNullOrEmpty(i.Url))
-            .GroupBy(i => i.Url, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(i => MatchKey(i.Url), StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .SelectMany(g => g
                 .OrderByDescending(i => i.HasThumbnail || i.IsThumbnailDeferred)
