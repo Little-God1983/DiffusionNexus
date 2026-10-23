@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
 using DiffusionNexus.UI.ViewModels;
@@ -55,7 +56,7 @@ public class LoraViewerViewModelNsfwFilterTests
     {
         var vm = new LoraViewerViewModel();
         vm.AllTiles.Clear();
-        foreach (var model in models) vm.AllTiles.Add(ModelTileViewModel.FromModel(model));
+        foreach (var model in models) vm.AddTile(ModelTileViewModel.FromModel(model));
         return vm;
     }
 
@@ -562,5 +563,119 @@ public class LoraViewerViewModelNsfwFilterTests
 
         Visible(vm).Should().HaveCount(2);
         vm.UnratedCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Review round 4: a refresh from the detail view (Delete Metadata, Assign Civitai IDs, a
+    /// download) can change the LoRA's rating; the grid, the hint and the list follow it.
+    /// </summary>
+    [Fact]
+    public void ARefreshThatChangesTheRating_FiltersTheGridAgain()
+    {
+        var model = NewModel("refreshed", flaggedNsfw: false, Image("r", NsfwLevel.PG));
+        model.Id = 5;
+        var vm = ViewModelWith(model);
+        vm.ShowNsfw = false;
+        Visible(vm).Should().ContainSingle();
+
+        // Delete Metadata: the Civitai rating is gone, the LoRA is unrated now.
+        var unlinked = NoRating("refreshed");
+        unlinked.Id = 5;
+        vm.AllTiles.Single().RefreshModelData(unlinked);
+
+        Visible(vm).Should().BeEmpty();
+        vm.UnratedCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Review round 4: deleting the last unrated LoRA from the list must not leave the bar
+    /// counting it.
+    /// </summary>
+    [Fact]
+    public void DeletingTheLastUnratedLora_ClosesTheList()
+    {
+        var vm = ViewModelWith(NoRating("to delete"), NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+
+        vm.FilteredTiles.Single().RaiseDeleted();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.UnratedCount.Should().Be(0);
+        vm.ShowUnratedOnly.Should().BeFalse();
+        Visible(vm).Should().BeEquivalentTo("safe");
+    }
+
+    /// <summary>
+    /// Review round 4: the creator's red badge follows the same row as the hide decision — the
+    /// row of the version on screen — so a shown tile never carries it for another row's flag.
+    /// </summary>
+    [Fact]
+    public void TheCreatorBadge_FollowsTheShownVersionsRow()
+    {
+        var flagged = NewModel("grouped", flaggedNsfw: true, Image("f", NsfwLevel.PG));
+        flagged.CivitaiId = 1;
+        var clean = NewModel("grouped", flaggedNsfw: false, Image("c", NsfwLevel.PG));
+        var tile = ModelTileViewModel.FromModelGroup([flagged, clean]);
+        tile.ModelEntity.Should().BeSameAs(flagged);
+
+        tile.SelectedVersion = clean.Versions.First();
+
+        tile.HasNsfwContent.Should().BeFalse();
+        tile.ShowCreatorNsfwBadge.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review round 4: a model row that joined the tile after load (a download, a refresh) is
+    /// rated in memory, so it is saved too.
+    /// </summary>
+    [Fact]
+    public void ARowThatJoinedTheTile_IsAmongTheRowsTheRatingSaves()
+    {
+        var loaded = NoRating("joined");
+        loaded.Id = 1;
+        var tile = ModelTileViewModel.FromModel(loaded);
+        var joined = NoRating("joined");
+        joined.Id = 2;
+
+        tile.RefreshModelData(joined);
+
+        tile.GetRatingModelIds().Should().BeEquivalentTo([1, 2]);
+    }
+
+    /// <summary>
+    /// Review round 4: each tile of the LoRA keeps what Civitai said about the picture it shows,
+    /// not the clicked tile's.
+    /// </summary>
+    [Fact]
+    public async Task RatingALora_KeepsEachTilesOwnOriginalRating()
+    {
+        var inFolderA = NewModel("duplicated", flaggedNsfw: false, Image("a", NsfwLevel.PG13));
+        var inFolderB = NewModel("duplicated", flaggedNsfw: false, Image("b", NsfwLevel.XXX));
+        inFolderA.CivitaiModelPageId = inFolderB.CivitaiModelPageId = 4242;
+        var vm = new LoraViewerViewModel();
+        vm.AllTiles.Clear();
+        var a = ModelTileViewModel.FromModel(inFolderA);
+        var b = ModelTileViewModel.FromModel(inFolderB);
+        vm.AllTiles.Add(a);
+        vm.AllTiles.Add(b);
+
+        await vm.SetUserNsfwRatingAsync(a, isNsfw: true);
+
+        inFolderA.OriginalNsfwRating.Should().Be("PG-13");
+        inFolderB.OriginalNsfwRating.Should().Be("XXX");
+    }
+
+    /// <summary>
+    /// Review round 4: an unrated LoRA's cover says unrated, not NSFW.
+    /// </summary>
+    [Fact]
+    public void TheCover_NamesWhyThePictureIsHidden()
+    {
+        var unrated = ModelTileViewModel.FromModel(NoRating("unrated"));
+        var explicitTile = ModelTileViewModel.FromModel(NewModel("explicit", flaggedNsfw: false, Image("x", NsfwLevel.XXX)));
+
+        unrated.PreviewCoverText.Should().Be("Unrated — preview hidden");
+        explicitTile.PreviewCoverText.Should().Be("NSFW preview hidden");
     }
 }

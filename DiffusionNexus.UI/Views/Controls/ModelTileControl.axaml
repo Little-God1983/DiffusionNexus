@@ -97,7 +97,7 @@
                     Background="#252525">
               <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                 <Border Background="#333" CornerRadius="8" Padding="12,8">
-                  <TextBlock Text="NSFW preview hidden" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
+                  <TextBlock Text="{Binding PreviewCoverText}" FontSize="11" Opacity="0.6" HorizontalAlignment="Center"/>
                 </Border>
               </StackPanel>
             </Border>

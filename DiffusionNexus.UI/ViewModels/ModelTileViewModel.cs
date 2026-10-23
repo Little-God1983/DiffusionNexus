@@ -95,6 +95,12 @@ public partial class ModelTileViewModel : ViewModelBase
     public event EventHandler? Deleted;
 
     /// <summary>
+    /// Raised when <see cref="RefreshModelData"/> changed the LoRA's rating (#647): the parent view
+    /// model files the tile again.
+    /// </summary>
+    public event EventHandler? NsfwVerdictChanged;
+
+    /// <summary>
     /// Allows external collaborators (e.g. the detail-view "Delete Metadata"
     /// command) to signal that this tile should be removed from the grid after
     /// they have already removed the underlying record themselves.
@@ -206,6 +212,7 @@ public partial class ModelTileViewModel : ViewModelBase
     /// </summary>
     public void RefreshModelData(Model refreshedModel)
     {
+        var verdictBefore = NsfwVerdict;
         var index = _allGroupedModels.FindIndex(m => m.Id == refreshedModel.Id);
         if (index >= 0)
         {
@@ -253,6 +260,10 @@ public partial class ModelTileViewModel : ViewModelBase
         {
             ModelEntity = primary;
         }
+
+        // Delete Metadata, Assign Civitai IDs or a download can change the LoRA's rating (#647):
+        // the viewer files the tile again (grid, unrated hint and list).
+        if (NsfwVerdict != verdictBefore) NsfwVerdictChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -439,10 +450,12 @@ public partial class ModelTileViewModel : ViewModelBase
     };
 
     /// <summary>
-    /// Whether the creator's red NSFW badge shows: not once the user rated the LoRA — their rating
-    /// is the LoRA's rating, and "SFW · by you" beside "NSFW" would contradict itself.
+    /// Whether the creator's red NSFW badge shows: exactly when the creator's flag is the LoRA's
+    /// rating — judged on the row of the version on screen, as the hide decision is. Not once the
+    /// user rated the LoRA: their rating is the LoRA's rating, and "SFW · by you" beside "NSFW"
+    /// would contradict itself.
     /// </summary>
-    public bool ShowCreatorNsfwBadge => IsNsfw && !IsRatedByUser;
+    public bool ShowCreatorNsfwBadge => NsfwVerdict.Reason == NsfwHideReason.FlaggedByCreator;
 
     /// <summary>The user rated this LoRA themselves (<see cref="Model.UserNsfwRating"/>).</summary>
     public bool IsRatedByUser => UserRating is not null;
@@ -497,6 +510,9 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <summary>Whether the tile covers its picture: Show NSFW is off and the tile counts as hidden.</summary>
     public bool IsPreviewHidden => HideNsfwPreviews && HasNsfwContent;
 
+    /// <summary>The cover's text: an unrated picture is not known to be NSFW, only not known to be safe.</summary>
+    public string PreviewCoverText => IsUnrated ? "Unrated — preview hidden" : "NSFW preview hidden";
+
     /// <summary>
     /// Raised when the user rates this LoRA SFW (<c>false</c>) or NSFW (<c>true</c>). The Installed
     /// tab records the rating for every model of the tile and filters again.
@@ -536,6 +552,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(UserRatingTooltip));
         OnPropertyChanged(nameof(NsfwRatingSummary));
         OnPropertyChanged(nameof(IsPreviewHidden));
+        OnPropertyChanged(nameof(PreviewCoverText));
     }
 
     /// <summary>
@@ -1125,6 +1142,14 @@ public partial class ModelTileViewModel : ViewModelBase
     /// Gets all model entity IDs across the group, including re-discovery
     /// duplicates dropped during grouping. Use this for any destructive DB op.
     /// </summary>
+    /// <summary>
+    /// The rows a rating is saved to (#647): <see cref="GetAllModelIds"/> plus any row that joined
+    /// the tile after load (<see cref="RefreshModelData"/>) — <see cref="ApplyUserNsfwRating"/>
+    /// rates those in memory, so the database must have them too.
+    /// </summary>
+    internal List<int> GetRatingModelIds() =>
+        GetAllModelIds().Union(_allGroupedModels.Select(m => m.Id)).ToList();
+
     public List<int> GetAllModelIds()
     {
         if (_allDatabaseModelIds.Count > 0)

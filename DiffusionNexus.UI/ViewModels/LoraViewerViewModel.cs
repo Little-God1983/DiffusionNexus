@@ -694,19 +694,11 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         foreach (var oldTile in AllTiles)
         {
-            oldTile.Deleted -= OnTileDeleted;
-            oldTile.DetailRequested -= OnTileDetailRequested;
-            oldTile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+            DetachTile(oldTile);
         }
 
         AllTiles.Clear();
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Sum(t => t.ModelCount);
         RebuildAvailableBaseModels();
@@ -1704,20 +1696,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Unsubscribe from old tiles
             foreach (var oldTile in AllTiles)
             {
-                oldTile.Deleted -= OnTileDeleted;
-                oldTile.DetailRequested -= OnTileDetailRequested;
-                oldTile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+                DetachTile(oldTile);
             }
 
             AllTiles.Clear();
 
-            foreach (var tile in tiles)
-            {
-                tile.Deleted += OnTileDeleted;
-                tile.DetailRequested += OnTileDetailRequested;
-                tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
-                AllTiles.Add(tile);
-            }
+            foreach (var tile in tiles) AddTile(tile);
 
             TotalModelCount = AllTiles.Sum(t => t.ModelCount);
             RebuildAvailableBaseModels();
@@ -2193,9 +2177,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         });
 
         if (refreshedModel is not null)
-            // Filter again: the refresh may have rated the LoRA, which moves it in or out of the
-            // unrated list and changes the hint's count (#647).
-            await InvokeOnUiAsync(() => { tile.RefreshModelData(refreshedModel); ApplyFilters(); });
+            await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
@@ -2532,14 +2514,17 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     private async Task SetUserNsfwRatingCoreAsync(ModelTileViewModel tile, bool isNsfw)
     {
-        // Every tile of this LoRA: one per source folder, possibly over duplicate model rows that
-        // share the Civitai model page. The rating is written for all their rows at once.
-        var sameLora = AllTiles.Where(t => IsSameLora(t, tile)).Append(tile).Distinct().ToList();
-        var modelIds = sameLora.SelectMany(t => t.GetAllModelIds()).Distinct().ToList();
+        // Every tile of this LoRA, the clicked one first: one per source folder, possibly over
+        // duplicate model rows that share the Civitai model page. Each tile's rows keep what Civitai
+        // says about the picture that tile shows; a row two tiles share goes with the first.
+        var sameLora = AllTiles.Where(t => t != tile && IsSameLora(t, tile)).Prepend(tile).ToList();
+        var claimed = new HashSet<int>();
+        var writes = sameLora
+            .Select(t => (Tile: t, Ids: t.GetRatingModelIds().Where(claimed.Add).ToList(), Original: CivitaiRatingLabel(t)))
+            .ToList();
+        var modelIds = claimed.ToList();
         var label = isNsfw ? "NSFW" : "SFW";
-        var original = tile.ModelEntity is { } entity
-            ? NsfwPolicy.CivitaiRatingLabel(entity, tile.SelectedVersion)
-            : "unrated";
+        var original = writes[0].Original;
         try
         {
             if (_scopeFactory is not null && modelIds.Count > 0)
@@ -2548,7 +2533,21 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 {
                     using var scope = _scopeFactory.CreateScope();
                     var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                    return await unitOfWork.Models.SetUserNsfwRatingAsync(modelIds, isNsfw, original).ConfigureAwait(false);
+                    // All or nothing: the screen shows the rating only when every row has it.
+                    await unitOfWork.BeginTransactionAsync().ConfigureAwait(false);
+                    try
+                    {
+                        var rows = 0;
+                        foreach (var write in writes.Where(w => w.Ids.Count > 0))
+                            rows += await unitOfWork.Models.SetUserNsfwRatingAsync(write.Ids, isNsfw, write.Original).ConfigureAwait(false);
+                        await unitOfWork.CommitTransactionAsync().ConfigureAwait(false);
+                        return rows;
+                    }
+                    catch
+                    {
+                        await unitOfWork.RollbackTransactionAsync().ConfigureAwait(false);
+                        throw;
+                    }
                 });
                 if (updated == 0 && modelIds.Any(id => id > 0))
                 {
@@ -2572,10 +2571,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             return;
         }
 
-        foreach (var other in sameLora)
-            other.ApplyUserNsfwRating(isNsfw, original);
+        foreach (var write in writes)
+            write.Tile.ApplyUserNsfwRating(isNsfw, write.Original);
         ApplyFilters();
     }
+
+    /// <summary>What Civitai says about the picture <paramref name="tile"/> shows, in words.</summary>
+    private static string CivitaiRatingLabel(ModelTileViewModel tile) =>
+        tile.ModelEntity is { } entity ? NsfwPolicy.CivitaiRatingLabel(entity, tile.SelectedVersion) : "unrated";
 
     /// <summary>
     /// Whether two tiles show the same LoRA: the same model object, a shared saved row (id), or
@@ -2614,6 +2617,27 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     #region Private Methods
 
+    /// <summary>Adds a tile to the library and listens to it.</summary>
+    internal void AddTile(ModelTileViewModel tile)
+    {
+        tile.Deleted += OnTileDeleted;
+        tile.DetailRequested += OnTileDetailRequested;
+        tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged += OnTileNsfwVerdictChanged;
+        AllTiles.Add(tile);
+    }
+
+    /// <summary>Stops listening to a tile that left the library (replaced, refreshed or deleted).</summary>
+    private void DetachTile(ModelTileViewModel tile)
+    {
+        tile.Deleted -= OnTileDeleted;
+        tile.DetailRequested -= OnTileDetailRequested;
+        tile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+        tile.NsfwVerdictChanged -= OnTileNsfwVerdictChanged;
+    }
+
+    private void OnTileNsfwVerdictChanged(object? sender, EventArgs e) => ApplyFilters();
+
     /// <summary>
     /// Handles the <see cref="ModelTileViewModel.Deleted"/> event by removing the tile
     /// from both <see cref="AllTiles"/> and <see cref="FilteredTiles"/>, then updating counts.
@@ -2622,8 +2646,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         if (sender is not ModelTileViewModel tile) return;
 
-        tile.Deleted -= OnTileDeleted;
-        tile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
+        DetachTile(tile);
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -2636,6 +2659,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             // Deleting the last LoRA turns "no match" into "add source folders".
             OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
+            // A hidden tile is counted by the unrated hint and may be the unrated list's last one.
+            if (_hiddenInView.Contains(tile)) ApplyFilters();
         });
     }
 
@@ -3216,13 +3241,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         // Use the same grouping pipeline as real data
         var tiles = GroupModelsIntoTiles(allDemoModels);
-        foreach (var tile in tiles)
-        {
-            tile.Deleted += OnTileDeleted;
-            tile.DetailRequested += OnTileDetailRequested;
-            tile.NsfwRatingRequested += OnTileNsfwRatingRequested;
-            AllTiles.Add(tile);
-        }
+        foreach (var tile in tiles) AddTile(tile);
 
         TotalModelCount = AllTiles.Count;
         RebuildAvailableBaseModels();
