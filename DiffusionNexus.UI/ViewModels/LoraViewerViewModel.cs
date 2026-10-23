@@ -2193,7 +2193,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         });
 
         if (refreshedModel is not null)
-            await InvokeOnUiAsync(() => tile.RefreshModelData(refreshedModel));
+            // Filter again: the refresh may have rated the LoRA, which moves it in or out of the
+            // unrated list and changes the hint's count (#647).
+            await InvokeOnUiAsync(() => { tile.RefreshModelData(refreshedModel); ApplyFilters(); });
 
         // Pull a preview thumbnail if the tile still lacks one after the metadata sync.
         if (tile.IsThumbnailMissing)
@@ -2530,7 +2532,10 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     private async Task SetUserNsfwRatingCoreAsync(ModelTileViewModel tile, bool isNsfw)
     {
-        var modelIds = tile.GetAllModelIds();
+        // Every tile of this LoRA: one per source folder, possibly over duplicate model rows that
+        // share the Civitai model page. The rating is written for all their rows at once.
+        var sameLora = AllTiles.Where(t => IsSameLora(t, tile)).Append(tile).Distinct().ToList();
+        var modelIds = sameLora.SelectMany(t => t.GetAllModelIds()).Distinct().ToList();
         var label = isNsfw ? "NSFW" : "SFW";
         var original = tile.ModelEntity is { } entity
             ? NsfwPolicy.CivitaiRatingLabel(entity, tile.SelectedVersion)
@@ -2545,6 +2550,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                     var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
                     return await unitOfWork.Models.SetUserNsfwRatingAsync(modelIds, isNsfw, original).ConfigureAwait(false);
                 });
+                if (updated == 0 && modelIds.Any(id => id > 0))
+                {
+                    // The rows are gone (deleted or rebuilt meanwhile): showing a rating that is not
+                    // stored would vanish on the next start.
+                    _logger?.Warn(LogCategory.General, "LoraViewerNsfw",
+                        $"Could not rate '{tile.DisplayName}' {label}: no model row was found to save it in");
+                    SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: it is no longer in the library — click Refresh.";
+                    return;
+                }
                 _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
                     $"Rated '{tile.DisplayName}' {label} (Civitai: {original}; {updated} model row(s))"));
             }
@@ -2558,25 +2572,38 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             return;
         }
 
-        // Every tile over these model rows — a LoRA in two source folders has one per folder. Saved
-        // rows match by id; an unsaved model (id 0) only by being the same object.
-        var rated = modelIds.Where(id => id > 0).ToHashSet();
-        bool SameRows(ModelTileViewModel t) =>
-            t == tile
-            || (tile.ModelEntity is not null && ReferenceEquals(t.ModelEntity, tile.ModelEntity))
-            || t.GetAllModelIds().Any(rated.Contains);
-        foreach (var other in AllTiles.Where(SameRows).ToList())
+        foreach (var other in sameLora)
             other.ApplyUserNsfwRating(isNsfw, original);
         ApplyFilters();
+    }
 
-        // Rating the last unrated LoRA empties the list: back to all LoRAs. Only here — a search
-        // that matches no unrated LoRA for a moment must not close the list under the user.
-        if (ShowUnratedOnly && UnratedCount == 0) ShowUnratedOnly = false;
+    /// <summary>
+    /// Whether two tiles show the same LoRA: the same model object, a shared saved row (id), or
+    /// the same Civitai model page (duplicate rows of one LoRA in different source folders).
+    /// </summary>
+    private static bool IsSameLora(ModelTileViewModel a, ModelTileViewModel b)
+    {
+        if (a == b) return true;
+        if (a.ModelEntity is null || b.ModelEntity is null) return false;
+        if (ReferenceEquals(a.ModelEntity, b.ModelEntity)) return true;
+        if (a.ModelEntity.CivitaiModelPageId is { } page && page == b.ModelEntity.CivitaiModelPageId) return true;
+        var ids = b.GetAllModelIds().Where(id => id > 0).ToHashSet();
+        return a.GetAllModelIds().Any(ids.Contains);
     }
 
     private async void OnTileNsfwRatingRequested(object? sender, bool isNsfw)
     {
-        if (sender is ModelTileViewModel tile) await SetUserNsfwRatingAsync(tile, isNsfw);
+        // async void: an exception here would take the app down. Log it and say so instead.
+        if (sender is not ModelTileViewModel tile) return;
+        try
+        {
+            await SetUserNsfwRatingAsync(tile, isNsfw);
+        }
+        catch (Exception ex)
+        {
+            _logger?.Error(LogCategory.General, "LoraViewerNsfw", $"Rating '{tile.DisplayName}' failed: {ex.Message}", ex);
+            SyncStatus = $"Rating '{tile.DisplayName}' failed: {ex.Message}";
+        }
     }
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
@@ -3013,6 +3040,16 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         // A direct apply supersedes any pending debounced search pass.
         _searchDebounceCts?.Cancel();
+
+        // Once nothing in the library is unrated any more — the last one rated by the user or by a
+        // Download Metadata run — the unrated list (#647) closes instead of showing "the 0 unrated
+        // LoRAs". Not on a search that matches none for a moment: other unrated LoRAs still exist.
+        // Closing it runs this pass again through OnShowUnratedOnlyChanged.
+        if (ShowUnratedOnly && !AllTiles.Any(t => t.IsUnrated))
+        {
+            ShowUnratedOnly = false;
+            return;
+        }
 
         // 1. Build the FULL filtered set (used for count + windowing).
         //    Search / NSFW / base-model filters all run against AllTiles, not against

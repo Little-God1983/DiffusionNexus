@@ -81,7 +81,10 @@ public static class NsfwPolicy
     /// </remarks>
     public static NsfwVerdict JudgeCivitai(Entities.Model model, Entities.ModelVersion? shownVersion)
     {
-        if (model.IsNsfw) return new NsfwVerdict(NsfwHideReason.FlaggedByCreator);
+        // The shown version's own row: in a tile that groups several rows of one LoRA, the version
+        // on screen may belong to a row other than the tile's primary, with its own flag and stamp.
+        var row = shownVersion?.Model ?? model;
+        if (row.IsNsfw) return new NsfwVerdict(NsfwHideReason.FlaggedByCreator);
 
         if (shownVersion?.PrimaryImage is not { } picture || !shownVersion.IsImageNsfw(picture))
             return new NsfwVerdict(NsfwHideReason.None);
@@ -105,7 +108,7 @@ public static class NsfwPolicy
                 : new NsfwVerdict(NsfwHideReason.RatedOnCivitai, mildestNsfw);
         }
 
-        var bulkRunWillFetch = shownVersion.CivitaiId is not null && model.SyncState?.ImagesCheckedAt is null;
+        var bulkRunWillFetch = shownVersion.CivitaiId is not null && row.SyncState?.ImagesCheckedAt is null;
         return new NsfwVerdict(bulkRunWillFetch ? NsfwHideReason.NotRatedYet : NsfwHideReason.NoRating);
     }
 

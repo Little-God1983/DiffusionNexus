@@ -275,6 +275,51 @@ public class LoraViewerViewModelNsfwFilterTests
     }
 
     /// <summary>
+    /// Review round 3: one LoRA can have duplicate model rows that land in separate per-folder
+    /// tiles. They share the Civitai model page, so rating one tile rates the LoRA everywhere.
+    /// </summary>
+    [Fact]
+    public async Task RatingATile_RatesTheSameCivitaiLoraInOtherTiles()
+    {
+        var inFolderA = NoRating("duplicated");
+        var inFolderB = NoRating("duplicated");
+        inFolderA.CivitaiModelPageId = inFolderB.CivitaiModelPageId = 4242;
+        var vm = new LoraViewerViewModel();
+        vm.AllTiles.Clear();
+        var a = ModelTileViewModel.FromModel(inFolderA);
+        var b = ModelTileViewModel.FromModel(inFolderB);
+        vm.AllTiles.Add(a);
+        vm.AllTiles.Add(b);
+
+        await vm.SetUserNsfwRatingAsync(a, isNsfw: false);
+
+        b.IsRatedByUser.Should().BeTrue();
+        inFolderB.UserNsfwRating.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review round 3: the list also closes once nothing anywhere is unrated any more — after a
+    /// Download Metadata run rated the last ones — instead of showing "the 0 unrated LoRAs".
+    /// </summary>
+    [Fact]
+    public async Task TheUnratedList_ClosesOnceNothingIsUnrated_HoweverItGotRated()
+    {
+        var model = NoRating("got rated");
+        var vm = ViewModelWith(model, NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
+        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+
+        // Download Metadata rated it (not the user): its picture now carries Civitai's PG.
+        model.Versions.First().Images.First().NsfwLevel = NsfwLevel.PG;
+        vm.SearchText = "got";
+        await vm.SearchDebounceTask!;
+
+        vm.ShowUnratedOnly.Should().BeFalse();
+        Visible(vm).Should().BeEquivalentTo("got rated");
+    }
+
+    /// <summary>
     /// Review round 2: typing a search inside the unrated list must not close it when an
     /// intermediate text matches no unrated LoRA — only rating the last one closes it.
     /// </summary>

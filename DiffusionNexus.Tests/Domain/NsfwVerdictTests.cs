@@ -149,6 +149,21 @@ public sealed class NsfwVerdictTests
         verdict.IsHidden.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Review round 3: in a grouped tile the shown version can belong to another model row than
+    /// the tile's primary. Whether Civitai was already asked is that row's stamp, not the primary's.
+    /// </summary>
+    [Fact]
+    public void TheShownVersionsOwnRow_DecidesWhetherCivitaiWasAsked()
+    {
+        var (primary, _) = Lora(imagesCheckedAt: null);
+        var (otherRow, otherVersion) = Lora(versionCivitaiId: 700, imagesCheckedAt: Checked, images: Web(1));
+
+        NsfwPolicy.Judge(primary, otherVersion).Reason.Should().Be(NsfwHideReason.NoRating,
+            "the shown version's row was already asked and Civitai had nothing");
+        otherRow.SyncState!.ImagesCheckedAt.Should().Be(Checked);
+    }
+
     [Fact]
     public void ALoraWithoutPictures_IsNotHidden()
     {
