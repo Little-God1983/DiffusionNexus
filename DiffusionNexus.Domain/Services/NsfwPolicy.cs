@@ -53,7 +53,15 @@ public static class NsfwPolicy
     /// (<see cref="Entities.Model.UserNsfwRating"/>) when they gave one, otherwise Civitai's
     /// (<see cref="JudgeCivitai"/>). A LoRA neither rated is unrated, and hidden.
     /// </summary>
-    public static NsfwVerdict Judge(Entities.Model model, Entities.ModelVersion? shownVersion) => model.UserNsfwRating switch
+    public static NsfwVerdict Judge(Entities.Model model, Entities.ModelVersion? shownVersion) =>
+        Judge(model, shownVersion, model.UserNsfwRating);
+
+    /// <summary>
+    /// <see cref="Judge(Entities.Model, Entities.ModelVersion?)"/> with the user's rating given
+    /// separately — for a tile that groups several model rows of one LoRA, where the rating may sit
+    /// on a row other than the one the tile shows.
+    /// </summary>
+    public static NsfwVerdict Judge(Entities.Model model, Entities.ModelVersion? shownVersion, bool? userRating) => userRating switch
     {
         false => new NsfwVerdict(NsfwHideReason.None),
         true => new NsfwVerdict(NsfwHideReason.RatedNsfwByYou),

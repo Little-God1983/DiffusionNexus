@@ -2513,6 +2513,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// </summary>
     internal async Task SetUserNsfwRatingAsync(ModelTileViewModel tile, bool isNsfw)
     {
+        // One rating at a time: two quick clicks (SFW, then NSFW) must land in the database and on
+        // screen in the same order, or the tile shows one rating while the row holds the other.
+        await _ratingGate.WaitAsync();
+        try
+        {
+            await SetUserNsfwRatingCoreAsync(tile, isNsfw);
+        }
+        finally
+        {
+            _ratingGate.Release();
+        }
+    }
+
+    private readonly SemaphoreSlim _ratingGate = new(1, 1);
+
+    private async Task SetUserNsfwRatingCoreAsync(ModelTileViewModel tile, bool isNsfw)
+    {
         var modelIds = tile.GetAllModelIds();
         var label = isNsfw ? "NSFW" : "SFW";
         var original = tile.ModelEntity is { } entity
@@ -2541,8 +2558,20 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             return;
         }
 
-        tile.ApplyUserNsfwRating(isNsfw, original);
+        // Every tile over these model rows — a LoRA in two source folders has one per folder. Saved
+        // rows match by id; an unsaved model (id 0) only by being the same object.
+        var rated = modelIds.Where(id => id > 0).ToHashSet();
+        bool SameRows(ModelTileViewModel t) =>
+            t == tile
+            || (tile.ModelEntity is not null && ReferenceEquals(t.ModelEntity, tile.ModelEntity))
+            || t.GetAllModelIds().Any(rated.Contains);
+        foreach (var other in AllTiles.Where(SameRows).ToList())
+            other.ApplyUserNsfwRating(isNsfw, original);
         ApplyFilters();
+
+        // Rating the last unrated LoRA empties the list: back to all LoRAs. Only here — a search
+        // that matches no unrated LoRA for a moment must not close the list under the user.
+        if (ShowUnratedOnly && UnratedCount == 0) ShowUnratedOnly = false;
     }
 
     private async void OnTileNsfwRatingRequested(object? sender, bool isNsfw)
@@ -3026,18 +3055,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var shown = new List<ModelTileViewModel>(candidates.Count);
             foreach (var tile in candidates)
                 (tile.HasNsfwContent ? hidden : shown).Add(tile);
-            // The unrated list (#647) shows exactly the tiles the hint counts. Once it is empty —
-            // the last one rated, or a search that matches none — the tab goes back to all LoRAs
-            // instead of an empty list. The field, not the property: its change handler would start
-            // a second filter pass inside this one.
-            var unratedInView = hidden.Where(t => t.IsUnrated).ToList();
-            if (ShowUnratedOnly && unratedInView.Count == 0)
-            {
-                _showUnratedOnly = false;
-                OnPropertyChanged(nameof(ShowUnratedOnly));
-                OnPropertyChanged(nameof(ShowUnratedHint));
-            }
-            candidates = ShowUnratedOnly ? unratedInView : shown;
+            // The unrated list (#647) shows exactly the tiles the hint counts.
+            candidates = ShowUnratedOnly ? hidden.Where(t => t.IsUnrated).ToList() : shown;
         }
         foreach (var tile in AllTiles) tile.IsInUnratedView = ShowUnratedOnly && !ShowNsfw;
         ReportHidden(hidden);

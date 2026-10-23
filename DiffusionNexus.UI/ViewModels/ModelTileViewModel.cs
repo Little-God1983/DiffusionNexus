@@ -405,7 +405,22 @@ public partial class ModelTileViewModel : ViewModelBase
     /// which already prefers a safe still.
     /// </summary>
     public NsfwVerdict NsfwVerdict =>
-        ModelEntity is { } model ? NsfwPolicy.Judge(model, SelectedVersion) : new NsfwVerdict(NsfwHideReason.None);
+        ModelEntity is { } model
+            ? NsfwPolicy.Judge(model, SelectedVersion, UserRating)
+            : new NsfwVerdict(NsfwHideReason.None);
+
+    /// <summary>
+    /// The user's rating of this LoRA: the shown row's, or another grouped row's when that one
+    /// has none — a row that joins the group later (another version downloaded, re-discovery)
+    /// carries no rating, and must not undo the one the user gave the LoRA.
+    /// </summary>
+    private bool? UserRating => RatedRow?.UserNsfwRating;
+
+    /// <summary>The model row that holds the user's rating, preferring the shown one.</summary>
+    private Model? RatedRow =>
+        ModelEntity is { UserNsfwRating: not null } shown
+            ? shown
+            : _allGroupedModels.FirstOrDefault(m => m.UserNsfwRating is not null);
 
     /// <summary>Whether "Show NSFW" off hides this tile (<see cref="NsfwVerdict"/>).</summary>
     public bool HasNsfwContent => NsfwVerdict.IsHidden;
@@ -430,10 +445,10 @@ public partial class ModelTileViewModel : ViewModelBase
     public bool ShowCreatorNsfwBadge => IsNsfw && !IsRatedByUser;
 
     /// <summary>The user rated this LoRA themselves (<see cref="Model.UserNsfwRating"/>).</summary>
-    public bool IsRatedByUser => ModelEntity?.UserNsfwRating is not null;
+    public bool IsRatedByUser => UserRating is not null;
 
     /// <summary>The small badge on a LoRA the user rated.</summary>
-    public string UserRatingBadge => ModelEntity?.UserNsfwRating switch
+    public string UserRatingBadge => UserRating switch
     {
         false => "SFW · by you",
         true => "NSFW · by you",
@@ -441,8 +456,8 @@ public partial class ModelTileViewModel : ViewModelBase
     };
 
     /// <summary>The badge's tooltip: the user's rating and the original one it replaced.</summary>
-    public string UserRatingTooltip => ModelEntity?.UserNsfwRating is { } isNsfw
-        ? $"Rated {(isNsfw ? "NSFW" : "SFW")} by you. Civitai: {ModelEntity.OriginalNsfwRating ?? "unrated"}."
+    public string UserRatingTooltip => RatedRow is { UserNsfwRating: { } isNsfw } row
+        ? $"Rated {(isNsfw ? "NSFW" : "SFW")} by you. Civitai: {row.OriginalNsfwRating ?? "unrated"}."
         : string.Empty;
 
     /// <summary>The detail view's line: what the LoRA is rated, and by whom.</summary>
@@ -451,8 +466,8 @@ public partial class ModelTileViewModel : ViewModelBase
         get
         {
             if (ModelEntity is not { } model) return string.Empty;
-            if (model.UserNsfwRating is { } isNsfw)
-                return $"{(isNsfw ? "NSFW" : "SFW")} — changed by you (Civitai: {model.OriginalNsfwRating ?? "unrated"})";
+            if (RatedRow is { UserNsfwRating: { } isNsfw } row)
+                return $"{(isNsfw ? "NSFW" : "SFW")} — changed by you (Civitai: {row.OriginalNsfwRating ?? "unrated"})";
 
             var verdict = NsfwVerdict;
             if (verdict.IsUnrated) return "Unrated";

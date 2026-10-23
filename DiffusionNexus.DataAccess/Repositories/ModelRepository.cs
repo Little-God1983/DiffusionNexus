@@ -259,6 +259,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(
                 m => m.Versions.Any(v => v.Files.Any(f =>
@@ -289,6 +291,8 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Include(m => m.Versions).ThenInclude(v => v.Files)
             .Include(m => m.Versions).ThenInclude(v => v.Images)
             .Include(m => m.Versions).ThenInclude(v => v.TriggerWords)
+            // The images step's stamp, for a tile refreshed from this load (#647, NsfwPolicy.Judge).
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == modelId.Value, cancellationToken)
             .ConfigureAwait(false);

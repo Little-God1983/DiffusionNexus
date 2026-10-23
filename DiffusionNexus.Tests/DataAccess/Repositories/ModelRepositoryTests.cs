@@ -704,6 +704,33 @@ public class ModelRepositoryTests : IDisposable
         loaded.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
     }
 
+    /// <summary>
+    /// Review round 2: the detail view refreshes a tile after a download through the file-path and
+    /// file-hash lookups too; they carry the sync state for the same reason as GetByIdWithIncludes.
+    /// </summary>
+    [Fact]
+    public async Task FindByLocalFilePathAndHash_CarryTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        const string path = @"C:\m\found.safetensors";
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Found", path);
+            model.Versions.First().Files.First().HashSHA256 = "ABCDEF";
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        (await uow.Models.FindByLocalFilePathAsync(path))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+        (await uow.Models.FindByFileHashAsync("ABCDEF"))!.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
     /// <summary>Review: a rating is a change to the model row like any other save — it stamps UpdatedAt.</summary>
     [Fact]
     public async Task SetUserNsfwRating_StampsUpdatedAt()

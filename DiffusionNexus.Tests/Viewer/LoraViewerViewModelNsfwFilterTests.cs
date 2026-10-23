@@ -230,6 +230,73 @@ public class LoraViewerViewModelNsfwFilterTests
     }
 
     /// <summary>
+    /// Review round 2: a model row that joins the group later (another version downloaded,
+    /// re-discovery) carries no rating; when it becomes the tile's primary the LoRA must keep the
+    /// rating the user gave the group.
+    /// </summary>
+    [Fact]
+    public void AGroupedTile_KeepsTheUsersRating_WhenThePrimaryRowHasNone()
+    {
+        var newer = NoRating("same lora");
+        var rated = NoRating("same lora");
+        rated.UserNsfwRating = false;
+        rated.OriginalNsfwRating = "unrated";
+
+        var tile = ModelTileViewModel.FromModelGroup([newer, rated]);
+
+        tile.ModelEntity.Should().NotBeNull();
+        tile.IsRatedByUser.Should().BeTrue();
+        tile.IsUnrated.Should().BeFalse();
+        tile.HasNsfwContent.Should().BeFalse();
+        tile.UserRatingBadge.Should().Be("SFW · by you");
+    }
+
+    /// <summary>
+    /// Review round 2: a LoRA in two source folders has two tiles over the same model rows; rating
+    /// one updates the other's badges too, not only its place in the grid.
+    /// </summary>
+    [Fact]
+    public async Task RatingATile_RefreshesTheOtherTilesOfTheSameModel()
+    {
+        var model = NoRating("in two folders");
+        var vm = new LoraViewerViewModel();
+        vm.AllTiles.Clear();
+        var a = ModelTileViewModel.FromModel(model);
+        var b = ModelTileViewModel.FromModel(model);
+        vm.AllTiles.Add(a);
+        vm.AllTiles.Add(b);
+        var raised = new List<string?>();
+        b.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        await vm.SetUserNsfwRatingAsync(a, isNsfw: false);
+
+        b.IsRatedByUser.Should().BeTrue();
+        raised.Should().Contain(nameof(ModelTileViewModel.UserRatingBadge));
+    }
+
+    /// <summary>
+    /// Review round 2: typing a search inside the unrated list must not close it when an
+    /// intermediate text matches no unrated LoRA — only rating the last one closes it.
+    /// </summary>
+    [Fact]
+    public async Task ASearchThatMatchesNone_KeepsTheUnratedListOpen()
+    {
+        var vm = ViewModelWith(NoRating("alpha"), NoRating("beta"));
+        vm.SearchDebounceInterval = TimeSpan.FromMilliseconds(10);
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+
+        vm.SearchText = "zzz";
+        await vm.SearchDebounceTask!;
+        vm.ShowUnratedOnly.Should().BeTrue();
+
+        vm.SearchText = "alp";
+        await vm.SearchDebounceTask!;
+        vm.ShowUnratedOnly.Should().BeTrue();
+        Visible(vm).Should().BeEquivalentTo("alpha");
+    }
+
+    /// <summary>
     /// Review: rating the last unrated LoRA empties the list — the tab goes back to all LoRAs
     /// instead of leaving the user in an empty "Showing the 0 unrated LoRAs" view.
     /// </summary>
