@@ -675,6 +675,59 @@ public class ModelRepositoryTests : IDisposable
         (await ReadAsync())[a].Should().Be((true, "XXX"), "the original is what Civitai said before the user's first change");
     }
 
+    /// <summary>
+    /// Review: a tile refreshed after Download Metadata in the details is reloaded through
+    /// GetByIdWithIncludesAsync. Without the sync state the unrated-reason reads "never checked" and
+    /// promises Download Metadata again for a LoRA Civitai already answered (deleted).
+    /// </summary>
+    [Fact]
+    public async Task GetByIdWithIncludes_CarriesTheSyncState()
+    {
+        var checkedAt = new DateTimeOffset(2026, 10, 23, 9, 39, 10, TimeSpan.Zero);
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Reloaded", @"C:\m\reloaded.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            var state = await seed.SyncStates.GetOrCreateAsync(model.Id);
+            state.ImagesCheckedAt = checkedAt;
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var loaded = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(id);
+
+        loaded!.SyncState.Should().NotBeNull();
+        loaded.SyncState!.ImagesCheckedAt.Should().Be(checkedAt);
+    }
+
+    /// <summary>Review: a rating is a change to the model row like any other save — it stamps UpdatedAt.</summary>
+    [Fact]
+    public async Task SetUserNsfwRating_StampsUpdatedAt()
+    {
+        int id;
+        using (var seedScope = _serviceProvider.CreateScope())
+        {
+            var seed = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = CreateModelWithLocalFile("Stamp", @"C:\m\stamp.safetensors");
+            await seed.Models.AddAsync(model);
+            await seed.SaveChangesAsync();
+            id = model.Id;
+        }
+        var before = DateTimeOffset.UtcNow;
+
+        using (var scope = _serviceProvider.CreateScope())
+            await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.SetUserNsfwRatingAsync([id], isNsfw: false, originalRating: "XXX");
+
+        using var readScope = _serviceProvider.CreateScope();
+        var saved = await readScope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdAsync(id);
+        saved!.UpdatedAt.Should().NotBeNull();
+        saved.UpdatedAt!.Value.Should().BeOnOrAfter(before);
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();

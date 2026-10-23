@@ -220,6 +220,10 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
                 .ThenInclude(v => v.Images)
             .Include(m => m.Versions)
                 .ThenInclude(v => v.TriggerWords)
+            // The images step's stamp: a tile refreshed from this load tells "not rated yet" from
+            // "Civitai had no rating" by it (#647, NsfwPolicy.Judge). Tracked like the rest, so the
+            // sync steps' GetOrCreate finds this instance instead of loading a second one.
+            .Include(m => m.SyncState)
             .AsSplitQuery()
             .FirstOrDefaultAsync(m => m.Id == id, cancellationToken)
             .ConfigureAwait(false);
@@ -483,7 +487,9 @@ internal sealed class ModelRepository : RepositoryBase<Model>, IModelRepository
             .Where(m => modelIds.Contains(m.Id))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(m => m.UserNsfwRating, (bool?)isNsfw)
-                .SetProperty(m => m.OriginalNsfwRating, m => m.OriginalNsfwRating ?? originalRating),
+                .SetProperty(m => m.OriginalNsfwRating, m => m.OriginalNsfwRating ?? originalRating)
+                // ExecuteUpdate bypasses SaveChanges, which stamps UpdatedAt for every other change.
+                .SetProperty(m => m.UpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
                 cancellationToken)
             .ConfigureAwait(false);
     }

@@ -423,6 +423,12 @@ public partial class ModelTileViewModel : ViewModelBase
         _ => string.Empty,
     };
 
+    /// <summary>
+    /// Whether the creator's red NSFW badge shows: not once the user rated the LoRA — their rating
+    /// is the LoRA's rating, and "SFW · by you" beside "NSFW" would contradict itself.
+    /// </summary>
+    public bool ShowCreatorNsfwBadge => IsNsfw && !IsRatedByUser;
+
     /// <summary>The user rated this LoRA themselves (<see cref="Model.UserNsfwRating"/>).</summary>
     public bool IsRatedByUser => ModelEntity?.UserNsfwRating is not null;
 
@@ -488,6 +494,20 @@ public partial class ModelTileViewModel : ViewModelBase
     [RelayCommand]
     private void RateNsfw() => NsfwRatingRequested?.Invoke(this, true);
 
+    /// <summary>
+    /// Records the user's rating on every model row this tile groups, in memory — the database
+    /// already has it for all of them. Keeps each row's first original rating.
+    /// </summary>
+    internal void ApplyUserNsfwRating(bool isNsfw, string originalRating)
+    {
+        foreach (var model in _allGroupedModels.Append(ModelEntity).OfType<Model>().Distinct())
+        {
+            model.UserNsfwRating = isNsfw;
+            model.OriginalNsfwRating ??= originalRating;
+        }
+        NotifyNsfwVerdictChanged();
+    }
+
     /// <summary>Re-announces everything that follows from <see cref="NsfwVerdict"/>.</summary>
     internal void NotifyNsfwVerdictChanged()
     {
@@ -496,6 +516,7 @@ public partial class ModelTileViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsUnrated));
         OnPropertyChanged(nameof(UnratedTooltip));
         OnPropertyChanged(nameof(IsRatedByUser));
+        OnPropertyChanged(nameof(ShowCreatorNsfwBadge));
         OnPropertyChanged(nameof(UserRatingBadge));
         OnPropertyChanged(nameof(UserRatingTooltip));
         OnPropertyChanged(nameof(NsfwRatingSummary));

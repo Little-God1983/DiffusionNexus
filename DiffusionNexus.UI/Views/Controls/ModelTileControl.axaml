@@ -246,7 +246,7 @@
         </Border>
 
         <!-- NSFW Badge -->
-        <Border IsVisible="{Binding IsNsfw}"
+        <Border IsVisible="{Binding ShowCreatorNsfwBadge}"
                 Background="#E53935"
                 CornerRadius="4"
                 Padding="6,2"

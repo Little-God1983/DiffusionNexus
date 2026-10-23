@@ -696,6 +696,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             oldTile.Deleted -= OnTileDeleted;
             oldTile.DetailRequested -= OnTileDetailRequested;
+            oldTile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
         }
 
         AllTiles.Clear();
@@ -1705,6 +1706,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             {
                 oldTile.Deleted -= OnTileDeleted;
                 oldTile.DetailRequested -= OnTileDetailRequested;
+                oldTile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
             }
 
             AllTiles.Clear();
@@ -2534,15 +2536,12 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         {
             _logger?.Error(LogCategory.General, "LoraViewerNsfw",
                 $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}", ex);
+            // On screen too: a click that silently does nothing invites clicking again.
+            SyncStatus = $"Could not rate '{tile.DisplayName}' {label}: {ex.Message}";
             return;
         }
 
-        if (tile.ModelEntity is { } model)
-        {
-            model.UserNsfwRating = isNsfw;
-            model.OriginalNsfwRating ??= original;
-        }
-        tile.NotifyNsfwVerdictChanged();
+        tile.ApplyUserNsfwRating(isNsfw, original);
         ApplyFilters();
     }
 
@@ -2568,6 +2567,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         if (sender is not ModelTileViewModel tile) return;
 
         tile.Deleted -= OnTileDeleted;
+        tile.NsfwRatingRequested -= OnTileNsfwRatingRequested;
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -3026,8 +3026,18 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             var shown = new List<ModelTileViewModel>(candidates.Count);
             foreach (var tile in candidates)
                 (tile.HasNsfwContent ? hidden : shown).Add(tile);
-            // The unrated list (#647) shows exactly the tiles the hint counts.
-            candidates = ShowUnratedOnly ? hidden.Where(t => t.IsUnrated).ToList() : shown;
+            // The unrated list (#647) shows exactly the tiles the hint counts. Once it is empty —
+            // the last one rated, or a search that matches none — the tab goes back to all LoRAs
+            // instead of an empty list. The field, not the property: its change handler would start
+            // a second filter pass inside this one.
+            var unratedInView = hidden.Where(t => t.IsUnrated).ToList();
+            if (ShowUnratedOnly && unratedInView.Count == 0)
+            {
+                _showUnratedOnly = false;
+                OnPropertyChanged(nameof(ShowUnratedOnly));
+                OnPropertyChanged(nameof(ShowUnratedHint));
+            }
+            candidates = ShowUnratedOnly ? unratedInView : shown;
         }
         foreach (var tile in AllTiles) tile.IsInUnratedView = ShowUnratedOnly && !ShowNsfw;
         ReportHidden(hidden);

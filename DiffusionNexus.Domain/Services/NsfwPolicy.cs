@@ -84,14 +84,17 @@ public static class NsfwPolicy
         var hasUnratedWebImages = shownVersion.Images.Any(i => i.NsfwLevel == NsfwLevel.None && IsWebImage(i.Url));
         if (!hasUnratedWebImages)
         {
-            // An unrated local preview beside a gallery Civitai rated NSFW throughout: the gallery's
-            // mildest rating is the honest reason.
-            var mildest = shownVersion.Images
-                .Where(i => i.NsfwLevel != NsfwLevel.None)
+            // An unrated local preview beside a gallery whose stills Civitai rated NSFW: the
+            // gallery's mildest NSFW rating is the honest reason. Safe ratings (a PG video, say) are
+            // not a reason to hide anything, and with no NSFW rating at all the preview has none.
+            var mildestNsfw = shownVersion.Images
+                .Where(i => i.NsfwLevel != NsfwLevel.None && !IsSafe(i.NsfwLevel))
                 .Select(i => i.NsfwLevel)
                 .DefaultIfEmpty(NsfwLevel.None)
                 .Min();
-            return new NsfwVerdict(NsfwHideReason.RatedOnCivitai, mildest);
+            return mildestNsfw == NsfwLevel.None
+                ? new NsfwVerdict(NsfwHideReason.NoRating)
+                : new NsfwVerdict(NsfwHideReason.RatedOnCivitai, mildestNsfw);
         }
 
         var bulkRunWillFetch = shownVersion.CivitaiId is not null && model.SyncState?.ImagesCheckedAt is null;

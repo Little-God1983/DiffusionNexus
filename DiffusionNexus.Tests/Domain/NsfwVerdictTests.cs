@@ -116,6 +116,39 @@ public sealed class NsfwVerdictTests
         NsfwPolicy.Judge(model, version).Should().Be(new NsfwVerdict(NsfwHideReason.RatedOnCivitai, NsfwLevel.X));
     }
 
+    /// <summary>
+    /// Review: the gallery fallback must not name a safe rating for a hidden LoRA. A PG video
+    /// beside an XXX still: the local preview is judged by the NSFW ratings (XXX), not by the
+    /// video's PG — "hidden, rated PG" contradicts itself.
+    /// </summary>
+    [Fact]
+    public void ALocalPreviewFallback_IgnoresSafeRatings()
+    {
+        var local = new ModelImage { Id = 1, Url = "file:///E:/l/a.preview.png", MediaType = "image" };
+        var video = Web(2, NsfwLevel.PG);
+        video.MediaType = "video";
+        var (model, version) = Lora(imagesCheckedAt: Checked, images: [local, video, Web(3, NsfwLevel.XXX)]);
+
+        NsfwPolicy.Judge(model, version).Should().Be(new NsfwVerdict(NsfwHideReason.RatedOnCivitai, NsfwLevel.XXX));
+    }
+
+    /// <summary>
+    /// A local preview beside Civitai pictures that are all rated safe but are videos: nothing NSFW
+    /// is rated, so the hidden preview has no rating — not "rated PG".
+    /// </summary>
+    [Fact]
+    public void ALocalPreviewBesideOnlySafeVideos_HasNoRating()
+    {
+        var local = new ModelImage { Id = 1, Url = "file:///E:/l/a.preview.png", MediaType = "image" };
+        var video = Web(2, NsfwLevel.PG);
+        video.MediaType = "video";
+        var (model, version) = Lora(imagesCheckedAt: Checked, images: [local, video]);
+
+        var verdict = NsfwPolicy.Judge(model, version);
+        verdict.Reason.Should().Be(NsfwHideReason.NoRating);
+        verdict.IsHidden.Should().BeTrue();
+    }
+
     [Fact]
     public void ALoraWithoutPictures_IsNotHidden()
     {

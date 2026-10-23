@@ -209,6 +209,60 @@ public class LoraViewerViewModelNsfwFilterTests
         xxx.UserRatingTooltip.Should().Be("Rated NSFW by you. Civitai: XXX.", "the original stays what Civitai said first");
     }
 
+    /// <summary>
+    /// Review: a tile groups several model rows of one LoRA, and the database gets the rating for
+    /// all of them. The ones in memory must too — otherwise the tile loses the rating as soon as a
+    /// refresh makes another grouped row its primary.
+    /// </summary>
+    [Fact]
+    public async Task RatingAGroupedTile_RatesEveryGroupedModelInMemory()
+    {
+        var first = NoRating("same lora");
+        var second = NoRating("same lora");
+        var vm = new LoraViewerViewModel();
+        vm.AllTiles.Clear();
+        var tile = ModelTileViewModel.FromModelGroup([first, second]);
+        vm.AllTiles.Add(tile);
+
+        await vm.SetUserNsfwRatingAsync(tile, isNsfw: false);
+
+        new[] { first, second }.Should().OnlyContain(m => m.UserNsfwRating == false && m.OriginalNsfwRating == "unrated");
+    }
+
+    /// <summary>
+    /// Review: rating the last unrated LoRA empties the list — the tab goes back to all LoRAs
+    /// instead of leaving the user in an empty "Showing the 0 unrated LoRAs" view.
+    /// </summary>
+    [Fact]
+    public async Task RatingTheLastUnratedLora_LeavesTheEmptyList()
+    {
+        var vm = ViewModelWith(NoRating("only unrated"), NewModel("safe", flaggedNsfw: false, Image("s", NsfwLevel.PG)));
+        vm.ShowNsfw = false;
+        vm.ShowUnratedCommand.Execute(null);
+
+        await vm.SetUserNsfwRatingAsync(vm.FilteredTiles.Single(), isNsfw: false);
+
+        vm.ShowUnratedOnly.Should().BeFalse();
+        Visible(vm).Should().BeEquivalentTo("only unrated", "safe");
+    }
+
+    /// <summary>
+    /// Review: the creator's red NSFW badge contradicts a LoRA the user rated SFW ("SFW · by you"
+    /// beside "NSFW"). The user's rating is the LoRA's rating, so the creator badge steps aside.
+    /// </summary>
+    [Fact]
+    public async Task TheCreatorsNsfwBadge_StepsAside_OnceTheUserRated()
+    {
+        var vm = ViewModelWith(NewModel("flagged", flaggedNsfw: true, Image("pg", NsfwLevel.PG)));
+        var tile = vm.AllTiles.Single();
+        tile.ShowCreatorNsfwBadge.Should().BeTrue();
+
+        await vm.SetUserNsfwRatingAsync(tile, isNsfw: false);
+
+        tile.ShowCreatorNsfwBadge.Should().BeFalse();
+        tile.UserRatingTooltip.Should().Be("Rated SFW by you. Civitai: NSFW (creator's flag).");
+    }
+
     /// <summary>The tile's buttons and menu ask the Installed tab to record the rating.</summary>
     [Fact]
     public void TheTilesRateCommands_RequestTheRating()
