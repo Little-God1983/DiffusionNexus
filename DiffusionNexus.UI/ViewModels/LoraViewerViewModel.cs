@@ -2414,6 +2414,23 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     /// <summary>Tiles the last filter pass hid only because their Civitai picture is not rated yet.</summary>
     internal int HiddenUnratedCount { get; private set; }
 
+    /// <summary>Whether "Show NSFW" off is hiding LoRAs only because their pictures are not rated yet.</summary>
+    public bool HasHiddenUnrated => HiddenUnratedCount > 0;
+
+    /// <summary>The hint shown under the toolbar while <see cref="HasHiddenUnrated"/>.</summary>
+    public string HiddenUnratedMessage => FormattableString.Invariant(
+        $"{HiddenUnratedCount} {(HiddenUnratedCount == 1 ? "LoRA is" : "LoRAs are")} hidden because the preview has no NSFW rating yet. Download Metadata rates them.");
+
+    /// <summary>
+    /// What the empty grid says. "Add LoRA source folders" only when there are no LoRAs at all — a
+    /// library whose every tile is filtered out is not an empty library (#631 made that state common
+    /// until the first Download Metadata run rates the pictures).
+    /// </summary>
+    public string EmptyStateMessage =>
+        AllTiles.Count == 0 ? "Add LoRA source folders in Settings, then click Refresh."
+        : HasHiddenUnrated ? "Their previews have no NSFW rating yet. Run Download Metadata to rate them, or turn Show NSFW on."
+        : "No LoRAs match the current filters.";
+
     /// <summary>
     /// Says in the Unified Console how many LoRAs "Show NSFW" off hides only for want of a rating,
     /// and what fixes it. Logged when the number changes, not on every filter pass (each keystroke
@@ -2423,6 +2440,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     {
         if (count == HiddenUnratedCount) return;
         HiddenUnratedCount = count;
+        OnPropertyChanged(nameof(HasHiddenUnrated));
+        OnPropertyChanged(nameof(HiddenUnratedMessage));
         if (count == 0) return;
 
         _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
@@ -2921,6 +2940,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
         // Status / count reflects the full filtered set.
         FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
+        OnPropertyChanged(nameof(EmptyStateMessage));
 
         TriggerVisibleUpdateCheck();
     }

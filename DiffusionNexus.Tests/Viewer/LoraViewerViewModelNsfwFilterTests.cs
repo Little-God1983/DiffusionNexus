@@ -92,6 +92,46 @@ public class LoraViewerViewModelNsfwFilterTests
         vm.HiddenUnratedCount.Should().Be(1, "the user is told how many wait for Download Metadata");
     }
 
+    /// <summary>
+    /// Until the first Download Metadata run after the upgrade, nearly every Civitai picture is
+    /// unrated and "Show NSFW" off empties the grid. The tab must say why and what to do, not
+    /// "add LoRA source folders" as if the library were gone.
+    /// </summary>
+    [Fact]
+    public void HiddenUnratedTiles_AreExplained_WithTheWayToRateThem()
+    {
+        var vm = ViewModelWith(
+            NewModel("unrated one", flaggedNsfw: false, Image("u1", NsfwLevel.None)),
+            NewModel("unrated two", flaggedNsfw: false, Image("u2", NsfwLevel.None)));
+
+        vm.ShowNsfw = false;
+
+        vm.HasHiddenUnrated.Should().BeTrue();
+        vm.HiddenUnratedMessage.Should().Contain("2 LoRAs").And.Contain("Download Metadata");
+        vm.EmptyStateMessage.Should().Contain("Download Metadata").And.NotContain("source folders");
+    }
+
+    [Fact]
+    public void EmptyState_SaysNoMatch_WhenFiltersHideARatedLibrary()
+    {
+        var vm = ViewModelWith(NewModel("explicit gallery", flaggedNsfw: false, Image("a", NsfwLevel.XXX)));
+
+        vm.ShowNsfw = false;
+
+        vm.HasHiddenUnrated.Should().BeFalse();
+        vm.EmptyStateMessage.Should().Be("No LoRAs match the current filters.");
+    }
+
+    [Fact]
+    public void EmptyState_AsksForSourceFolders_OnlyWhenThereAreNoLoras()
+    {
+        var vm = ViewModelWith();
+
+        vm.ShowNsfw = false;
+
+        vm.EmptyStateMessage.Should().Be("Add LoRA source folders in Settings, then click Refresh.");
+    }
+
     [Fact]
     public void ShowNsfwOn_ShowsEverything()
     {
