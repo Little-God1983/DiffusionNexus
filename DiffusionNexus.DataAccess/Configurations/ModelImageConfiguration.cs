@@ -19,10 +19,9 @@ internal sealed class ModelImageConfiguration : IEntityTypeConfiguration<ModelIm
         // Properties
         entity.Property(e => e.Url).IsRequired().HasMaxLength(2000);
         entity.Property(e => e.MediaType).HasMaxLength(20);
-        // Civitai's bitmask as a plain integer, in a column of its own (#631). IsNsfw is derived
-        // from it, never stored.
+        // Civitai's bitmask as a plain integer, in a column of its own (#631). The NSFW verdict is
+        // derived from it (ModelVersion.IsImageNsfw), never stored.
         entity.Property(e => e.NsfwLevel).HasColumnName("NsfwRating").HasConversion<int>();
-        entity.Ignore(e => e.IsNsfw);
 
         // Dead columns kept for downgrade safety — see ModelImage.LegacyIsNsfw. Configured by name
         // so nothing compiles against the [Obsolete(error: true)] properties, and shaped exactly as

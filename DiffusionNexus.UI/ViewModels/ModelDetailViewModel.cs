@@ -16,6 +16,7 @@ using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiBrowser;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.Views.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
@@ -336,7 +337,8 @@ public partial class ModelDetailViewModel : ViewModelBase
         ModelName = tile.DisplayName;
         ModelTypeDisplay = tile.ModelTypeDisplay;
         CreatorDisplay = tile.CreatorName;
-        ThumbnailImage = tile.ThumbnailImage;
+        // A picture the tile covers (Show NSFW off, #631) is not shown here either.
+        ThumbnailImage = tile.IsPreviewHidden ? null : tile.ThumbnailImage;
 
         PopulateFromLocalVersion(tile);
 
@@ -1140,7 +1142,7 @@ public partial class ModelDetailViewModel : ViewModelBase
             if (matchingButton is not null)
             {
                 matchingButton.SelectCommand.Execute(null);
-                ThumbnailImage = SourceTile.ThumbnailImage;
+                ThumbnailImage = SourceTile.IsPreviewHidden ? null : SourceTile.ThumbnailImage;
             }
         }
         else if (selected.CivitaiVersion.Images.Count > 0)
@@ -1150,10 +1152,22 @@ public partial class ModelDetailViewModel : ViewModelBase
             _detailThumbnailCts?.Dispose();
             _detailThumbnailCts = new CancellationTokenSource();
 
-            // Load first image from Civitai version
-            _ = LoadCivitaiThumbnailAsync(selected.CivitaiVersion.Images[0], _detailThumbnailCts.Token);
+            // Load the version's first picture — its first safe one while Show NSFW is off.
+            var preview = PickCivitaiVersionPreview(selected.CivitaiVersion.Images, SourceTile?.HideNsfwPreviews == true);
+            if (preview is null)
+                ThumbnailImage = null;
+            else
+                _ = LoadCivitaiThumbnailAsync(preview, _detailThumbnailCts.Token);
         }
     }
+
+    /// <summary>
+    /// The picture the detail panel shows for a version that exists only on Civitai: its first,
+    /// or — while Show NSFW is off — its first rated safe (<see cref="CivitaiNsfwPolicy.IsImageSafe"/>),
+    /// or none (#631).
+    /// </summary>
+    internal static CivitaiModelImage? PickCivitaiVersionPreview(IReadOnlyList<CivitaiModelImage> images, bool hideNsfw) =>
+        hideNsfw ? images.FirstOrDefault(CivitaiNsfwPolicy.IsImageSafe) : images.FirstOrDefault();
 
     private async Task LoadCivitaiThumbnailAsync(CivitaiModelImage image, CancellationToken ct = default)
     {

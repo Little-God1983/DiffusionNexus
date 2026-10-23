@@ -143,6 +143,22 @@ public sealed class SyncStateRepositoryThumbnailTests : IDisposable
     /// A zero-length BLOB is not a thumbnail. The flag is <c>!= null AND &lt;&gt; X''</c> for
     /// exactly this row, which <c>ModelImage.HasThumbnail</c> also refuses to call a thumbnail.
     /// </summary>
+    /// <summary>
+    /// #631: beside Civitai pictures, an unrated local preview counts as NSFW, so the primary —
+    /// and the image this step fetches — is the rated-safe Civitai still, exactly as
+    /// <c>ModelVersion.PrimaryImage</c> picks it. Naming a different image would fetch bytes the
+    /// tile never shows.
+    /// </summary>
+    [Fact]
+    public async Task ThumbnailCandidates_PreferARatedSafeCivitaiStill_OverALocalPreview()
+    {
+        var seed = await SeedAsync("local-and-civitai", null,
+            new ModelImage { Url = "file:///C:/m/local.preview.png", MediaType = "image" },
+            Img(Static, sortOrder: 1));
+
+        (await SelectAsync()).Should().ContainSingle().Which.ImageId.Should().Be(seed.ImageIds[1]);
+    }
+
     [Fact]
     public async Task ThumbnailCandidates_TreatAnEmptyBlobAsNoThumbnail()
     {

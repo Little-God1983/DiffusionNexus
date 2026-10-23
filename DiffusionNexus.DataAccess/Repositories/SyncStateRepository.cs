@@ -515,7 +515,15 @@ internal sealed class SyncStateRepository : RepositoryBase<ModelSyncState>, ISyn
 
         return rows
             .GroupBy(r => r.VersionId)
-            .Select(g => g.OrderBy(r => PrimaryImageRank(NsfwPolicy.IsNsfwImage(r.NsfwLevel, r.Url), r.MediaType, r.Url)).ThenBy(r => r.ImageId).First())
+            .Select(g =>
+            {
+                // Judged in the version, as ModelVersion.IsImageNsfw does: a local preview beside
+                // Civitai pictures is not known to be safe (#631).
+                var hasCivitaiImages = g.Any(r => NsfwPolicy.IsWebImage(r.Url));
+                return g.OrderBy(r => PrimaryImageRank(NsfwPolicy.IsNsfwImage(r.NsfwLevel, r.Url, hasCivitaiImages), r.MediaType, r.Url))
+                    .ThenBy(r => r.ImageId)
+                    .First();
+            })
             // Asked of the primary only. The other images of the version are not work: the tile
             // shows the primary, so bytes for the rest render nowhere and would multiply a
             // library-wide run by the image count per version.

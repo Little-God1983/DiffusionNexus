@@ -710,12 +710,12 @@ public sealed class CivitaiMetadataApplierTests : IDisposable
         using (var scope = NewScope())
         {
             var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-            var images = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single().Images
-                .OrderBy(i => i.SortOrder).ToList();
+            var version = (await uow.Models.GetByIdWithIncludesAsync(modelId))!.Versions.Single();
+            var images = version.Images.OrderBy(i => i.SortOrder).ToList();
 
             images.Select(i => i.Url).Should().Equal("https://img/5.jpeg", "https://img/6.jpeg");
             images.Select(i => i.NsfwLevel).Should().Equal(NsfwLevel.XXX, NsfwLevel.PG);
-            images.Select(i => i.IsNsfw).Should().Equal(true, false);
+            images.Select(version.IsImageNsfw).Should().Equal(true, false);
         }
     }
 

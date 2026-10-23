@@ -60,17 +60,74 @@ public sealed class NsfwPolicyTests
         NsfwPolicy.IsNsfwImage(level, "file:///E:/Loras/a.png").Should().Be(nsfw);
     }
 
+    /// <summary>
+    /// A local preview file beside a LoRA is, for a Civitai version, a copy one of the downloaders
+    /// saved from its gallery — often the X-rated cover. Next to Civitai pictures it is judged like
+    /// them (unknown = not safe); a local-only version has nothing else to show and keeps it. A
+    /// thumbnail the user uploaded is their choice either way.
+    /// </summary>
     [Fact]
-    public void ModelImage_IsNsfw_IsDerivedFromItsRating()
+    public void UnratedLocalPreview_IsNsfw_OnlyBesideCivitaiImages()
     {
-        var image = new ModelImage { Url = "https://image.civitai.com/x/a.jpeg" };
-        image.IsNsfw.Should().BeTrue("an unrated Civitai image is not known to be safe");
+        const string local = "file:///E:/Loras/a.preview.png";
+        NsfwPolicy.IsNsfwImage(NsfwLevel.None, local, versionHasCivitaiImages: true).Should().BeTrue();
+        NsfwPolicy.IsNsfwImage(NsfwLevel.None, local, versionHasCivitaiImages: false).Should().BeFalse();
+        NsfwPolicy.IsNsfwImage(NsfwLevel.None, ModelImage.UserThumbnailScheme + "x", versionHasCivitaiImages: true)
+            .Should().BeFalse();
+    }
 
-        image.NsfwLevel = NsfwLevel.PG13;
-        image.IsNsfw.Should().BeFalse();
+    private static ModelImage Img(int id, string url, NsfwLevel level = NsfwLevel.None, string mediaType = "image")
+        => new() { Id = id, Url = url, NsfwLevel = level, MediaType = mediaType };
 
-        image.NsfwLevel = NsfwLevel.XXX;
-        image.IsNsfw.Should().BeTrue();
+    private static ModelVersion Version(params ModelImage[] images)
+    {
+        var version = new ModelVersion();
+        foreach (var image in images) version.Images.Add(image);
+        return version;
+    }
+
+    [Fact]
+    public void PrimaryImage_PrefersARatedSafeCivitaiImage_OverALocalPreview()
+    {
+        var pg = Img(2, "https://image.civitai.com/x/pg.jpeg", NsfwLevel.PG);
+        var version = Version(Img(1, "file:///E:/Loras/a.preview.png"), pg, Img(3, "https://image.civitai.com/x/x.jpeg", NsfwLevel.X));
+
+        version.PrimaryImage.Should().BeSameAs(pg);
+        version.IsImageNsfw(pg).Should().BeFalse();
+    }
+
+    [Fact]
+    public void PrimaryImage_ALocalPreviewBesideOnlyNsfwCivitaiImages_IsShownButJudgedNsfw()
+    {
+        var local = Img(1, "file:///E:/Loras/a.preview.png");
+        var version = Version(local, Img(2, "https://image.civitai.com/x/x.jpeg", NsfwLevel.XXX));
+
+        version.PrimaryImage.Should().BeSameAs(local, "with Show NSFW on, the first still is still the preview");
+        version.IsImageNsfw(local).Should().BeTrue();
+    }
+
+    [Fact]
+    public void PrimaryImage_ALocalOnlyVersion_KeepsItsPreviewAsSafe()
+    {
+        var local = Img(1, "file:///E:/Loras/a.preview.png");
+        var version = Version(local);
+
+        version.PrimaryImage.Should().BeSameAs(local);
+        version.IsImageNsfw(local).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsImageNsfw_FollowsTheRating_AndUnratedCivitaiImagesAreNsfw()
+    {
+        var unrated = Img(1, "https://image.civitai.com/x/a.jpeg");
+        var version = Version(unrated);
+        version.IsImageNsfw(unrated).Should().BeTrue("an unrated Civitai image is not known to be safe");
+
+        unrated.NsfwLevel = NsfwLevel.PG13;
+        version.IsImageNsfw(unrated).Should().BeFalse();
+
+        unrated.NsfwLevel = NsfwLevel.XXX;
+        version.IsImageNsfw(unrated).Should().BeTrue();
     }
 
     [Theory]

@@ -404,14 +404,20 @@ public partial class ModelTileViewModel : ViewModelBase
     /// <see cref="ModelVersion.PrimaryImage"/>, which already prefers a safe still, so a tile that
     /// passes this test shows a safe picture. A tile without a picture shows a placeholder.
     /// </summary>
-    public bool HasNsfwContent => IsNsfw || SelectedVersion?.PrimaryImage is { IsNsfw: true };
+    public bool HasNsfwContent => IsNsfw || ShowsNsfwPicture;
 
     /// <summary>
-    /// The picture this tile shows is a Civitai image whose rating was never stored — a library
-    /// synced before #631. Download Metadata rates it.
+    /// The selected version still holds Civitai pictures with no rating — a library synced before
+    /// #631. Asked of hidden tiles only: once Download Metadata rates them, a safe one can become
+    /// the picture the tile shows.
     /// </summary>
     internal bool ShowsUnratedImage =>
-        SelectedVersion?.PrimaryImage is { NsfwLevel: Domain.Enums.NsfwLevel.None, IsNsfw: true };
+        SelectedVersion?.Images.Any(i => i.NsfwLevel == Domain.Enums.NsfwLevel.None
+                                         && NsfwPolicy.IsWebImage(i.Url)) == true;
+
+    /// <summary>The picture the tile shows is not safe, judged in its version (<see cref="ModelVersion.IsImageNsfw"/>).</summary>
+    private bool ShowsNsfwPicture =>
+        SelectedVersion is { } version && version.PrimaryImage is { } picture && version.IsImageNsfw(picture);
 
     /// <summary>
     /// Set by the Installed tab while "Show NSFW" is off. The filter only lets a tile through when
@@ -423,7 +429,7 @@ public partial class ModelTileViewModel : ViewModelBase
     private bool _hideNsfwPreviews;
 
     /// <summary>Whether the tile covers its picture: Show NSFW is off and the picture is not rated safe.</summary>
-    public bool IsPreviewHidden => HideNsfwPreviews && SelectedVersion?.PrimaryImage is { IsNsfw: true };
+    public bool IsPreviewHidden => HideNsfwPreviews && ShowsNsfwPicture;
 
     /// <summary>
     /// Whether this model has multiple versions.
@@ -1896,15 +1902,21 @@ public partial class ModelTileViewModel : ViewModelBase
     /// which on a version whose sort-0 row is not the primary image can be a thumbnail the user
     /// uploaded by hand. Hence both clauses.
     /// </remarks>
-    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images) =>
-        images
+    internal static ModelImage? PickStaticSibling(IEnumerable<ModelImage> images)
+    {
+        var all = images.ToList();
+        // SFW judged as ModelVersion.IsImageNsfw judges it: a local preview beside Civitai
+        // pictures is not known to be safe (#631).
+        var hasCivitaiImages = all.Any(i => NsfwPolicy.IsWebImage(i.Url));
+        return all
             .Where(i => !string.IsNullOrEmpty(i.Url)
                         && !IsVideoPreview(i)
                         && !i.HasThumbnail
                         && !i.IsThumbnailDeferred)
-            .OrderBy(i => i.IsNsfw) // prefer SFW
+            .OrderBy(i => NsfwPolicy.IsNsfwImage(i.NsfwLevel, i.Url, hasCivitaiImages)) // prefer SFW
             .ThenBy(i => i.SortOrder)
             .FirstOrDefault();
+    }
 
     /// <summary>
     /// Fetches this image's thumbnail through <see cref="IThumbnailProvider"/> and records the

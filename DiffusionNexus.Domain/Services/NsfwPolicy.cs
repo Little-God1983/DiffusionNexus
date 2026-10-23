@@ -29,14 +29,26 @@ public static class NsfwPolicy
     /// <summary>
     /// Whether an image must stay out of sight with "Show NSFW" off. A rated image follows its
     /// rating. An unrated image is NSFW when it came from the web — a Civitai image whose rating was
-    /// never stored, which the next metadata sync fills in — and safe when it is a local file or a
-    /// thumbnail the user uploaded, which nothing can rate and the user chose themselves.
+    /// never stored, which the next metadata sync fills in. A thumbnail the user uploaded is safe:
+    /// they chose it. An unrated local preview file depends on its version: beside Civitai pictures
+    /// it is a copy a downloader saved from that gallery (often the X-rated cover), so it is judged
+    /// like them — not known to be safe; in a local-only version there is nothing to judge it by,
+    /// and it stays shown.
     /// </summary>
-    public static bool IsNsfwImage(NsfwLevel level, string? url)
+    /// <param name="versionHasCivitaiImages">
+    /// Whether the image's version holds Civitai (web) images — see
+    /// <see cref="Entities.ModelVersion.IsImageNsfw"/>, which is the in-context answer.
+    /// </param>
+    public static bool IsNsfwImage(NsfwLevel level, string? url, bool versionHasCivitaiImages = false)
     {
         if (level != NsfwLevel.None) return !IsSafe(level);
-        return IsRemote(url);
+        if (IsWebImage(url)) return true;
+        if (url?.StartsWith(Entities.ModelImage.UserThumbnailScheme, StringComparison.OrdinalIgnoreCase) == true) return false;
+        return versionHasCivitaiImages;
     }
+
+    /// <summary>Whether the image lives on the web (a Civitai image) rather than on this machine.</summary>
+    public static bool IsWebImage(string? url) => IsRemote(url);
 
     /// <summary>
     /// Maps the rating strings older Civitai payloads (and sidecars written from them) carried

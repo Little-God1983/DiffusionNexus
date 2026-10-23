@@ -1,6 +1,7 @@
 using DiffusionNexus.DataAccess.Data;
 using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Enums;
+using DiffusionNexus.Domain.Services;
 using FluentAssertions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -312,8 +313,11 @@ public class CoreDbMigrationTests
             {
                 var images = ctx.ModelImages.AsNoTracking().OrderBy(i => i.Id).ToList();
                 images.Select(i => i.NsfwLevel).Should().Equal(NsfwLevel.None, NsfwLevel.None);
-                images[0].IsNsfw.Should().BeTrue("an unrated Civitai image is not known to be safe");
-                images[1].IsNsfw.Should().BeFalse("a local preview cannot be rated");
+                // Each image is alone in its version, so no context changes the verdict.
+                NsfwPolicy.IsNsfwImage(images[0].NsfwLevel, images[0].Url)
+                    .Should().BeTrue("an unrated Civitai image is not known to be safe");
+                NsfwPolicy.IsNsfwImage(images[1].NsfwLevel, images[1].Url)
+                    .Should().BeFalse("a local-only preview cannot be rated and stays shown");
 
                 var states = ctx.ModelSyncStates.AsNoTracking().OrderBy(s => s.ModelId).ToList();
                 states[0].ImagesCheckedAt.Should().BeNull("its Civitai images must be fetched again to be rated");

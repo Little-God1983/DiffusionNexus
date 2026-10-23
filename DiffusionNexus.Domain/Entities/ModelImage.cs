@@ -34,27 +34,23 @@ public class ModelImage
     public string? MediaType { get; set; }
 
     /// <summary>
-    /// Whether the image must stay out of sight with "Show NSFW" off. Derived from
-    /// <see cref="NsfwLevel"/> and <see cref="Url"/> through <see cref="NsfwPolicy"/>, never stored,
-    /// so no writer can disagree with another (#631).
-    /// </summary>
-    public bool IsNsfw => NsfwPolicy.IsNsfwImage(NsfwLevel, Url);
-
-    /// <summary>
     /// Civitai's rating bitmask for this image; <see cref="NsfwLevel.None"/> when unrated. Stored
     /// in the <c>NsfwRating</c> column — the <c>NsfwLevel</c> column is the dead one below.
+    /// Whether the image counts as NSFW is <see cref="ModelVersion.IsImageNsfw"/>'s answer: an
+    /// unrated local preview is judged by the Civitai pictures beside it, which an image alone
+    /// cannot see (#631).
     /// </summary>
     public NsfwLevel NsfwLevel { get; set; } = NsfwLevel.None;
 
     /// <summary>
     /// Dead column (<c>IsNsfw</c>), kept on purpose. Until #631 it stored a Civitai field the API no
-    /// longer sends, so it read SFW for nearly every image; <see cref="IsNsfw"/> is now derived from
-    /// <see cref="NsfwLevel"/>. The column stays because every older build still maps it and its
+    /// longer sends, so it read SFW for nearly every image; the verdict is now derived from
+    /// <see cref="NsfwLevel"/> (<see cref="ModelVersion.IsImageNsfw"/>). The column stays because every older build still maps it and its
     /// startup recovery un-stamps migrations it does not know, so dropping it would break a rollback
     /// to an older installer (see <see cref="ModelVersion.BaseModel"/>, #553). Nothing may read or
     /// write this; the EF configuration refers to it by name.
     /// </summary>
-    [Obsolete("Dead column kept only for downgrade safety (#631) — use IsNsfw / NsfwLevel.", error: true)]
+    [Obsolete("Dead column kept only for downgrade safety (#631) — use NsfwLevel / ModelVersion.IsImageNsfw.", error: true)]
     public bool LegacyIsNsfw { get; set; }
 
     /// <summary>

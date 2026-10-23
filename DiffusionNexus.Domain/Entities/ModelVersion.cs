@@ -1,3 +1,5 @@
+using DiffusionNexus.Domain.Services;
+
 namespace DiffusionNexus.Domain.Entities;
 
 /// <summary>
@@ -86,11 +88,34 @@ public class ModelVersion : BaseEntity
     /// Gets the primary preview image, preferring static images over video previews.
     /// Falls back to video only when no static image is available.
     /// </summary>
-    public ModelImage? PrimaryImage =>
-        Images.FirstOrDefault(i => !i.IsNsfw && !i.IsVideo)
-        ?? Images.FirstOrDefault(i => !i.IsVideo)
-        ?? Images.FirstOrDefault(i => !i.IsNsfw)
-        ?? Images.FirstOrDefault();
+    /// <remarks>
+    /// "Safe" is <see cref="IsImageNsfw"/>'s answer, which needs the version: an unrated local
+    /// preview beside Civitai pictures does not count as safe (#631).
+    /// </remarks>
+    public ModelImage? PrimaryImage
+    {
+        get
+        {
+            var hasCivitaiImages = HasCivitaiImages;
+            bool IsNsfw(ModelImage i) => NsfwPolicy.IsNsfwImage(i.NsfwLevel, i.Url, hasCivitaiImages);
+
+            return Images.FirstOrDefault(i => !IsNsfw(i) && !i.IsVideo)
+                ?? Images.FirstOrDefault(i => !i.IsVideo)
+                ?? Images.FirstOrDefault(i => !IsNsfw(i))
+                ?? Images.FirstOrDefault();
+        }
+    }
+
+    /// <summary>Whether any image of this version is a Civitai (web) image.</summary>
+    public bool HasCivitaiImages => Images.Any(i => NsfwPolicy.IsWebImage(i.Url));
+
+    /// <summary>
+    /// Whether <paramref name="image"/> must stay out of sight with "Show NSFW" off, judged in this
+    /// version's context (<see cref="NsfwPolicy.IsNsfwImage"/>). The one answer for an image —
+    /// an image alone cannot tell whether its local preview has Civitai pictures beside it.
+    /// </summary>
+    public bool IsImageNsfw(ModelImage image) =>
+        NsfwPolicy.IsNsfwImage(image.NsfwLevel, image.Url, HasCivitaiImages);
 
     /// <summary>Gets all trigger words as a single string.</summary>
     public string TriggerWordsText =>

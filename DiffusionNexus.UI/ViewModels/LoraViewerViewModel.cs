@@ -2409,6 +2409,14 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
     partial void OnShowNsfwChanged(bool value)
     {
         ApplyFilters();
+
+        // Once per switch to "off", not per filter pass: the count follows the search box, and a
+        // line per keystroke would bury the Unified Console.
+        if (!value && HiddenUnratedCount > 0)
+        {
+            _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
+                $"{HiddenUnratedCount} LoRA(s) are hidden while Show NSFW is off because their preview has no rating yet. Run Download Metadata to rate them."));
+        }
     }
 
     /// <summary>Tiles the last filter pass hid only because their Civitai picture is not rated yet.</summary>
@@ -2435,21 +2443,13 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         : HasHiddenUnrated ? "Their previews have no NSFW rating yet. Run Download Metadata to rate them, or turn Show NSFW on."
         : "No LoRAs match the current filters.";
 
-    /// <summary>
-    /// Says in the Unified Console how many LoRAs "Show NSFW" off hides only for want of a rating,
-    /// and what fixes it. Logged when the number changes, not on every filter pass (each keystroke
-    /// in the search box runs one).
-    /// </summary>
+    /// <summary>Publishes the count the hint shows; the Unified Console line is written by the toggle.</summary>
     private void ReportHiddenUnrated(int count)
     {
         if (count == HiddenUnratedCount) return;
         HiddenUnratedCount = count;
         OnPropertyChanged(nameof(HasHiddenUnrated));
         OnPropertyChanged(nameof(HiddenUnratedMessage));
-        if (count == 0) return;
-
-        _logger?.Info(LogCategory.General, "LoraViewerNsfw", FormattableString.Invariant(
-            $"{count} LoRA(s) are hidden while Show NSFW is off because their preview has no rating yet. Run Download Metadata to rate them."));
     }
 
     partial void OnBaseModelFilterSearchTextChanged(string? value) => RebuildFlyoutBaseModels();
@@ -2478,6 +2478,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             FilteredTiles.Remove(tile);
             TotalModelCount = AllTiles.Count;
             FilteredModelCount = FilteredTiles.Sum(t => t.ModelCount);
+            // Deleting the last LoRA turns "no match" into "add source folders".
+            OnPropertyChanged(nameof(EmptyStateMessage));
             RebuildAvailableBaseModels();
         });
     }

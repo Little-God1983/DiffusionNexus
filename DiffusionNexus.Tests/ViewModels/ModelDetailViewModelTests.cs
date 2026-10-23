@@ -386,4 +386,26 @@ public class ModelDetailViewModelTests
     }
 
     #endregion
+
+    #region #631 NSFW previews
+
+    /// <summary>
+    /// A version that exists only on Civitai shows its first picture in the detail panel. With
+    /// Show NSFW off that must be its first safe picture, or nothing — not the X-rated cover.
+    /// </summary>
+    [Fact]
+    public void CivitaiOnlyVersionPreview_WithShowNsfwOff_IsTheFirstSafeImage()
+    {
+        CivitaiModelImage[] images =
+        [
+            new() { Url = "https://img/x.jpeg", NsfwLevel = 8 },
+            new() { Url = "https://img/pg.jpeg", NsfwLevel = 1 },
+        ];
+
+        ModelDetailViewModel.PickCivitaiVersionPreview(images, hideNsfw: false)!.Url.Should().Be("https://img/x.jpeg");
+        ModelDetailViewModel.PickCivitaiVersionPreview(images, hideNsfw: true)!.Url.Should().Be("https://img/pg.jpeg");
+        ModelDetailViewModel.PickCivitaiVersionPreview(images[..1], hideNsfw: true).Should().BeNull();
+    }
+
+    #endregion
 }

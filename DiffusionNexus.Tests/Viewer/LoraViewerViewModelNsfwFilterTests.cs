@@ -67,6 +67,27 @@ public class LoraViewerViewModelNsfwFilterTests
         tile.SelectedVersion!.PrimaryImage.Should().BeSameAs(safe);
     }
 
+    /// <summary>
+    /// #631 review: most downloaded LoRAs carry a local preview file (saved from the Civitai
+    /// gallery, often the X cover) as their first image row. It must not slip through as "safe"
+    /// beside Civitai pictures rated X; beside a PG picture the tile shows the PG one.
+    /// </summary>
+    [Fact]
+    public void LocalPreviewBesideCivitaiImages_IsJudgedByThem()
+    {
+        ModelImage Local() => new() { Url = "file:///E:/Loras/preview.png", MediaType = "image" };
+        var pg = Image("pg", NsfwLevel.PG, sortOrder: 1);
+        var vm = ViewModelWith(
+            NewModel("explicit cover", flaggedNsfw: false, Local(), Image("x", NsfwLevel.X, sortOrder: 1)),
+            NewModel("safe gallery", flaggedNsfw: false, Local(), pg));
+
+        vm.ShowNsfw = false;
+
+        var tile = vm.FilteredTiles.Should().ContainSingle().Subject;
+        tile.DisplayName.Should().Be("safe gallery");
+        tile.SelectedVersion!.PrimaryImage.Should().BeSameAs(pg);
+    }
+
     [Fact]
     public void NsfwFlaggedModel_IsHiddenEvenWithSafeImages()
     {

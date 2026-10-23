@@ -247,6 +247,46 @@ public sealed class LoraDownloadServicePersistTests : IDisposable
         saved.CivitaiId.Should().Be(77);
     }
 
+    /// <summary>
+    /// #631 review: re-downloading a version the library already holds attaches the file to that
+    /// version — and its pictures, stored unrated before ratings existed, get Civitai's ratings
+    /// instead of the fresh records being thrown away with the discarded new version.
+    /// </summary>
+    [Fact]
+    public async Task Persist_DuplicateVersion_RatesTheExistingVersionsImages()
+    {
+        int modelId;
+        using (var seedScope = NewScope())
+        {
+            var uow = seedScope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+            var model = new Model { Name = "local model", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var seedVersion = new ModelVersion { CivitaiId = 700, Name = "v", BaseModelRaw = "Pony" };
+            seedVersion.Files.Add(new ModelFile
+            {
+                FileName = "old.safetensors", LocalPath = @"C:\m\old.safetensors", IsLocalFileValid = true, IsPrimary = true,
+            });
+            seedVersion.Images.Add(new ModelImage { Url = "https://img/xxx.jpeg" });
+            model.Versions.Add(seedVersion);
+            await uow.Models.AddAsync(model);
+            await uow.SaveChangesAsync();
+            modelId = model.Id;
+        }
+
+        var civVersion = NewCivitaiVersion() with
+        {
+            Images = [new CivitaiModelImage { Url = "https://img/xxx.jpeg", NsfwLevel = 16 }],
+        };
+        var service = NewService(NewCivitaiModel(civVersion));
+
+        var outcome = await service.PersistDownloadedModelAsync(NewRealFile("again.safetensors"), civVersion, existingModelId: modelId);
+        outcome.Should().Be(MetadataPersistOutcome.Complete);
+
+        using var scope = NewScope();
+        var saved = await scope.ServiceProvider.GetRequiredService<IUnitOfWork>().Models.GetByIdWithIncludesAsync(modelId);
+        saved!.Versions.Should().ContainSingle().Which.Images.Should().ContainSingle()
+            .Which.NsfwLevel.Should().Be(NsfwLevel.XXX);
+    }
+
     [Fact]
     public async Task Persist_DuplicateVersionUserEdited_KeepsItsBaseModel()
     {
