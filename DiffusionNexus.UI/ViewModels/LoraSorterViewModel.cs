@@ -768,6 +768,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             ApplyDiskPreflight(plan, targetRoot, targetSpace.Space, targetSpace.Exists);
 
+            // Re-read per pass: a source added or disabled in Settings while this tab stays open must
+            // count for the hint, the warning below and the run's copy registration.
+            await RefreshConfiguredSourcesAsync();
+            if (!IsCurrentPass()) return;
+
             // #653: the library lists only files inside its configured sources, so say before the run
             // what sorting into anywhere else means.
             // One sentence true for move and copy alike, and for a browsed source whose LoRAs were
@@ -790,7 +795,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 HasEnoughSpace = false;
                 BlockReason = "Copy into the source folder would duplicate every file — pick a different target.";
             }
-            else if (SourceFolders.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
+            // Configured sources only: a folder the user merely browsed to is listed in the dropdown
+            // but is no LoRA source, and the hint above already says so (#653 review).
+            else if (_configuredSources.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
             {
                 StatusMessage = "⚠ Target is another LoRA source — colliding sources can lead to unpredictable outcomes (duplicate imports on the next scan).";
                 _statusMessageIsWarning = true;
@@ -2206,6 +2213,22 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// the only places the library lists files from (#653).</summary>
     private bool IsInConfiguredSource(string folder)
         => _configuredSources.Any(source => IsWithin(folder, source));
+
+    /// <summary>Re-reads the enabled sources from Settings; on a failed read the last known list
+    /// stays, since the preview must not fail over a hint.</summary>
+    private async Task RefreshConfiguredSourcesAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            _configuredSources = await _settingsService.GetEnabledLoraSourcesAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not re-read the LoRA source folders; keeping the last known list: {ex.Message}");
+        }
+    }
 
     /// <summary>Whether <paramref name="path"/> is <paramref name="root"/> itself or nested beneath it.
     /// Boundary-aware — unlike a bare <c>StartsWith</c> this rejects a sibling folder that merely

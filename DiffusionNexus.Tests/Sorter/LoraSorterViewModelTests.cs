@@ -1240,6 +1240,47 @@ public sealed class LoraSorterViewModelTests : IDisposable
         "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
         + "LoRAs sorted into it will not appear in your LoRA library.";
 
+    /// <summary>
+    /// Review round 5: a folder the user only browsed to is listed among the source folders of the
+    /// dropdown, and "Target is another LoRA source" fired for a target inside it — next to the
+    /// hint saying it is not one of the LoRA source folders. Only configured sources are sources.
+    /// </summary>
+    [Fact]
+    public async Task ABrowsedFolderIsNotAnotherLoraSource()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        var browsed = Path.Combine(_root.FullName, "Downloads");
+        Directory.CreateDirectory(browsed);
+        vm.SourceFolders.Add(browsed);
+
+        vm.CustomTargetFolder = Path.Combine(browsed, "Sorted");
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+        (vm.StatusMessage ?? string.Empty).Should().NotContain("another LoRA source");
+    }
+
+    /// <summary>Review round 5: the configured sources were read once, when the tab opened, so a
+    /// source added in Settings meanwhile was still "outside" — its copies got no record.</summary>
+    [Fact]
+    public async Task ASourceAddedInSettingsMeanwhileCounts()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var added = Path.Combine(_root.FullName, "Loras2");
+        vm.CustomTargetFolder = added;
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise: not a source yet");
+
+        _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([SourceRoot, added]);
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
+    }
+
     /// <summary>Review: the hint described a target and plan no longer on screen once the source
     /// was cleared.</summary>
     [Fact]

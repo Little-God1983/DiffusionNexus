@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using DiffusionNexus.DataAccess.UnitOfWork;
+using DiffusionNexus.Domain.Entities;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
 using DiffusionNexus.Service.Services.Lora;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,9 +71,11 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
 
             var claimants = await unitOfWork.ModelFiles.GetByLocalPathAsync(copyPath, ct);
 
-            // A file of the original's version on the path is the copy's own (an earlier run): the
-            // file is there again, whatever a verify said.
-            var own = claimants.FirstOrDefault(c => c.ModelVersionId == original.ModelVersionId);
+            // A file of the original's version with the original's content on the path is the copy's
+            // own (an earlier run): the file is there again, whatever a verify said. A version can
+            // have several files (fp16, fp32), so the version alone does not make it the copy's.
+            var own = claimants.FirstOrDefault(c => c.ModelVersionId == original.ModelVersionId
+                                                    && SameContent(c, original));
             if (own is not null)
             {
                 own.IsLocalFileValid = true;
@@ -103,4 +106,11 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
             + (released > 0 ? $", {released} stale records on their paths released" : string.Empty)
             + $" in {stopwatch.ElapsedMilliseconds} ms");
     }
+
+    /// <summary>Same bytes as far as the records can tell: equal hashes when both have one,
+    /// otherwise equal sizes.</summary>
+    private static bool SameContent(ModelFile left, ModelFile right)
+        => !string.IsNullOrEmpty(left.HashSHA256) && !string.IsNullOrEmpty(right.HashSHA256)
+            ? string.Equals(left.HashSHA256, right.HashSHA256, StringComparison.OrdinalIgnoreCase)
+            : left.FileSizeBytes is { } size && size == right.FileSizeBytes;
 }

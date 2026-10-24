@@ -215,6 +215,31 @@ public sealed class SortCopyRecordsTests : IDisposable
         (await FileAsync(otherId)).LocalPath.Should().BeNull();
     }
 
+    /// <summary>Review round 5: a version can have several files (fp16, fp32). A stale record of
+    /// the version's OTHER file on the copy's path was taken for the copy's own and re-validated
+    /// with the wrong hash and size. The copy's own record must also match its content.</summary>
+    [Fact]
+    public async Task AStaleRecordOfTheVersionsOtherFileIsNotTheCopysOwn()
+    {
+        var versionId = await SeedOriginalAsync();
+        int otherFileId;
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+            var fp32 = new ModelFile { ModelVersionId = versionId, FileName = "abyssal.safetensors", LocalPath = CopyPath,
+                HashSHA256 = new string('F', 64), FileSizeBytes = 456_908_696, IsLocalFileValid = false };
+            context.Set<ModelFile>().Add(fp32);
+            await context.SaveChangesAsync();
+            otherFileId = fp32.Id;
+        }
+
+        await Updater().RegisterCopiesAsync([(SourcePath, CopyPath)]);
+
+        var copy = (await FilesAtAsync(CopyPath)).Should().ContainSingle().Subject;
+        (copy.ModelVersionId, copy.HashSHA256, copy.FileSizeBytes).Should().Be((versionId, Sha, 228_454_348L));
+        (await FileAsync(otherFileId)).LocalPath.Should().BeNull();
+    }
+
     /// <summary>Review round 2: the copy deleted and made again by a later run kept its record
     /// flagged missing until the next full verify.</summary>
     [Fact]
