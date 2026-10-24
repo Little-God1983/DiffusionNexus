@@ -71,7 +71,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
         IUnifiedLogger? logger = null,
-        Func<string, string>? hashFile = null)
+        Func<string, string>? hashFile = null,
+        ILocalPathUpdater? pathUpdater = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -82,7 +83,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         return new LoraSorterViewModel(
             _settings.Object, _sync.Object, logger,
-            pathUpdater: Mock.Of<ILocalPathUpdater>(),
+            pathUpdater: pathUpdater ?? Mock.Of<ILocalPathUpdater>(),
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
@@ -1164,6 +1165,75 @@ public sealed class LoraSorterViewModelTests : IDisposable
         report!.IsCancelled.Should().BeTrue();
         report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
         vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
+    /// #653: a copy run into a folder inside a configured LoRA source registers each copy, so the
+    /// next library scan does not give it a bare "???" record.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunIntoALoraSourceRegistersTheCopies()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var registered = new List<(string SourcePath, string CopyPath)>();
+        updater.Setup(u => u.RegisterCopiesAsync(It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<(string SourcePath, string CopyPath)> copies, CancellationToken _) => registered.AddRange(copies))
+            .Returns(Task.CompletedTask);
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(SourceRoot, "Sorted");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        var copy = Path.Combine(SourceRoot, "Sorted", "SDXL 1.0", "Character", "a.safetensors");
+        File.Exists(copy).Should().BeTrue("the premise: the copy was made");
+        registered.Should().Equal((a, copy));
+        vm.TargetOutsideSourcesHint.Should().BeNull("the target is inside a LoRA source");
+    }
+
+    /// <summary>
+    /// #653, decided by the owner: a copy outside every configured LoRA source (a USB stick, another
+    /// app's folder) stays outside the library — no record — and the tab says so before the run.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunOutsideTheLoraSourcesRegistersNothingAndSaysSo()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(
+            "This folder is not one of your LoRA source folders (Settings → Source Folders). "
+            + "The copies made there will not appear in your LoRA library.");
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        updater.Verify(u => u.RegisterCopiesAsync(
+            It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>The library lists only files inside its source folders (LoadCachedFilesAsync), so
+    /// for a move the hint is a warning: what moves there leaves the LoRA library.</summary>
+    [Fact]
+    public async Task AMoveOutsideTheLoraSourcesSaysWhatThatMeansForAMove()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(
+            "This folder is not one of your LoRA source folders (Settings → Source Folders). "
+            + "The LoRAs moved there will no longer appear in your LoRA library.");
     }
 
     /// <summary>

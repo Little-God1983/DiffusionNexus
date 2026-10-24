@@ -51,6 +51,21 @@ internal sealed class ModelFileRepository : RepositoryBase<ModelFile>, IModelFil
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<ModelFile>> GetByLocalPathWithMetadataAsync(
+        string localPath,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = localPath.ToLowerInvariant();
+        return await DbSet
+            .Include(f => f.ModelVersion!).ThenInclude(v => v.TriggerWords)
+            .Include(f => f.ModelVersion!).ThenInclude(v => v.Model!).ThenInclude(m => m.Tags)
+            .Where(f => f.LocalPath != null && f.LocalPath.ToLower() == normalized)
+            .AsSplitQuery()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<ModelFile>> FindBySizeWithLocalPathAsync(
         long fileSize,
         CancellationToken cancellationToken = default)

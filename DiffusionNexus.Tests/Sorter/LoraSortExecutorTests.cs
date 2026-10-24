@@ -10,13 +10,22 @@ public sealed class LoraSortExecutorTests : IDisposable
 {
     private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("dn-sortexec-");
     private readonly List<(string OldPath, string NewPath)> _dbChanges = [];
+    private readonly List<(string SourcePath, string CopyPath)> _registeredCopies = [];
 
-    private sealed class RecordingPathUpdater(List<(string, string)> sink) : ILocalPathUpdater
+    private sealed class RecordingPathUpdater(List<(string, string)> sink, List<(string, string)>? copies = null)
+        : ILocalPathUpdater
     {
         public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes,
             CancellationToken ct = default)
         {
             sink.AddRange(changes.Select(c => (c.OldPath, c.NewPath)));
+            return Task.CompletedTask;
+        }
+
+        public Task RegisterCopiesAsync(IReadOnlyList<(string SourcePath, string CopyPath)> registrations,
+            CancellationToken ct = default)
+        {
+            copies?.AddRange(registrations.Select(c => (c.SourcePath, c.CopyPath)));
             return Task.CompletedTask;
         }
     }
@@ -37,8 +46,52 @@ public sealed class LoraSortExecutorTests : IDisposable
     }
 
     private LoraSortExecutor Executor()
-        => new(new FileOperations(), new RecordingPathUpdater(_dbChanges),
+        => new(new FileOperations(), new RecordingPathUpdater(_dbChanges, _registeredCopies),
                new SortHistoryWriter(In("history")), logger: null);
+
+    /// <summary>
+    /// #653: a copy run into a LoRA source registers each copy, so the next scan does not give it a
+    /// bare "???" record. The caller decides whether the target is in a source; the executor only
+    /// does what it is told.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunAskedToRegistersItsCopies()
+    {
+        var model = Write(@"flat\a.safetensors");
+        var move = Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors");
+
+        var result = await Executor().ExecuteAsync(Plan(isMove: false, move), registerCopies: true);
+
+        result.Copied.Should().Be(1);
+        _registeredCopies.Should().Equal((model, In("SDXL 1.0", "Character", "a.safetensors")));
+        _dbChanges.Should().BeEmpty("a copy moves no record");
+    }
+
+    [Fact]
+    public async Task ACopyRunNotAskedToRegistersNothing()
+    {
+        Write(@"flat\a.safetensors");
+        var move = Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors");
+
+        await Executor().ExecuteAsync(Plan(isMove: false, move));
+
+        _registeredCopies.Should().BeEmpty();
+    }
+
+    /// <summary>Registered in batches like a move's repoints, so a killed run keeps what it made.</summary>
+    [Fact]
+    public async Task ManyCopiesAreRegisteredInBatches()
+    {
+        var moves = Enumerable.Range(0, 45).Select(i =>
+        {
+            Write($@"flat\m{i}.safetensors");
+            return Move($@"flat\m{i}.safetensors", $@"SDXL 1.0\m{i}.safetensors");
+        }).ToArray();
+
+        await Executor().ExecuteAsync(Plan(isMove: false, moves), registerCopies: true);
+
+        _registeredCopies.Should().HaveCount(45);
+    }
 
     private LoraSortPlan Plan(bool isMove, params PlannedMove[] moves)
         => new(moves, _root.FullName, _root.FullName, isMove,
@@ -183,6 +236,9 @@ public sealed class LoraSortExecutorTests : IDisposable
             sink.AddRange(changes.Select(c => (c.OldPath, c.NewPath)));
             return Task.CompletedTask;
         }
+
+        public Task RegisterCopiesAsync(IReadOnlyList<(string SourcePath, string CopyPath)> copies,
+            CancellationToken ct = default) => Task.CompletedTask;
     }
 
     [Fact]
@@ -201,6 +257,9 @@ public sealed class LoraSortExecutorTests : IDisposable
     private sealed class ThrowingPathUpdater : ILocalPathUpdater
     {
         public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes,
+            CancellationToken ct = default) => throw new InvalidOperationException("db down");
+
+        public Task RegisterCopiesAsync(IReadOnlyList<(string SourcePath, string CopyPath)> copies,
             CancellationToken ct = default) => throw new InvalidOperationException("db down");
     }
 
@@ -246,6 +305,9 @@ public sealed class LoraSortExecutorTests : IDisposable
             sink.AddRange(changes.Select(c => (c.OldPath, c.NewPath)));
             return Task.CompletedTask;
         }
+
+        public Task RegisterCopiesAsync(IReadOnlyList<(string SourcePath, string CopyPath)> copies,
+            CancellationToken ct = default) => Task.CompletedTask;
     }
 
     [Fact]

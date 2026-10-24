@@ -35,6 +35,13 @@ public interface IModelFileRepository : IRepository<ModelFile>
     Task<IReadOnlyList<ModelFile>> GetByLocalPathAsync(string localPath, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// <see cref="GetByLocalPathAsync"/> plus what a copy's record carries over (#653): the version
+    /// with its trigger words, and the model with its tags. Not the images — their thumbnail BLOBs
+    /// are not copied.
+    /// </summary>
+    Task<IReadOnlyList<ModelFile>> GetByLocalPathWithMetadataAsync(string localPath, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Finds model files matching a specific file size that have a local path, used for
     /// detecting moved files. Valid and invalid alike: the valid flag is only as fresh as the
     /// last verify pass, so the caller checks whether each candidate's file is still there.
