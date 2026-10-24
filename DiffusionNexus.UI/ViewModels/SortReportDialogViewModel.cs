@@ -78,12 +78,13 @@ public sealed partial class SortReportFileRowViewModel
     }
 
     /// <summary>The plan's skipped duplicates, each paired with the copy it matched.</summary>
+    /// <param name="detailFor">Optional note for a row, keyed by the copy it matched.</param>
     internal static IReadOnlyList<SortReportFileRowViewModel> Duplicates(
-        LoraSortPlan plan, IProcessLauncher launcher, IUnifiedLogger? logger)
+        LoraSortPlan plan, IProcessLauncher launcher, IUnifiedLogger? logger, Func<string, string?>? detailFor = null)
         => plan.Moves
             .Where(m => m.Action == PlannedAction.SkippedDuplicate)
             .Select(m => new SortReportFileRowViewModel(m.Candidate.FilePath, m.TargetFilePath, "≡ identical to",
-                null, m.Candidate.FileSizeBytes, launcher, logger)
+                detailFor?.Invoke(m.TargetFilePath), m.Candidate.FileSizeBytes, launcher, logger)
             {
                 RelatedMenuHeader = "Open identical copy in folder"
             })
@@ -146,14 +147,28 @@ public sealed partial class SortReportDialogViewModel
         var reached = result.Transferred.Count + result.Failures.Count;
         IsCancelled = result.Cancelled;
         var remaining = Math.Max(0, plan.TransferCount - reached);
-        CancelledText = $"Cancelled after {reached} of {Files(plan.TransferCount)}. "
-                        + (remaining == 1 ? "The remaining file was not touched." : $"The remaining {remaining} were not touched.");
+        // A cancel that lands in the DB flush after the last transfer still flags the run cancelled.
+        CancelledText = remaining == 0
+            ? "Cancelled after every file had been reached. None were left untouched."
+            : $"Cancelled after {reached} of {Files(plan.TransferCount)}. "
+              + (remaining == 1 ? "The remaining file was not touched." : $"The remaining {remaining} were not touched.");
 
         FailedRows = result.Failures
             .Select(f => new SortReportFileRowViewModel(f.Move.Candidate.FilePath, null, null, f.Reason,
                 f.Move.Candidate.FileSizeBytes, launcher, logger))
             .ToList();
-        DuplicateRows = SortReportFileRowViewModel.Duplicates(plan, launcher, logger);
+        // A duplicate can match another file of this plan rather than one already in the
+        // destination; when that file never arrived, the copy the row names does not exist.
+        var transferredTargets = result.Transferred.Select(m => m.TargetFilePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingTargets = plan.Moves
+            .Where(m => m.Action == PlannedAction.Transfer && !transferredTargets.Contains(m.TargetFilePath))
+            .Select(m => m.TargetFilePath)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        DuplicateRows = SortReportFileRowViewModel.Duplicates(plan, launcher, logger,
+            target => missingTargets.Contains(target)
+                ? "Its identical copy was not created: that file's transfer failed or did not run."
+                : null);
         DuplicatesNote = SortReportFileRowViewModel.DuplicatesNote(plan.IsMove);
         RenamedRows = result.Transferred
             .Where(m => m.WasRenamed)

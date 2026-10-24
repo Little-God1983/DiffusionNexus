@@ -1012,6 +1012,27 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// Review: the report was awaited inside the run's try, so a dialog that failed to open turned
+    /// a run that had sorted every file into "Sorting failed: …".
+    /// </summary>
+    [Fact]
+    public async Task AReportThatFailsToOpenDoesNotTurnASuccessfulRunIntoAFailure()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .ThrowsAsync(new InvalidOperationException("Cannot show a window with a closed owner."));
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().StartWith("Done: 1 sorted");
+    }
+
+    /// <summary>
     /// #651: "N duplicates skipped" never said which. Two identical files that both want
     /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
     /// summary sentence and becomes its own link, which opens the list.

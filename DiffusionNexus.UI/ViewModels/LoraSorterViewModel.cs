@@ -331,9 +331,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private bool _hasSkippedDuplicates;
 
     /// <summary>
-    /// The plan <see cref="PreviewSummary"/> describes. Not <c>_lastPlan</c>: the disk-space gate
-    /// disarms that while leaving the preview on screen, and the duplicate link must keep listing
-    /// what the screen shows.
+    /// The plan <see cref="PreviewSummary"/> describes. Not <c>_lastPlan</c>: a cancelled preview
+    /// disarms that while leaving the preview on screen (<c>DisarmPlan(keepTree: true)</c>), and
+    /// the duplicate link must keep listing what the screen shows.
     /// </summary>
     private LoraSortPlan? _summaryPlan;
 
@@ -863,7 +863,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             ClearPreviewSummary();
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
-            // candidates behind these numbers. A keepTree disarm (the disk-space gate) leaves a
+            // candidates behind these numbers. A keepTree disarm (a cancelled preview) leaves a
             // real tree standing, and the hint still describes it.
             NameGuessHint = null;
         }
@@ -1338,10 +1338,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             return;
         }
 
+        LoraSortResult result;
         try
         {
             _sortCts = new CancellationTokenSource();
-            LoraSortResult result;
             try
             {
                 result = await RunBusyAsync(() => ExecuteSortAsync(plan, deleteEmpty), "Sorting LoRAs…");
@@ -1371,17 +1371,27 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _statusMessageIsWarning = false;
 
             SortCompleted?.Invoke(this, EventArgs.Empty);
-
-            // The status line keeps the one-sentence tally; the report names the files (#651).
-            // Built from the plan that RAN — the post-run recompute above already replaced _lastPlan.
-            if (DialogService is { } dialogs)
-                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(plan, result, ProcessLauncher, _logger));
         }
         catch (Exception ex)
         {
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Sort failed: {ex.Message}", ex);
             StatusMessage = $"Sorting failed: {ex.Message}";
             _statusMessageIsWarning = false;
+            return;
+        }
+
+        // The status line keeps the one-sentence tally; the report names the files (#651).
+        // Built from the plan that RAN — the post-run recompute above already replaced _lastPlan.
+        // Outside the run's try: a report that cannot open must not turn a finished run into
+        // "Sorting failed".
+        try
+        {
+            if (DialogService is { } dialogs)
+                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(plan, result, ProcessLauncher, _logger));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Could not show the sort report: {ex.Message}");
         }
     }
 
@@ -1553,11 +1563,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// is a highlight nobody sees.
     /// </remarks>
     /// <summary>
-    /// "Open in folder" from a row's context menu: a file is selected in Explorer, a folder is
-    /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
-    /// which exists whenever the destination is an established part of the library.
-    /// </summary>
-    /// <summary>
     /// The "N duplicates skipped" link (#651): lists which files the current plan skips and the
     /// identical copy each one matched.
     /// </summary>
@@ -1567,6 +1572,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             ? dialogs.ShowSortDuplicatesDialogAsync(new SortDuplicatesDialogViewModel(plan, ProcessLauncher, _logger))
             : Task.CompletedTask;
 
+    /// <summary>
+    /// "Open in folder" from a row's context menu: a file is selected in Explorer, a folder is
+    /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
+    /// which exists whenever the destination is an established part of the library.
+    /// </summary>
     [RelayCommand]
     private void OpenInFolder(SortPreviewNodeViewModel? node)
     {

@@ -35,7 +35,8 @@
       <Setter Property="HorizontalAlignment" Value="Center"/>
     </Style>
     <!-- Each list gets its own bounded scroll area, so a 1400-file Moved list never pushes the
-         sections below it out of reach. -->
+         sections below it out of reach. Every list is virtualized: a copy re-run skips the whole
+         library as duplicates, and a target that went away fails every file. -->
     <Style Selector="ScrollViewer.list">
       <Setter Property="MaxHeight" Value="260"/>
     </Style>
@@ -94,6 +95,9 @@
                   HorizontalAlignment="Stretch">
           <ScrollViewer Classes="list">
             <ItemsControl ItemsSource="{Binding FailedRows}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
               </ItemsControl.ItemTemplate>
@@ -107,6 +111,9 @@
             <TextBlock Text="{Binding DuplicatesNote}" FontSize="12" Foreground="#CCCCCC" TextWrapping="Wrap"/>
             <ScrollViewer Classes="list">
               <ItemsControl ItemsSource="{Binding DuplicateRows}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -119,6 +126,9 @@
                   HorizontalAlignment="Stretch">
           <ScrollViewer Classes="list">
             <ItemsControl ItemsSource="{Binding RenamedRows}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:SortReportFileRowViewModel"><dlg:SortReportFileRow/></DataTemplate>
               </ItemsControl.ItemTemplate>

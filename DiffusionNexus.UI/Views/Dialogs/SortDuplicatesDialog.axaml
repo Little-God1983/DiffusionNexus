@@ -24,6 +24,9 @@
 
     <ScrollViewer>
       <ItemsControl ItemsSource="{Binding Rows}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:SortReportFileRowViewModel">
             <dlg:SortReportFileRow/>

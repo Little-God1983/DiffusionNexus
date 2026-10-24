@@ -158,6 +158,55 @@ public sealed class SortReportDialogViewModelTests : IDisposable
             .CancelledText.Should().Be("Cancelled after 1 of 2 files. The remaining file was not touched.");
     }
 
+    /// <summary>
+    /// Review: the executor also flags a run cancelled when the token fires during the batch DB
+    /// flush that follows the last transfer. Every file was reached by then, and "The remaining 0
+    /// were not touched" says the run stopped early when it did not.
+    /// </summary>
+    [Fact]
+    public void ACancelOnceEveryFileWasReachedDoesNotClaimFilesWereLeftUntouched()
+    {
+        var moves = Enumerable.Range(0, 2)
+            .Select(i => Move($@"Loras\m{i}.safetensors", $@"Sorted\SDXL 1.0\m{i}.safetensors")).ToArray();
+        var result = new LoraSortResult(2, 0, 0, 0, Cancelled: true, null) { Transferred = [.. moves] };
+
+        new SortReportDialogViewModel(Plan(isMove: true, moves), result, _launcher.Object, logger: null)
+            .CancelledText.Should().Be("Cancelled after every file had been reached. None were left untouched.");
+    }
+
+    /// <summary>
+    /// Review: a duplicate can match another file of the same plan — one\a and two\a are identical,
+    /// and two\a is skipped against the place one\a is going. When one\a's transfer fails, that copy
+    /// does not exist, and the row must not leave the user believing it does.
+    /// </summary>
+    [Fact]
+    public void ADuplicateWhoseCopyWasNeverCreatedSaysSo()
+    {
+        var first = Move(@"Loras\one\a.safetensors", @"Sorted\SDXL 1.0\Character\a.safetensors");
+        var dup = Move(@"Loras\two\a.safetensors", @"Sorted\SDXL 1.0\Character\a.safetensors", PlannedAction.SkippedDuplicate);
+        var result = new LoraSortResult(0, 0, 1, 1, Cancelled: false, null)
+        {
+            Failures = [new SortFailure(first, "The file is in use by another process.")]
+        };
+
+        var vm = new SortReportDialogViewModel(Plan(isMove: true, first, dup), result, _launcher.Object, logger: null);
+
+        vm.DuplicateRows.Should().ContainSingle().Which.Detail
+            .Should().Be("Its identical copy was not created: that file's transfer failed or did not run.");
+    }
+
+    [Fact]
+    public void ADuplicateWhoseCopyWasCreatedHasNoWarning()
+    {
+        var first = Move(@"Loras\one\a.safetensors", @"Sorted\SDXL 1.0\Character\a.safetensors");
+        var dup = Move(@"Loras\two\a.safetensors", @"Sorted\SDXL 1.0\Character\a.safetensors", PlannedAction.SkippedDuplicate);
+        var result = new LoraSortResult(1, 0, 1, 0, Cancelled: false, null) { Transferred = [first] };
+
+        var vm = new SortReportDialogViewModel(Plan(isMove: true, first, dup), result, _launcher.Object, logger: null);
+
+        vm.DuplicateRows.Should().ContainSingle().Which.HasDetail.Should().BeFalse();
+    }
+
     [Fact]
     public void OpenTargetFolderOpensThePlansTargetRoot()
     {

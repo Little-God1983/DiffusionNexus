@@ -13,7 +13,7 @@ public sealed record LoraSortResult(int Moved, int Copied, int Skipped, int Fail
     /// <summary>The moves that failed, each with the reason the file system gave.</summary>
     public IReadOnlyList<SortFailure> Failures { get; init; } = [];
 
-    /// <summary>Wall-clock time of the transfer loop and its DB flushes.</summary>
+    /// <summary>Wall-clock time of the whole run: manifest write, transfer loop and DB flushes.</summary>
     public TimeSpan Elapsed { get; init; }
 }
 
