@@ -463,6 +463,17 @@ public sealed class SorterMetadataResolver
         }
     }
 
+    /// <summary>
+    /// Just the <c>.civitai.info</c> sidecar rung: no hashing, no Civitai call. For a file that
+    /// HAS a record which says nothing ("???", no tags — what the library scan creates for a file
+    /// it did not recognise), where the sidecar is the cheap authoritative answer and asking
+    /// Civitai about database records stays the library sync's job (#654).
+    /// </summary>
+    /// <returns>The sidecar's base model, version id and tags, or null when there is no usable
+    /// sidecar.</returns>
+    public ResolvedLoraMetadata? ReadSidecar(string filePath)
+        => TryReadSidecar(filePath, out var metadata) ? metadata : null;
+
     private bool TryReadSidecar(string filePath, out ResolvedLoraMetadata? metadata)
     {
         metadata = null;

@@ -141,6 +141,46 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// #654: a bare record — what the library scan creates for a file it did not recognise: "???",
+    /// no tags — only had its file's header asked, while a file with no record at all gets the
+    /// <c>.civitai.info</c> sidecar first. An empty record beat a full sidecar, and the test lab's
+    /// re-created files went to Unknown although 56 of them carry one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordWithASidecarSortsByTheSidecar()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["character"]}}""");
+        var bare = new InstalledModelFile(new Model { Type = ModelType.LORA }, new ModelVersion { BaseModelRaw = "???" },
+            new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [bare]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("Pony");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    /// <summary>The sidecar fills in what the record lacks; it never overrules a record that
+    /// already knows its base model (Civitai's by-hash answer, or the user's edit).</summary>
+    [Fact]
+    public async Task ASidecarDoesNotOverruleARecordThatKnowsItsBaseModel()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["style"]}}""");
+        var vm = CreateVm(cached: [Installed(path, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("SDXL 1.0");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    /// <summary>
     /// The name rung is off by default, so a LoRA only its name can identify sits in Unknown — and
     /// the hint tells the user, in numbers taken from their own library, what turning it on buys.
     /// </summary>
