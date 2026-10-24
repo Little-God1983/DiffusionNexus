@@ -458,11 +458,15 @@ public class ModelFileSyncService : IModelSyncService
             .Where(f => !string.IsNullOrEmpty(f.LocalPath))
             .GroupBy(f => f.LocalPath!, StringComparer.OrdinalIgnoreCase);
 
-        // A missing record is never moved onto a path another record already claims: matching by
-        // whole-file hash finds copies as well as moves, and two records on one path is exactly
-        // the contested state this pass then has to arbitrate.
+        // A missing record is never moved onto a path a record WITH a hash already claims: matching
+        // by whole-file hash finds copies as well as moves, and that record can prove the bytes are
+        // its own. A path held only by hashless records — the bare one a scan creates for a file it
+        // did not recognise — stays open: the missing record moves there and the contested-path
+        // arbitration below gives the path to whichever record's hash matches (#654: this is what
+        // repairs a library the 10 MB hash bug already split into a missing Civitai record and a
+        // bare one holding its file).
         var claimedPaths = files
-            .Where(f => !string.IsNullOrEmpty(f.LocalPath))
+            .Where(f => !string.IsNullOrEmpty(f.LocalPath) && !string.IsNullOrEmpty(f.HashSHA256))
             .Select(f => f.LocalPath!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -484,11 +488,14 @@ public class ModelFileSyncService : IModelSyncService
             {
                 foreach (var file in claimants)
                 {
-                    // File is missing - try to find by hash
-                    var newPath = await TryFindMovedFileAsync(file, claimedPaths, cancellationToken);
+                    // File is missing - try to find by hash. Not when its whole drive or share is
+                    // gone: that is offline, not moved.
+                    var newPath = IsOnReachableVolume(claim.Key)
+                        ? await TryFindMovedFileAsync(file, claimedPaths, cancellationToken)
+                        : null;
                     if (newPath is not null)
                     {
-                        claimedPaths.Add(newPath);
+                        if (!string.IsNullOrEmpty(file.HashSHA256)) claimedPaths.Add(newPath);
                         file.LocalPath = newPath;
                         file.IsLocalFileValid = true;
                         file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
@@ -521,7 +528,7 @@ public class ModelFileSyncService : IModelSyncService
                     actualHash = await ComputeFullSha256Async(claim.Key, cancellationToken)
                         .ConfigureAwait(false);
                 }
-                catch (IOException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // Locked/unreadable right now — leave the rows as they are and let a
                     // later pass arbitrate rather than guessing ownership.
@@ -600,12 +607,14 @@ public class ModelFileSyncService : IModelSyncService
     /// <see cref="ModelFile.HashSHA256"/>. Unlike <see cref="ComputeFileHashAsync"/>
     /// (a first-10MB partial), ownership arbitration of a contested path and moved-file
     /// matching must hash the whole file: partial hashes never equal a stored full-file
-    /// SHA256 (#654).
+    /// SHA256 (#654). Opened with <see cref="FileShare.Delete"/> too: reading a multi-GB file
+    /// takes a while, and the LoRA Sorter moving that file meanwhile must not fail on our handle.
     /// </summary>
     private static async Task<string> ComputeFullSha256Async(string filePath, CancellationToken cancellationToken)
     {
         using var sha256 = SHA256.Create();
-        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
+            FileShare.Read | FileShare.Delete, 81920, true);
         var hash = await sha256.ComputeHashAsync(stream, cancellationToken).ConfigureAwait(false);
         return Convert.ToHexString(hash);
     }
@@ -816,7 +825,8 @@ public class ModelFileSyncService : IModelSyncService
         var candidatesBySize = (await _unitOfWork.ModelFiles
                 .FindBySizeWithLocalPathAsync(fileSize, cancellationToken)
                 .ConfigureAwait(false))
-            .Where(f => !string.IsNullOrEmpty(f.HashSHA256) && !File.Exists(f.LocalPath))
+            .Where(f => !string.IsNullOrEmpty(f.HashSHA256) && !File.Exists(f.LocalPath)
+                        && IsOnReachableVolume(f.LocalPath!))
             .ToList();
 
         if (candidatesBySize.Count == 0)
@@ -839,6 +849,25 @@ public class ModelFileSyncService : IModelSyncService
             string.Equals(f.HashSHA256, fileHash, StringComparison.OrdinalIgnoreCase));
 
         return (matchByHash, false);
+    }
+
+    /// <summary>
+    /// Whether the drive or share <paramref name="path"/> lives on is there at all. A record whose
+    /// external drive is unplugged or whose NAS is down is offline, not moved: taking it over moved
+    /// its metadata to a deliberate second copy, and the original got a bare record once the drive
+    /// came back (#654 review).
+    /// </summary>
+    private static bool IsOnReachableVolume(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(path);
+            return !string.IsNullOrEmpty(root) && Directory.Exists(root);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     /// <summary>

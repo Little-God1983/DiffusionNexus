@@ -270,6 +270,80 @@ public sealed class ModelFileSyncServiceMovedFileTests : IDisposable
         files.Single(f => f.Id == presentId).IsLocalFileValid.Should().BeTrue("the rest of the pass still ran and was saved");
     }
 
+    /// <summary>
+    /// Review round 2: a library the old bug already damaged — the Civitai record points at a dead
+    /// path, and a bare record (no hash) holds the file at its new path. Verify moves the Civitai
+    /// record there, and the contested-path arbitration then validates the record whose hash
+    /// matches. A bare record has no hash to prove ownership, so it does not block the path.
+    /// </summary>
+    [Fact]
+    public async Task Verify_ReattachesARecordToAFileHeldOnlyByABareRecord()
+    {
+        var weights = Weights(13);
+        var newPath = WriteFile(@"LAB\a.safetensors", weights);
+        var civitaiId = await SeedRecordAsync("Abyssal Tech", Path.Combine(_root, "Target", "a.safetensors"), weights, isValid: true);
+        var bareId = await SeedBareRecordAsync(newPath, weights.Length);
+
+        var first = await VerifyAsync();
+        await VerifyAsync();
+
+        first.MovedCount.Should().Be(1);
+        var files = await AllFilesAsync();
+        files.Single(f => f.Id == civitaiId).Should().Match<ModelFile>(f => f.LocalPath == newPath && f.IsLocalFileValid);
+        files.Single(f => f.Id == bareId).IsLocalFileValid.Should().BeFalse("the record whose hash matches the bytes owns the path");
+    }
+
+    /// <summary>
+    /// Review round 2: a record whose drive or share is not there at all is offline, not moved.
+    /// Taking it over moved its metadata to a deliberate second copy, and the original got a bare
+    /// record once the drive came back.
+    /// </summary>
+    [Fact]
+    public async Task ARecordOnAnOfflineDriveIsNotTreatedAsMoved()
+    {
+        var offlineRoot = UnusedDriveRoot();
+        if (offlineRoot is null) return; // every letter in use: nothing to simulate with
+        var weights = Weights(14);
+        var recordId = await SeedRecordAsync("On the external drive", Path.Combine(offlineRoot, "Loras", "a.safetensors"), weights, isValid: true);
+        var copy = WriteFile(@"local\a.safetensors", weights);
+
+        var verify = await VerifyAsync();
+        var discovery = await DiscoverAsync();
+
+        verify.MovedCount.Should().Be(0);
+        discovery.RepointedCount.Should().Be(0);
+        discovery.NewModels.Should().ContainSingle("the local copy is a file of its own");
+        (await AllFilesAsync()).Single(f => f.Id == recordId).LocalPath.Should().NotBe(copy);
+    }
+
+    private static string? UnusedDriveRoot()
+    {
+        var used = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).ToHashSet();
+        for (var letter = 'Z'; letter >= 'H'; letter--)
+            if (!used.Contains(letter)) return $"{letter}:\\";
+        return null;
+    }
+
+    /// <summary>What the scan creates for a file it does not recognise: no hash, "???".</summary>
+    private async Task<int> SeedBareRecordAsync(string localPath, long size)
+    {
+        var model = new Model { Name = Path.GetFileNameWithoutExtension(localPath), Type = ModelType.LORA, Source = DataSource.LocalFile };
+        var version = new ModelVersion { Name = model.Name, BaseModelRaw = "???", Model = model };
+        var file = new ModelFile
+        {
+            FileName = Path.GetFileName(localPath), LocalPath = localPath, FileSizeBytes = size,
+            IsPrimary = true, IsLocalFileValid = true, ModelVersion = version,
+        };
+        version.Files.Add(file);
+        model.Versions.Add(version);
+
+        using var scope = _serviceProvider.CreateScope();
+        var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        await uow.Models.AddAsync(model);
+        await uow.SaveChangesAsync();
+        return file.Id;
+    }
+
     [Fact]
     public async Task Verify_FindsAMovedFileOverTenMegabytes()
     {

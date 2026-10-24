@@ -998,6 +998,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
                 var answeredBySidecar = false;
+                var civitaiVersionId = f.Version.CivitaiId;
                 ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
@@ -1018,6 +1019,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                         baseModelRaw = sidecar.BaseModelRaw;
                         if (SorterCategoryResolver.ResolveForModel(f.Model) == CivitaiCategory.Unknown)
                             category = SorterCategoryResolver.InferFolderName(sidecar.Tags) ?? category;
+                        // The planner's name-collision suffix, as for the same file without a record.
+                        civitaiVersionId ??= sidecar.CivitaiVersionId;
                         answeredBySidecar = true;
                     }
                     else
@@ -1077,7 +1080,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
+                    civitaiVersionId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
                     assetKind));
                 knownAdded++;
                 // Counted with the row, so "N of them" can never exceed the rows actually added.

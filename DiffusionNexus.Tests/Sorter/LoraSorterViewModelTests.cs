@@ -163,6 +163,31 @@ public sealed class LoraSorterViewModelTests : IDisposable
         root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
     }
 
+    /// <summary>
+    /// Review (#654): the sidecar's version id was not passed on, so two different bare-record
+    /// LoRAs with the same name in the same target folder got a numbered rename where the same
+    /// files without records get the version-id one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordAnsweredByItsSidecarCarriesTheSidecarsVersionId()
+    {
+        var first = WriteLora(@"one\v1.safetensors");
+        var second = WriteLora(@"two\v1.safetensors");
+        File.WriteAllText(second, "other weights");
+        File.WriteAllText(Path.ChangeExtension(first, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":11,"model":{"tags":["character"]}}""");
+        File.WriteAllText(Path.ChangeExtension(second, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":22,"model":{"tags":["character"]}}""");
+        InstalledModelFile Bare(string path) => new(new Model { Type = ModelType.LORA },
+            new ModelVersion { BaseModelRaw = "???" }, new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [Bare(first), Bare(second)], hashFile: p => p);
+
+        await vm.InitializeAsync();
+
+        var character = vm.PreviewRoots.Single(n => n.Name == "Pony").Children.Single(c => c.Name == "Character");
+        character.Children.Select(c => c.Name).Should().Contain("v1_22.safetensors");
+    }
+
     /// <summary>The sidecar fills in what the record lacks; it never overrules a record that
     /// already knows its base model (Civitai's by-hash answer, or the user's edit).</summary>
     [Fact]

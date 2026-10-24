@@ -491,8 +491,11 @@ public sealed class SorterMetadataResolver
             string? baseModel = root.TryGetProperty("baseModel", out var bmProp) && bmProp.ValueKind == JsonValueKind.String
                 ? bmProp.GetString()
                 : null;
+            // TryGetInt32: an id another tool wrote as 1234.0, or past int.MaxValue, is no id —
+            // GetInt32 threw a FormatException no per-file filter catches and took the preview down.
             int? id = root.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.Number
-                ? idProp.GetInt32()
+                      && idProp.TryGetInt32(out var parsedId)
+                ? parsedId
                 : null;
 
             // Valid JSON with neither field present/non-null isn't a usable hit —

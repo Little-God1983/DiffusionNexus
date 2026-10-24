@@ -46,6 +46,27 @@ public sealed class SorterMetadataResolverTests : IDisposable
         _client.VerifyNoOtherCalls();
     }
 
+    /// <summary>
+    /// Review (#654): DB-known "???" rows now read sidecars too, so an "id" that is not a 32-bit
+    /// integer (another tool writing 1234.0, or a value past int.MaxValue) used to throw a
+    /// FormatException that no per-file filter catches and took the whole preview down. The
+    /// base model is still an answer; the id is just absent.
+    /// </summary>
+    [Theory]
+    [InlineData("1234.5")]
+    [InlineData("9999999999")]
+    public void ASidecarIdThatIsNotA32BitIntegerIsIgnoredNotThrown(string id)
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"), $$"""{"id": {{id}}, "baseModel": "Pony"}""");
+
+        var meta = Resolver().ReadSidecar(model);
+
+        meta.Should().NotBeNull();
+        meta!.BaseModelRaw.Should().Be("Pony");
+        meta.CivitaiVersionId.Should().BeNull();
+    }
+
     [Fact]
     public async Task ApiResultIsReturnedAndCachedByHash()
     {

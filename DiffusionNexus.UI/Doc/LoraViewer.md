@@ -125,7 +125,8 @@ RefreshAsync
 │   │   ├── For each new file:
 │   │   │   ├── TryMatchByHashAndSize → if a DB record of the same size and
 │   │   │   │   whole-file SHA256 is waiting for its file (its path no longer
-│   │   │   │   exists, whatever the valid flag says — the flag is only as
+│   │   │   │   exists on a drive that is there — an offline drive is not a
+│   │   │   │   move — whatever the valid flag says; the flag is only as
 │   │   │   │   fresh as the last verify, #654), update the path and file
 │   │   │   │   name — counted as DiscoveryResult.RepointedCount (#537): a
 │   │   │   │   grid-visible change that is not a new file. A record whose
@@ -167,7 +168,8 @@ RefreshAsync
         Uses scoped IModelSyncService to avoid DbContext conflicts
         Checks File.Exists for every ModelFile.LocalPath
         Tries to find moved files by name + size + whole-file SHA256, never
-        onto a path another record already claims (#654)
+        onto a path a record with a hash already claims, and not for a file
+        whose drive or share is offline (#654)
 ```
 
 ### Fallbacks at each stage
@@ -180,7 +182,7 @@ RefreshAsync
 | File was moved (old path invalid or gone) | `TryMatchByHashAndSize` matches by whole-file SHA256 + file size | Path updated in-place |
 | No Civitai data yet | `Source = LocalFile`, `BaseModelRaw = "???"` | Tile shows filename, "???" badge |
 | DB load fails | Exception caught, SyncStatus shows error | — |
-| Verification finds missing file | Scans all source folders for same filename + whole-file hash, skipping paths another record claims | `IsLocalFileValid = false` if not found |
+| Verification finds missing file | Scans all source folders for same filename + whole-file hash, skipping paths a record with a hash already claims (a path held only by a hashless bare record stays open, and the contested-path arbitration then gives it to the record whose hash matches). Not searched at all when the file's drive or share is offline | `IsLocalFileValid = false` if not found |
 
 ---
 
