@@ -42,7 +42,7 @@ public sealed class SortCopyRecordsTests : IDisposable
     private const string SourcePath = @"D:\Loras\flat\abyssal.safetensors";
     private const string CopyPath = @"D:\Loras\Sorted\SDXL 1.0\Style\abyssal.safetensors";
 
-    private async Task<int> SeedOriginalAsync()
+    private async Task<int> SeedOriginalAsync(string sourcePath = SourcePath)
     {
         using var scope = _serviceProvider.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
@@ -62,9 +62,18 @@ public sealed class SortCopyRecordsTests : IDisposable
             IsUserEdited = true, Model = model,
         };
         version.TriggerWords.Add(new TriggerWord { Word = "abyssal", Order = 0, ModelVersion = version });
+        version.Images.Add(new ModelImage
+        {
+            Url = "https://image.civitai.com/x.jpeg", SortOrder = 0, ThumbnailData = [1, 2, 3],
+            ThumbnailMimeType = "image/jpeg", ModelVersion = version,
+        });
+        model.SyncState = new ModelSyncState
+        {
+            Model = model, MetadataOutcome = SyncOutcome.Matched, MetadataCheckedAt = DateTimeOffset.UtcNow.AddDays(-3),
+        };
         version.Files.Add(new ModelFile
         {
-            FileName = "abyssal.safetensors", LocalPath = SourcePath, FileSizeBytes = 228_454_348, SizeKB = 223_100,
+            FileName = "abyssal.safetensors", LocalPath = sourcePath, FileSizeBytes = 228_454_348, SizeKB = 223_100,
             HashSHA256 = "B9A53649803F6D350B6525562015065E74A251ED2B71BA9BFE64AD6C7F1A78DA",
             Format = FileFormat.SafeTensor, IsPrimary = true, IsLocalFileValid = true, ModelVersion = version,
         });
@@ -115,6 +124,93 @@ public sealed class SortCopyRecordsTests : IDisposable
         (file.LocalPath, file.FileName, file.FileSizeBytes, file.HashSHA256, file.IsLocalFileValid, file.IsPrimary)
             .Should().Be((CopyPath, "abyssal.safetensors", 228_454_348L,
                 "B9A53649803F6D350B6525562015065E74A251ED2B71BA9BFE64AD6C7F1A78DA", true, true));
+    }
+
+    /// <summary>
+    /// Review: tiles are grouped per source folder, so a copy in another source is a tile of its
+    /// own — and the image sync never fetches for a version without a Civitai id. Without the
+    /// original's images that tile had no thumbnail, permanently.
+    /// </summary>
+    [Fact]
+    public async Task ACopyCarriesTheOriginalsImages()
+    {
+        await SeedOriginalAsync();
+
+        await Updater().RegisterCopiesAsync([(SourcePath, CopyPath)]);
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        var image = await context.Set<ModelImage>().AsNoTracking()
+            .Where(i => i.ModelVersion!.Files.Any(f => f.LocalPath == CopyPath)).SingleAsync();
+        (image.Url, image.ThumbnailMimeType).Should().Be(("https://image.civitai.com/x.jpeg", "image/jpeg"));
+        image.ThumbnailData.Should().Equal(1, 2, 3);
+    }
+
+    /// <summary>Review: with no sync state, the library sync took the copy for an unidentified
+    /// model and hashed it and asked Civitai again for what was just copied.</summary>
+    [Fact]
+    public async Task ACopyCarriesTheOriginalsSyncState()
+    {
+        await SeedOriginalAsync();
+
+        await Updater().RegisterCopiesAsync([(SourcePath, CopyPath)]);
+
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+        var state = await context.Set<ModelSyncState>().AsNoTracking()
+            .Where(s => s.Model!.Versions.Any(v => v.Files.Any(f => f.LocalPath == CopyPath))).SingleAsync();
+        state.MetadataOutcome.Should().Be(SyncOutcome.Matched);
+        state.MetadataCheckedAt.Should().NotBeNull();
+    }
+
+    /// <summary>
+    /// Review: the path lookup lowered the path in .NET but compared it with SQLite's lower(), which
+    /// only folds ASCII — a path with "Ö" never matched, so the copy went unregistered.
+    /// </summary>
+    [Fact]
+    public async Task AnOriginalUnderANonAsciiFolderIsFound()
+    {
+        const string source = @"D:\Öffentlich\Loras\abyssal.safetensors";
+        await SeedOriginalAsync(source);
+
+        await Updater().RegisterCopiesAsync([(source, CopyPath)]);
+
+        (await ModelsWithFileAtAsync(CopyPath)).Should().ContainSingle();
+    }
+
+    /// <summary>
+    /// Review: the copy is written with overwrite off, so whatever record still points at its path
+    /// is stale — a file deleted outside the app (the test lab's reset leaves exactly these). It
+    /// made registration skip, and the library then showed the new file under the stale record's
+    /// name and base model.
+    /// </summary>
+    [Fact]
+    public async Task AStaleRecordOnTheCopysPathLetsGoAndTheCopyIsRegistered()
+    {
+        await SeedOriginalAsync();
+        int staleFileId;
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>();
+            var stale = new Model { Name = "Some other LoRA", Type = ModelType.LORA, Source = DataSource.LocalFile };
+            var version = new ModelVersion { Name = "v1", BaseModelRaw = "Pony", Model = stale };
+            var file = new ModelFile { FileName = "abyssal.safetensors", LocalPath = CopyPath, IsLocalFileValid = false,
+                HashSHA256 = "0000000000000000000000000000000000000000000000000000000000000000", ModelVersion = version };
+            version.Files.Add(file);
+            stale.Versions.Add(version);
+            context.Models.Add(stale);
+            await context.SaveChangesAsync();
+            staleFileId = file.Id;
+        }
+
+        await Updater().RegisterCopiesAsync([(SourcePath, CopyPath)]);
+
+        (await ModelsWithFileAtAsync(CopyPath)).Should().ContainSingle().Which.Name.Should().Be("Abyssal Tech");
+        using var verify = _serviceProvider.CreateScope();
+        var staleFile = await verify.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>()
+            .Set<ModelFile>().AsNoTracking().SingleAsync(f => f.Id == staleFileId);
+        staleFile.LocalPath.Should().BeNull();
+        staleFile.IsLocalFileValid.Should().BeFalse();
     }
 
     [Fact]

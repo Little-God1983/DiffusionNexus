@@ -770,12 +770,12 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             // #653: the library lists only files inside its configured sources, so say before the run
             // what sorting into anywhere else means.
+            // One sentence true for move and copy alike, and for a browsed source whose LoRAs were
+            // never in the library; "enabled", because Settings lists disabled sources too.
             TargetOutsideSourcesHint = IsInConfiguredSource(targetRoot)
                 ? null
-                : "This folder is not one of your LoRA source folders (Settings → Source Folders). "
-                  + (IsMove
-                      ? "The LoRAs moved there will no longer appear in your LoRA library."
-                      : "The copies made there will not appear in your LoRA library.");
+                : "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
+                  + "LoRAs sorted into it will not appear in your LoRA library.";
 
             // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
             // set by StartSortingAsync after its post-run recompute must survive this pass.
@@ -1919,10 +1919,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         ReapplyPreviewFilters();
     }
 
-    /// <summary>The summary and its duplicate link go together — a link must never list the
-    /// duplicates of a plan the screen no longer shows.</summary>
+    /// <summary>The summary, its duplicate link and the outside-sources hint go together — none may
+    /// describe a plan the screen no longer shows.</summary>
     private void ClearPreviewSummary()
     {
+        TargetOutsideSourcesHint = null;
         _summaryPlan = null;
         PreviewSummary = null;
         SkippedDuplicatesText = null;

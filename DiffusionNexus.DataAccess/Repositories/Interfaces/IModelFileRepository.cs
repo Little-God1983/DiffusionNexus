@@ -36,8 +36,8 @@ public interface IModelFileRepository : IRepository<ModelFile>
 
     /// <summary>
     /// <see cref="GetByLocalPathAsync"/> plus what a copy's record carries over (#653): the version
-    /// with its trigger words, and the model with its tags. Not the images — their thumbnail BLOBs
-    /// are not copied.
+    /// with its trigger words and images (thumbnail BLOBs included), and the model with its tags
+    /// and sync state.
     /// </summary>
     Task<IReadOnlyList<ModelFile>> GetByLocalPathWithMetadataAsync(string localPath, CancellationToken cancellationToken = default);
 

@@ -1210,9 +1210,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.DialogService = ConfirmingDialogService();
         await vm.InitializeAsync();
 
-        vm.TargetOutsideSourcesHint.Should().Be(
-            "This folder is not one of your LoRA source folders (Settings → Source Folders). "
-            + "The copies made there will not appear in your LoRA library.");
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
 
         await vm.StartSortingCommand.ExecuteAsync(null);
 
@@ -1220,10 +1218,14 @@ public sealed class LoraSorterViewModelTests : IDisposable
             It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    /// <summary>The library lists only files inside its source folders (LoadCachedFilesAsync), so
-    /// for a move the hint is a warning: what moves there leaves the LoRA library.</summary>
+    /// <summary>
+    /// The library lists only files inside its ENABLED source folders (LoadCachedFilesAsync).
+    /// Review: "will no longer appear" was false for a browsed source (its LoRAs never were in the
+    /// library), and "not one of your source folders" for a disabled one that Settings lists. One
+    /// sentence is true for move and copy alike.
+    /// </summary>
     [Fact]
-    public async Task AMoveOutsideTheLoraSourcesSaysWhatThatMeansForAMove()
+    public async Task AMoveOutsideTheLoraSourcesGetsTheSameHint()
     {
         var a = WriteLora(@"flat\a.safetensors");
         var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
@@ -1231,9 +1233,28 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         await vm.InitializeAsync();
 
-        vm.TargetOutsideSourcesHint.Should().Be(
-            "This folder is not one of your LoRA source folders (Settings → Source Folders). "
-            + "The LoRAs moved there will no longer appear in your LoRA library.");
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+    }
+
+    private const string OutsideSourcesHint =
+        "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
+        + "LoRAs sorted into it will not appear in your LoRA library.";
+
+    /// <summary>Review: the hint described a target and plan no longer on screen once the source
+    /// was cleared.</summary>
+    [Fact]
+    public async Task TheHintGoesWithThePreview()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise");
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
     }
 
     /// <summary>

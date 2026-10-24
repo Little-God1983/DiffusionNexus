@@ -53,12 +53,9 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
         using var scope = _scopeFactory.CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var created = 0;
+        var released = 0;
         foreach (var (sourcePath, copyPath) in copies)
         {
-            // A scan, or an earlier run, may already have given the copy a record.
-            if ((await unitOfWork.ModelFiles.GetByLocalPathAsync(copyPath, ct)).Count > 0)
-                continue;
-
             // The record whose file is really there wins over a stale twin on the same path.
             var original = (await unitOfWork.ModelFiles.GetByLocalPathWithMetadataAsync(sourcePath, ct))
                 .OrderByDescending(f => f.IsLocalFileValid)
@@ -66,11 +63,37 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
             if (original is null)
                 continue; // nothing known about the original: the next scan gives the copy a record
 
+            var claimants = await unitOfWork.ModelFiles.GetByLocalPathAsync(copyPath, ct);
+
+            // Already registered — an earlier run, or a scan the sync has since identified — when a
+            // record on the path carries the original's hash. Without a hash nothing proves which
+            // record is the copy's, so any record there counts.
+            if (claimants.Any(c => SameHash(c.HashSHA256, original.HashSHA256))
+                || (claimants.Count > 0 && string.IsNullOrEmpty(original.HashSHA256)))
+                continue;
+
+            // The copy was written with overwrite off, so no file sat on this path before it:
+            // whatever record still points here is stale — a file deleted outside the app, or a
+            // bare record a scan made after a failed flush. It lets go of the path, or the library
+            // would show the copy under that record's name and base model.
+            foreach (var stale in claimants)
+            {
+                stale.LocalPath = null;
+                stale.IsLocalFileValid = false;
+                stale.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                released++;
+            }
+
             await unitOfWork.Models.AddAsync(SortCopyRecords.CreateFor(original, copyPath), ct);
             created++;
         }
         await unitOfWork.SaveChangesAsync(ct);
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"DB batch: {copies.Count} copies, {created} registered with the original's metadata in {stopwatch.ElapsedMilliseconds} ms");
+            $"DB batch: {copies.Count} copies, {created} registered with the original's metadata"
+            + (released > 0 ? $", {released} stale records on their paths released" : string.Empty)
+            + $" in {stopwatch.ElapsedMilliseconds} ms");
     }
+
+    private static bool SameHash(string? left, string? right)
+        => !string.IsNullOrEmpty(left) && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 }

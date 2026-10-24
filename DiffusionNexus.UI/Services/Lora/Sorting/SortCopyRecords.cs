@@ -7,13 +7,18 @@ namespace DiffusionNexus.UI.Services.Lora.Sorting;
 /// disk (two copies of a LoRA are two Model → ModelVersion → ModelFile chains, linked by
 /// <see cref="Model.CivitaiModelPageId"/>), so a copy gets its own, carrying what makes it look and
 /// sort like the original: name, kind, base model, tags, the user's category and edits, NSFW and
-/// licence flags, trigger words, creator, hashes.
+/// licence flags, trigger words, creator, hashes, images and sync state.
 /// </summary>
 /// <remarks>
 /// Left out on purpose: the Civitai model and version ids, which only one chain may hold (unique
-/// indexes — <c>CivitaiMetadataApplier</c> leaves them off a duplicate the same way), and the
-/// images, whose thumbnail BLOBs would be duplicated per copy; tiles group by Civitai page, and the
-/// library sync fetches a chain's own images.
+/// indexes — <c>CivitaiMetadataApplier</c> leaves them off a duplicate the same way).
+/// <para>
+/// The images are copied, thumbnail BLOBs included: tiles are per source folder, so a copy in
+/// another source is a tile of its own, and the image sync never fetches for a version without a
+/// Civitai id — without them that tile had no picture, permanently. The sync state is copied so
+/// the library sync treats the copy as already identified, instead of hashing it and asking
+/// Civitai again for what was just copied.
+/// </para>
 /// </remarks>
 public static class SortCopyRecords
 {
@@ -52,6 +57,22 @@ public static class SortCopyRecords
         foreach (var tag in model.Tags)
             copyModel.Tags.Add(new ModelTag { Model = copyModel, TagId = tag.TagId });
 
+        if (model.SyncState is { } state)
+        {
+            copyModel.SyncState = new ModelSyncState
+            {
+                Model = copyModel,
+                MetadataCheckedAt = state.MetadataCheckedAt,
+                MetadataOutcome = state.MetadataOutcome,
+                MetadataAttempts = state.MetadataAttempts,
+                LastError = state.LastError,
+                TagsCheckedAt = state.TagsCheckedAt,
+                ImagesCheckedAt = state.ImagesCheckedAt,
+                SidecarSignature = state.SidecarSignature,
+                HeaderCheckedAt = state.HeaderCheckedAt,
+            };
+        }
+
         var copyVersion = new ModelVersion
         {
             Name = version.Name,
@@ -70,6 +91,46 @@ public static class SortCopyRecords
         };
         foreach (var word in version.TriggerWords)
             copyVersion.TriggerWords.Add(new TriggerWord { Word = word.Word, Order = word.Order, ModelVersion = copyVersion });
+
+        foreach (var image in version.Images)
+        {
+            copyVersion.Images.Add(new ModelImage
+            {
+                CivitaiId = image.CivitaiId,
+                Url = image.Url,
+                MediaType = image.MediaType,
+                NsfwLevel = image.NsfwLevel,
+                Width = image.Width,
+                Height = image.Height,
+                BlurHash = image.BlurHash,
+                SortOrder = image.SortOrder,
+                CreatedAt = image.CreatedAt,
+                PostId = image.PostId,
+                Username = image.Username,
+                ThumbnailData = image.ThumbnailData,
+                ThumbnailMimeType = image.ThumbnailMimeType,
+                ThumbnailWidth = image.ThumbnailWidth,
+                ThumbnailHeight = image.ThumbnailHeight,
+                ThumbnailAttemptedAt = image.ThumbnailAttemptedAt,
+                ThumbnailFailure = image.ThumbnailFailure,
+                LocalCachePath = image.LocalCachePath,
+                IsLocalCacheValid = image.IsLocalCacheValid,
+                CachedAt = image.CachedAt,
+                CachedFileSize = image.CachedFileSize,
+                Prompt = image.Prompt,
+                NegativePrompt = image.NegativePrompt,
+                Seed = image.Seed,
+                Steps = image.Steps,
+                Sampler = image.Sampler,
+                CfgScale = image.CfgScale,
+                GenerationModel = image.GenerationModel,
+                DenoisingStrength = image.DenoisingStrength,
+                LikeCount = image.LikeCount,
+                HeartCount = image.HeartCount,
+                CommentCount = image.CommentCount,
+                ModelVersion = copyVersion,
+            });
+        }
 
         copyVersion.Files.Add(new ModelFile
         {
