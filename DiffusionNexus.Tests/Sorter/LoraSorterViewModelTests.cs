@@ -70,7 +70,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, string>? resolverHash = null,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        Func<string, string>? hashFile = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -86,7 +87,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
             getAvailableSpace: getAvailableSpace ?? (_ => FreeSpaceResult.Known(freeSpace)),
-            hashFile: _ => "hash",
+            hashFile: hashFile ?? (_ => "hash"),
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
             deleteEmptyDirectories: deleteEmptyDirectories,
@@ -1098,6 +1099,32 @@ public sealed class LoraSorterViewModelTests : IDisposable
         report!.IsCancelled.Should().BeTrue();
         report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
         vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
+    /// #651, real run: after copying 106 files (26 GB) the re-plan hashed every source and the copy
+    /// the run had just made, 79 s behind the overlay, to learn what the run already knew.
+    /// </summary>
+    [Fact]
+    public async Task TheReplanAfterACopyRunDoesNotHashTheCopiesItJustMade()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var hashed = new List<string>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            hashFile: p => { hashed.Add(p); return "hash"; });
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "Elsewhere");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+        hashed.Should().BeEmpty("nothing collides before the run");
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        File.Exists(Path.Combine(_root.FullName, "Elsewhere", "SDXL 1.0", "Character", "a.safetensors"))
+            .Should().BeTrue("the copy was made");
+        hashed.Should().BeEmpty("the run vouches for the copy it made");
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.TransferCount.Should().Be(0);
     }
 
     /// <summary>

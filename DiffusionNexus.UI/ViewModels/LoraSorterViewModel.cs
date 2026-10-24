@@ -46,6 +46,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly Func<string, bool> _fileExistsOnDisk;
     private readonly string _historyDirectory;
 
+    /// <summary>The copies the last run made, so the re-plan after it does not hash them.</summary>
+    private readonly SortedCopyRegistry _sortedCopies = new();
+
     /// <summary>Post-run "delete empty source folders" step, injected so the failure path is
     /// testable — an undeletable folder cannot be created reliably from a test.</summary>
     private readonly Func<string, CancellationToken, Task> _deleteEmptyDirectories;
@@ -720,7 +723,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             var options = BuildOptions();
             var planStopwatch = Stopwatch.StartNew();
             var plan = await Task.Run(
-                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(plannable, options, passCts.Token),
+                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk, _sortedCopies.IsKnownCopy)
+                    .BuildPlan(plannable, options, passCts.Token),
                 passCts.Token);
             planStopwatch.Stop();
 
@@ -1438,6 +1442,18 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             taskHandle?.Fail(ex, "Sort failed.");
             throw;
+        }
+
+        // A copy leaves both files behind, and the re-plan straight after would hash every pair to
+        // prove what the run already knows. A move leaves nothing to vouch for — the file is at its
+        // target and plans as already in place — so a move clears the previous run's pairs.
+        var vouched = await Task.Run(() => _sortedCopies.Record(plan.IsMove
+            ? []
+            : result.Transferred.Select(m => (m.Candidate.FilePath, m.TargetFilePath)).ToList()));
+        if (vouched > 0)
+        {
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Recorded {vouched} copies made by this run; the re-plan counts them as duplicates without hashing them.");
         }
 
         // Every file has already been transferred and every DB row repointed at this point, and
