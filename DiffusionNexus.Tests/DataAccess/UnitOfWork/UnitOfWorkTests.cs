@@ -130,7 +130,7 @@ public class UnitOfWorkTests : IDisposable
         await uow.Models.AddAsync(model);
         await uow.SaveChangesAsync();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(123456);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(123456);
         candidates.Should().HaveCount(1);
         candidates[0].FileName.Should().Be("test.safetensors");
     }

@@ -141,6 +141,71 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// #654: a bare record — what the library scan creates for a file it did not recognise: "???",
+    /// no tags — only had its file's header asked, while a file with no record at all gets the
+    /// <c>.civitai.info</c> sidecar first. An empty record beat a full sidecar, and the test lab's
+    /// re-created files went to Unknown although 56 of them carry one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordWithASidecarSortsByTheSidecar()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["character"]}}""");
+        var bare = new InstalledModelFile(new Model { Type = ModelType.LORA }, new ModelVersion { BaseModelRaw = "???" },
+            new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [bare]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("Pony");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    /// <summary>
+    /// Review (#654): the sidecar's version id was not passed on, so two different bare-record
+    /// LoRAs with the same name in the same target folder got a numbered rename where the same
+    /// files without records get the version-id one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordAnsweredByItsSidecarCarriesTheSidecarsVersionId()
+    {
+        var first = WriteLora(@"one\v1.safetensors");
+        var second = WriteLora(@"two\v1.safetensors");
+        File.WriteAllText(second, "other weights");
+        File.WriteAllText(Path.ChangeExtension(first, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":11,"model":{"tags":["character"]}}""");
+        File.WriteAllText(Path.ChangeExtension(second, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":22,"model":{"tags":["character"]}}""");
+        InstalledModelFile Bare(string path) => new(new Model { Type = ModelType.LORA },
+            new ModelVersion { BaseModelRaw = "???" }, new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [Bare(first), Bare(second)], hashFile: p => p);
+
+        await vm.InitializeAsync();
+
+        var character = vm.PreviewRoots.Single(n => n.Name == "Pony").Children.Single(c => c.Name == "Character");
+        character.Children.Select(c => c.Name).Should().Contain("v1_22.safetensors");
+    }
+
+    /// <summary>The sidecar fills in what the record lacks; it never overrules a record that
+    /// already knows its base model (Civitai's by-hash answer, or the user's edit).</summary>
+    [Fact]
+    public async Task ASidecarDoesNotOverruleARecordThatKnowsItsBaseModel()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["style"]}}""");
+        var vm = CreateVm(cached: [Installed(path, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("SDXL 1.0");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    /// <summary>
     /// The name rung is off by default, so a LoRA only its name can identify sits in Unknown — and
     /// the hint tells the user, in numbers taken from their own library, what turning it on buys.
     /// </summary>

@@ -904,6 +904,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         var knownSkipped = 0;
         var unknownAdded = 0;
         var unknownSkipped = 0;
+        // DB-known rows that said "???" and were answered by their .civitai.info sidecar (#654).
+        var sidecarAnswered = 0;
 
         // ModelFileSyncService stamps every locally-discovered model "???", so on a registered root
         // the header reads below are not a rare row — they can be most of the library. Counted up
@@ -995,6 +997,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
+                var answeredBySidecar = false;
+                var civitaiVersionId = f.Version.CivitaiId;
                 ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
@@ -1003,8 +1007,27 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     ReportHeaderRead();
 
                     var fileIdentity = await _metadataResolver.IdentifyFromFileAsync(path, ct);
-                    baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
-                    nameGuess = fileIdentity.FromName;
+
+                    // The .civitai.info sidecar first, as for a file with no record (#654): a bare
+                    // record — what the library scan creates for a file it did not recognise — says
+                    // nothing, and the sidecar is Civitai's own answer. It decides the base model and,
+                    // where the record has none, the category; the header read above still decides
+                    // what KIND of file this is.
+                    if (_metadataResolver.ReadSidecar(path) is { } sidecar
+                        && !LoraPathBuilder.IsPlaceholderBaseModel(sidecar.BaseModelRaw))
+                    {
+                        baseModelRaw = sidecar.BaseModelRaw;
+                        if (SorterCategoryResolver.ResolveForModel(f.Model) == CivitaiCategory.Unknown)
+                            category = SorterCategoryResolver.InferFolderName(sidecar.Tags) ?? category;
+                        // The planner's name-collision suffix, as for the same file without a record.
+                        civitaiVersionId ??= sidecar.CivitaiVersionId;
+                        answeredBySidecar = true;
+                    }
+                    else
+                    {
+                        baseModelRaw = fileIdentity.FromHeader ?? baseModelRaw;
+                        nameGuess = fileIdentity.FromName;
+                    }
 
                     // A DEFAULT is not a reading. AssetKindResolver deliberately answers LORA for a
                     // .safetensors it could not open — mid-copy, locked, transient IO fault — because a
@@ -1057,9 +1080,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 }
 
                 candidates.Add(new SortCandidate(path, baseModelRaw, category,
-                    f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
+                    civitaiVersionId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
                     assetKind));
                 knownAdded++;
+                // Counted with the row, so "N of them" can never exceed the rows actually added.
+                if (answeredBySidecar) sidecarAnswered++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
             {
@@ -1128,7 +1153,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
         _logger?.Info(LogCategory.FileSystem, LogSource,
             $"Candidate resolution finished: {candidates.Count} candidates " +
-            $"({knownAdded} DB-known added, {knownSkipped} DB-known skipped, " +
+            $"({knownAdded} DB-known added, {sidecarAnswered} of them \"???\" rows answered by their .civitai.info, " +
+            $"{knownSkipped} DB-known skipped, " +
             $"{unknownAdded} resolved from disk/API, {unknownSkipped} unknown skipped), " +
             $"{skipped} skipped, {stopwatch.ElapsedMilliseconds} ms");
 
