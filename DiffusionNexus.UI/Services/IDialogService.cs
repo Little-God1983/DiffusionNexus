@@ -436,6 +436,12 @@ public interface IDialogService
 
     /// <summary>Shows the post-run sync report.</summary>
     Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel);
+
+    /// <summary>Shows the LoRA Sorter's list of files a sort will skip as duplicates (#651).</summary>
+    Task ShowSortDuplicatesDialogAsync(SortDuplicatesDialogViewModel viewModel);
+
+    /// <summary>Shows the LoRA Sorter's post-run report (#651).</summary>
+    Task ShowSortReportDialogAsync(SortReportDialogViewModel viewModel);
 }
 
 /// <summary>

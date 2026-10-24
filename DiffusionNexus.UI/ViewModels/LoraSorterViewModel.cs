@@ -46,6 +46,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private readonly Func<string, bool> _fileExistsOnDisk;
     private readonly string _historyDirectory;
 
+    /// <summary>The copies the last run made, so the re-plan after it does not hash them.</summary>
+    private readonly SortedCopyRegistry _sortedCopies = new();
+
     /// <summary>Post-run "delete empty source folders" step, injected so the failure path is
     /// testable — an undeletable folder cannot be created reliably from a test.</summary>
     private readonly Func<string, CancellationToken, Task> _deleteEmptyDirectories;
@@ -186,7 +189,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             Name = "Pony", IsSourceSide = true, LoraCount = 3, TotalBytes = 400_000_000, Note = "3 files stay"
         });
-        PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed · 0 duplicates skipped";
+        PreviewSummary = "✓ 17 files will move   ·   0 already in place   ·   ✎ 0 auto-renamed";
+        SkippedDuplicatesText = "2 duplicates skipped";
+        HasSkippedDuplicates = true;
         TransferCount = 17;
         HasEnoughSpace = true;
     }
@@ -316,6 +321,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
     [ObservableProperty]
     private string? _previewSummary;
+
+    /// <summary>
+    /// The duplicate count, out of <see cref="PreviewSummary"/> so the view can make it a link to
+    /// the list of which files they are (#651).
+    /// </summary>
+    [ObservableProperty]
+    private string? _skippedDuplicatesText;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ShowSkippedDuplicatesCommand))]
+    private bool _hasSkippedDuplicates;
+
+    /// <summary>
+    /// The plan <see cref="PreviewSummary"/> describes. Not <c>_lastPlan</c>: a cancelled preview
+    /// disarms that while leaving the preview on screen (<c>DisarmPlan(keepTree: true)</c>), and
+    /// the duplicate link must keep listing what the screen shows.
+    /// </summary>
+    private LoraSortPlan? _summaryPlan;
 
     [ObservableProperty]
     private string? _diskSummary;
@@ -547,7 +570,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             PreviewRoots.Clear();
             SourceRoots.Clear();
             ReapplyPreviewFilters();
-            PreviewSummary = null;
+            ClearPreviewSummary();
             DiskSummary = null;
             HasEnoughSpace = false;
             BlockReason = null;
@@ -700,7 +723,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             var options = BuildOptions();
             var planStopwatch = Stopwatch.StartNew();
             var plan = await Task.Run(
-                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk).BuildPlan(plannable, options, passCts.Token),
+                () => new LoraSortPlanner(_hashFile, _fileExistsOnDisk, _sortedCopies.IsKnownCopy)
+                    .BuildPlan(plannable, options, passCts.Token),
                 passCts.Token);
             planStopwatch.Stop();
 
@@ -840,10 +864,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             SourceRoots.Clear();
             // The count beside each box described the tree that just vanished.
             ReapplyPreviewFilters();
-            PreviewSummary = null;
+            ClearPreviewSummary();
             DiskSummary = null;
             // Goes with the tree, for the same reason: after "Preview failed: …" there are no
-            // candidates behind these numbers. A keepTree disarm (the disk-space gate) leaves a
+            // candidates behind these numbers. A keepTree disarm (a cancelled preview) leaves a
             // real tree standing, and the hint still describes it.
             NameGuessHint = null;
         }
@@ -1318,6 +1342,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             return;
         }
 
+        var report = Task.CompletedTask;
         try
         {
             _sortCts = new CancellationTokenSource();
@@ -1332,6 +1357,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _sortCts = null;
             }
 
+            // The status line keeps the one-sentence tally; the report names the files (#651).
+            // Opened before the re-plan below, which can run for minutes on a large library — the
+            // preview rebuilds behind it. Built from the plan that RAN, which the re-plan replaces.
+            report = ShowSortReportAsync(plan, result);
+
             // Files moved/copied to new locations — the cached candidate list (built from their
             // old paths) is now stale and must be rebuilt from disk, not just re-planned.
             InvalidateCandidateCache();
@@ -1339,7 +1369,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             // Set AFTER the post-run recompute so it isn't wiped by the recompute's warning-clear step.
             var message = result.Cancelled
-                ? $"Cancelled — {result.Moved + result.Copied} done, rest untouched."
+                ? SortReportDialogViewModel.CancelledSummary(plan, result)
                 : $"Done: {result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed.";
             if (_emptyFolderCleanupFailed)
                 message += " (some empty folders could not be removed)";
@@ -1357,6 +1387,24 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Sort failed: {ex.Message}", ex);
             StatusMessage = $"Sorting failed: {ex.Message}";
             _statusMessageIsWarning = false;
+        }
+
+        await report;
+    }
+
+    /// <summary>Never throws: a report that cannot open must not turn a finished run into
+    /// "Sorting failed".</summary>
+    private async Task ShowSortReportAsync(LoraSortPlan plan, LoraSortResult result)
+    {
+        try
+        {
+            if (DialogService is { } dialogs)
+                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(
+                    plan, result, ProcessLauncher, _logger, _emptyFolderCleanupFailed));
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Could not show the sort report: {ex.Message}");
         }
     }
 
@@ -1394,6 +1442,18 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         {
             taskHandle?.Fail(ex, "Sort failed.");
             throw;
+        }
+
+        // A copy leaves both files behind, and the re-plan straight after would hash every pair to
+        // prove what the run already knows. A move leaves nothing to vouch for — the file is at its
+        // target and plans as already in place — so a move clears the previous run's pairs.
+        var vouched = await Task.Run(() => _sortedCopies.Record(plan.IsMove
+            ? []
+            : result.Transferred.Select(m => (m.Candidate.FilePath, m.TargetFilePath)).ToList()));
+        if (vouched > 0)
+        {
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Recorded {vouched} copies made by this run; the re-plan counts them as duplicates without hashing them.");
         }
 
         // Every file has already been transferred and every DB row repointed at this point, and
@@ -1558,6 +1618,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 $"Could not open '{path}' in the file manager: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// The "N duplicates skipped" link (#651): lists which files the current plan skips and the
+    /// identical copy each one matched.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSkippedDuplicates))]
+    private Task ShowSkippedDuplicatesAsync()
+        => _summaryPlan is { } plan && DialogService is { } dialogs
+            ? dialogs.ShowSortDuplicatesDialogAsync(new SortDuplicatesDialogViewModel(plan, ProcessLauncher, _logger))
+            : Task.CompletedTask;
 
     /// <summary>Context-menu "Never sort this folder": source-side folders only.</summary>
     [RelayCommand]
@@ -1799,11 +1869,30 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         ReapplyPreviewFilters();
     }
 
+    /// <summary>The summary and its duplicate link go together — a link must never list the
+    /// duplicates of a plan the screen no longer shows.</summary>
+    private void ClearPreviewSummary()
+    {
+        _summaryPlan = null;
+        PreviewSummary = null;
+        SkippedDuplicatesText = null;
+        HasSkippedDuplicates = false;
+    }
+
     /// <summary>One sentence over the plan's counts, shared by the full recompute and the
     /// view-only hide-settled redraw so the two can never word it differently.</summary>
     private void UpdatePreviewSummary(LoraSortPlan plan, int excludedCount)
-        => PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed · {plan.SkippedDuplicateCount} duplicates skipped"
+    {
+        _summaryPlan = plan;
+        PreviewSummary = $"✓ {plan.TransferCount} files will {(IsMove ? "move" : "copy")}   ·   {plan.AlreadyInPlaceCount} already in place{(IgnoreFilesAlreadyInPlace ? " (hidden)" : string.Empty)}   ·   ✎ {plan.RenamedCount} auto-renamed"
             + (excludedCount > 0 ? $"   ·   {excludedCount} excluded" : string.Empty);
+
+        // Rendered after the sentence by the view — as a link to the list when there is one.
+        SkippedDuplicatesText = plan.SkippedDuplicateCount == 1
+            ? "1 duplicate skipped"
+            : $"{plan.SkippedDuplicateCount} duplicates skipped";
+        HasSkippedDuplicates = plan.SkippedDuplicateCount > 0;
+    }
 
     /// <summary>Adds <paramref name="directory"/> and every ancestor to <paramref name="dirs"/>,
     /// normalized the way <see cref="MarkExcludedFolders"/> looks them up. Walking past the pane's

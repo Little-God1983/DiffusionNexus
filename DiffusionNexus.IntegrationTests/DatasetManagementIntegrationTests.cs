@@ -257,6 +257,8 @@ public class DatasetManagementIntegrationTests : IClassFixture<TestAppHost>
             Task.FromResult(SyncPlanDialogResult.Cancelled());
 
         public Task ShowSyncReportDialogAsync(SyncReportDialogViewModel viewModel) => Task.CompletedTask;
+        public Task ShowSortDuplicatesDialogAsync(SortDuplicatesDialogViewModel viewModel) => Task.CompletedTask;
+        public Task ShowSortReportDialogAsync(SortReportDialogViewModel viewModel) => Task.CompletedTask;
 
         public Task<bool> ShowBackupCompareDialogAsync(BackupCompareData currentStats, BackupCompareData backupStats) =>
             Task.FromResult(false);

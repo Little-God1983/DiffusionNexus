@@ -70,7 +70,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, string>? resolverHash = null,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        Func<string, string>? hashFile = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -86,7 +87,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
             getAvailableSpace: getAvailableSpace ?? (_ => FreeSpaceResult.Known(freeSpace)),
-            hashFile: _ => "hash",
+            hashFile: hashFile ?? (_ => "hash"),
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
             deleteEmptyDirectories: deleteEmptyDirectories,
@@ -986,6 +987,194 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.StatusMessage.Should().NotContain("Preview changed");
         // The snapshot is taken before the dialog opens, so the late tick governs the NEXT run.
         cleanedRoot.Should().BeNull();
+    }
+
+    /// <summary>#651: a finished run used to leave nothing but a status line behind.</summary>
+    [Fact]
+    public async Task AFinishedRunOpensTheReportForThePlanThatRan()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report.Should().NotBeNull();
+        report!.TransferredRows.Should().ContainSingle().Which.Path.Should().Be(a);
+        report.IsCancelled.Should().BeFalse();
+        vm.StatusMessage.Should().StartWith("Done:", "the one-line summary stays");
+    }
+
+    /// <summary>
+    /// Review: the report was awaited inside the run's try, so a dialog that failed to open turned
+    /// a run that had sorted every file into "Sorting failed: …".
+    /// </summary>
+    [Fact]
+    public async Task AReportThatFailsToOpenDoesNotTurnASuccessfulRunIntoAFailure()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .ThrowsAsync(new InvalidOperationException("Cannot show a window with a closed owner."));
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().StartWith("Done: 1 sorted");
+    }
+
+    /// <summary>
+    /// Review: the report opened only after the post-run re-plan, which can run for minutes on a
+    /// large library (a copy re-run hashes every file). It opens as the run ends and the preview
+    /// rebuilds behind it.
+    /// </summary>
+    [Fact]
+    public async Task TheReportOpensWithoutWaitingForThePreviewToRebuild()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var reportClosed = new TaskCompletionSource();
+        string? statusWhenOpened = "never opened";
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback(() => statusWhenOpened = vm.StatusMessage)
+            .Returns(reportClosed.Task);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        var run = vm.StartSortingCommand.ExecuteAsync(null);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (vm.StatusMessage?.StartsWith("Done:") != true && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        // "Done: …" is written once the re-plan has finished.
+        statusWhenOpened.Should().NotBe("never opened");
+        (statusWhenOpened ?? string.Empty).Should().NotStartWith("Done:", "the report opens before the re-plan");
+        vm.StatusMessage.Should().StartWith("Done:", "the preview rebuilt while the report was still open");
+        run.IsCompleted.Should().BeFalse("the command ends when the report is closed");
+
+        reportClosed.SetResult();
+        await run;
+    }
+
+    /// <summary>
+    /// Review: after a cancel the status line said "1 done, rest untouched" (successes only) while
+    /// the report said "after 2 of 4" (failures included). One run, one count, in both places.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledRunsStatusLineAndReportGiveTheSameCount()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var b = WriteLora(@"flat\b.safetensors");
+        LoraSorterViewModel? vm = null;
+        var logger = new Mock<IUnifiedLogger>();
+        // Cancel as soon as the first file has been transferred: the executor's per-file line.
+        logger.Setup(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith(a + " → ") || m.StartsWith(b + " → ")), It.IsAny<string?>()))
+            .Callback(() => vm!.CancelSortCommand.Execute(null));
+        vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character"), Installed(b, "SDXL 1.0", "character")],
+            logger: logger.Object);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report!.IsCancelled.Should().BeTrue();
+        report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
+        vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
+    /// #651, real run: after copying 106 files (26 GB) the re-plan hashed every source and the copy
+    /// the run had just made, 79 s behind the overlay, to learn what the run already knew.
+    /// </summary>
+    [Fact]
+    public async Task TheReplanAfterACopyRunDoesNotHashTheCopiesItJustMade()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var hashed = new List<string>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            hashFile: p => { hashed.Add(p); return "hash"; });
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "Elsewhere");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+        hashed.Should().BeEmpty("nothing collides before the run");
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        File.Exists(Path.Combine(_root.FullName, "Elsewhere", "SDXL 1.0", "Character", "a.safetensors"))
+            .Should().BeTrue("the copy was made");
+        hashed.Should().BeEmpty("the run vouches for the copy it made");
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.TransferCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// #651: "N duplicates skipped" never said which. Two identical files that both want
+    /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
+    /// summary sentence and becomes its own link, which opens the list.
+    /// </summary>
+    [Fact]
+    public async Task TheDuplicateCountIsALinkToTheListOfDuplicates()
+    {
+        var first = WriteLora(@"one\a.safetensors");
+        var second = WriteLora(@"two\a.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(first, "SDXL 1.0", "character"),
+            Installed(second, "SDXL 1.0", "character"),
+        ]);
+        var dialog = new Mock<IDialogService>();
+        SortDuplicatesDialogViewModel? shown = null;
+        dialog.Setup(d => d.ShowSortDuplicatesDialogAsync(It.IsAny<SortDuplicatesDialogViewModel>()))
+            .Callback((SortDuplicatesDialogViewModel d) => shown = d)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+
+        await vm.InitializeAsync();
+
+        vm.HasSkippedDuplicates.Should().BeTrue();
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.PreviewSummary.Should().NotContain("duplicate");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeTrue();
+
+        await vm.ShowSkippedDuplicatesCommand.ExecuteAsync(null);
+
+        var row = shown!.Rows.Should().ContainSingle().Subject;
+        new[] { first, second }.Should().Contain(row.Path);
+        row.RelatedPath.Should().EndWith(Path.Combine("SDXL 1.0", "Character", "a.safetensors"));
+    }
+
+    [Fact]
+    public async Task WithoutDuplicatesThereIsNoLinkToFollow()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewSummary.Should().Contain("will move", "the preview did run");
+        vm.HasSkippedDuplicates.Should().BeFalse();
+        vm.SkippedDuplicatesText.Should().Be("0 duplicates skipped");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeFalse();
     }
 
     private static IDialogService ConfirmingDialogService()

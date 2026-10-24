@@ -339,6 +339,51 @@ public sealed class LoraSortExecutorTests : IDisposable
         lines.Should().Contain(l => l.StartsWith("Sort run finished in") && l.Contains(" ms:"));
     }
 
+    /// <summary>
+    /// #651: the end-of-run report names every file, so the run has to hand back WHICH moves it
+    /// completed and which failed — with the reason — not just how many. A failed file must not
+    /// appear among the transferred ones, and the transferred list keeps plan order.
+    /// </summary>
+    [Fact]
+    public async Task TheResultNamesTransferredFilesAndFailuresWithTheirReason()
+    {
+        Write(@"flat\a.safetensors");
+        Write(@"flat\b.safetensors");
+        var a = Move(@"flat\a.safetensors", @"SDXL 1.0\Character\a.safetensors");
+        var ghost = Move(@"flat\ghost.safetensors", @"SDXL 1.0\Character\ghost.safetensors");
+        var b = Move(@"flat\b.safetensors", @"SDXL 1.0\Character\b.safetensors");
+
+        var result = await Executor().ExecuteAsync(Plan(isMove: true, a, ghost, b));
+
+        result.Transferred.Should().Equal(a, b);
+        var failure = result.Failures.Should().ContainSingle().Subject;
+        failure.Move.Should().BeSameAs(ghost);
+        failure.Reason.Should().NotBeNullOrWhiteSpace();
+        result.Elapsed.Should().BePositive();
+    }
+
+    [Fact]
+    public async Task EverySkippedDuplicateIsLoggedWithTheCopyItMatched()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        var lines = new List<string>();
+        logger.Setup(l => l.Info(LogCategory.FileSystem, "LoraSorter", It.IsAny<string>(), It.IsAny<string?>()))
+            .Callback((LogCategory _, string _, string message, string? _) => lines.Add(message));
+        Write(@"old\a.safetensors");
+        var duplicate = Move(@"old\a.safetensors", @"SDXL 1.0\Character\a.safetensors")
+            with { Action = PlannedAction.SkippedDuplicate };
+        var executor = new LoraSortExecutor(new FileOperations(), new RecordingPathUpdater(_dbChanges),
+            new SortHistoryWriter(In("history")), logger.Object);
+
+        var result = await executor.ExecuteAsync(Plan(isMove: true, duplicate));
+
+        lines.Should().Contain(l => l.StartsWith("Skipped duplicate:")
+            && l.Contains(In("old", "a.safetensors"))
+            && l.Contains(In("SDXL 1.0", "Character", "a.safetensors")));
+        result.Transferred.Should().BeEmpty();
+        File.Exists(In("old", "a.safetensors")).Should().BeTrue("a skipped duplicate is never touched");
+    }
+
     /// <summary>Stands in for any fault outside the IOException/UnauthorizedAccessException filter.</summary>
     private sealed class ExplodeOnSecondCreateDirectory : IFileOperations
     {

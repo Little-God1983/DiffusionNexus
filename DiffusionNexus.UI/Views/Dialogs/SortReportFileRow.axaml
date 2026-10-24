@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+             x:Class="DiffusionNexus.UI.Views.Dialogs.SortReportFileRow"
+             x:DataType="vm:SortReportFileRowViewModel">
+
+  <!-- One file in the sorter's duplicate list / run report (#651). Shared by both dialogs so the
+       same list never reads two different ways. Background set so the whole row is right-clickable. -->
+  <Border BorderBrush="#3A3A3A" BorderThickness="0,1,0,0" Padding="6,5" Background="Transparent">
+    <Border.ContextMenu>
+      <ContextMenu>
+        <MenuItem Header="Open in folder" Command="{Binding OpenInFolderCommand}"/>
+        <MenuItem Header="{Binding RelatedMenuHeader}" Command="{Binding OpenRelatedInFolderCommand}"
+                  IsVisible="{Binding HasRelated}"/>
+      </ContextMenu>
+    </Border.ContextMenu>
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel Grid.Column="0" Spacing="2">
+        <TextBlock Text="{Binding Path}" FontFamily="Consolas,monospace" FontSize="12" TextWrapping="Wrap"/>
+        <TextBlock Text="{Binding RelatedText}" IsVisible="{Binding HasRelated}"
+                   FontFamily="Consolas,monospace" FontSize="12" Foreground="#999999" TextWrapping="Wrap"/>
+        <TextBlock Text="{Binding Detail}" IsVisible="{Binding HasDetail}"
+                   FontSize="12" Foreground="#E2B14C" TextWrapping="Wrap"/>
+      </StackPanel>
+      <TextBlock Grid.Column="1" Text="{Binding SizeText}" FontSize="12" Foreground="#999999"
+                 Margin="12,0,0,0" VerticalAlignment="Top"/>
+    </Grid>
+  </Border>
+</UserControl>
