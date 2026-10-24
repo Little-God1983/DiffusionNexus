@@ -95,7 +95,8 @@ public sealed partial class SortReportFileRowViewModel
     /// cannot explain the same list differently.
     /// </summary>
     internal static string DuplicatesNote(bool isMove)
-        => "These files are identical (same SHA-256 hash) to a file in the destination, so they are not "
+        => "These files are identical (same SHA-256 hash) to a file in the destination, or to one this sort "
+           + "puts there, so they are not "
            + (isMove ? "moved. They stay where they are." : "copied.");
 }
 
@@ -143,15 +144,8 @@ public sealed partial class SortReportDialogViewModel
         var operation = plan.IsMove ? "move" : "copy";
         Title = $"Sort report: {operation}, {plan.SourceRoot} → {plan.TargetRoot}";
 
-        // A failed file was reached too, so it counts toward "after X"; the rest were never touched.
-        var reached = result.Transferred.Count + result.Failures.Count;
         IsCancelled = result.Cancelled;
-        var remaining = Math.Max(0, plan.TransferCount - reached);
-        // A cancel that lands in the DB flush after the last transfer still flags the run cancelled.
-        CancelledText = remaining == 0
-            ? "Cancelled after every file had been reached. None were left untouched."
-            : $"Cancelled after {reached} of {Files(plan.TransferCount)}. "
-              + (remaining == 1 ? "The remaining file was not touched." : $"The remaining {remaining} were not touched.");
+        CancelledText = CancelledSummary(plan, result);
 
         var warnings = new List<string>();
         if (result.ManifestPath is null)
@@ -201,6 +195,26 @@ public sealed partial class SortReportDialogViewModel
     }
 
     private static string Files(int n) => n == 1 ? "1 file" : $"{n} files";
+
+    /// <summary>
+    /// The one sentence a cancelled run is described by, in the report's banner and on the status
+    /// line alike, so the two never count the same run differently.
+    /// </summary>
+    internal static string CancelledSummary(LoraSortPlan plan, LoraSortResult result)
+    {
+        // A failed file was reached too, so it counts toward "after X"; the rest were never touched.
+        var reached = result.Transferred.Count + result.Failures.Count;
+        var remaining = Math.Max(0, plan.TransferCount - reached);
+        // A cancel that lands in the DB flush after the last transfer still flags the run cancelled.
+        var rest = remaining switch
+        {
+            0 => "Every file had already been reached.",
+            1 => "The remaining file was not touched.",
+            _ => $"The remaining {remaining} were not touched."
+        };
+        return $"Cancelled after {reached} of {Files(plan.TransferCount)}: "
+               + $"{result.Transferred.Count} sorted, {result.Failures.Count} failed. {rest}";
+    }
 
     public string Title { get; }
     public bool IsCancelled { get; }

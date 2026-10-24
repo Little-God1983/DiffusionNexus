@@ -1068,6 +1068,39 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// Review: after a cancel the status line said "1 done, rest untouched" (successes only) while
+    /// the report said "after 2 of 4" (failures included). One run, one count, in both places.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledRunsStatusLineAndReportGiveTheSameCount()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var b = WriteLora(@"flat\b.safetensors");
+        LoraSorterViewModel? vm = null;
+        var logger = new Mock<IUnifiedLogger>();
+        // Cancel as soon as the first file has been transferred: the executor's per-file line.
+        logger.Setup(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith(a + " → ") || m.StartsWith(b + " → ")), It.IsAny<string?>()))
+            .Callback(() => vm!.CancelSortCommand.Execute(null));
+        vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character"), Installed(b, "SDXL 1.0", "character")],
+            logger: logger.Object);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report!.IsCancelled.Should().BeTrue();
+        report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
+        vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
     /// #651: "N duplicates skipped" never said which. Two identical files that both want
     /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
     /// summary sentence and becomes its own link, which opens the list.

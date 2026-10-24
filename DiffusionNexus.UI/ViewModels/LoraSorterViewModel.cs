@@ -1365,7 +1365,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             // Set AFTER the post-run recompute so it isn't wiped by the recompute's warning-clear step.
             var message = result.Cancelled
-                ? $"Cancelled — {result.Moved + result.Copied} done, rest untouched."
+                ? SortReportDialogViewModel.CancelledSummary(plan, result)
                 : $"Done: {result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed.";
             if (_emptyFolderCleanupFailed)
                 message += " (some empty folders could not be removed)";

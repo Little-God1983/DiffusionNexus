@@ -144,7 +144,7 @@ public sealed class SortReportDialogViewModelTests : IDisposable
         var vm = new SortReportDialogViewModel(Plan(isMove: true, moves), result, _launcher.Object, logger: null);
 
         vm.IsCancelled.Should().BeTrue();
-        vm.CancelledText.Should().Be("Cancelled after 2 of 4 files. The remaining 2 were not touched.");
+        vm.CancelledText.Should().Be("Cancelled after 2 of 4 files: 1 sorted, 1 failed. The remaining 2 were not touched.");
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public sealed class SortReportDialogViewModelTests : IDisposable
         var result = new LoraSortResult(1, 0, 0, 0, Cancelled: true, null) { Transferred = [moves[0]] };
 
         new SortReportDialogViewModel(Plan(isMove: true, moves), result, _launcher.Object, logger: null)
-            .CancelledText.Should().Be("Cancelled after 1 of 2 files. The remaining file was not touched.");
+            .CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
     }
 
     /// <summary>
@@ -171,7 +171,7 @@ public sealed class SortReportDialogViewModelTests : IDisposable
         var result = new LoraSortResult(2, 0, 0, 0, Cancelled: true, null) { Transferred = [.. moves] };
 
         new SortReportDialogViewModel(Plan(isMove: true, moves), result, _launcher.Object, logger: null)
-            .CancelledText.Should().Be("Cancelled after every file had been reached. None were left untouched.");
+            .CancelledText.Should().Be("Cancelled after 2 of 2 files: 2 sorted, 0 failed. Every file had already been reached.");
     }
 
     /// <summary>
