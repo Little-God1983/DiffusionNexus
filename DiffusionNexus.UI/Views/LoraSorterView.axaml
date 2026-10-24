@@ -191,7 +191,9 @@
             <ComboBox ItemsSource="{Binding SourceFolders}"
                       SelectedItem="{Binding SelectedSourceFolder}"
                       HorizontalAlignment="Stretch"/>
+            <!-- Unofficial (#653): shown only while the sidebar's hidden-features checkbox is on. -->
             <Button Content="Browse any folder…" Command="{Binding BrowseSourceCommand}"
+                    IsVisible="{Binding ShowBrowseAnyFolder}"
                     HorizontalAlignment="Stretch" FontSize="12"/>
           </StackPanel>
 
@@ -209,6 +211,12 @@
                         IsVisible="{Binding CustomTargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
               </StackPanel>
             </Grid>
+            <!-- #653: the library lists only files inside its configured sources. -->
+            <Border Background="#2A2A2A" BorderBrush="#444" BorderThickness="1" CornerRadius="4" Padding="8,6"
+                    IsVisible="{Binding TargetOutsideSourcesHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+              <TextBlock Text="{Binding TargetOutsideSourcesHint, StringFormat='ⓘ {0}'}"
+                         Foreground="#FFA726" FontSize="11.5" TextWrapping="Wrap"/>
+            </Border>
           </StackPanel>
 
           <StackPanel Spacing="4">

@@ -49,6 +49,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>The copies the last run made, so the re-plan after it does not hash them.</summary>
     private readonly SortedCopyRegistry _sortedCopies = new();
 
+    private readonly HiddenFeatures? _hiddenFeatures;
+
+    /// <summary>
+    /// "Browse any folder…" — sorting a folder outside the library — is an unofficial feature
+    /// (#653, owner's call): a copy from such a folder lands in the library with no record to attach
+    /// to. Shown only while the sidebar's hidden-features checkbox is on.
+    /// </summary>
+    public bool ShowBrowseAnyFolder => _hiddenFeatures?.IsEnabled == true;
+
+    /// <summary>The LoRA source folders configured in Settings — unlike <see cref="SourceFolders"/>,
+    /// which also lists folders the user only browsed to (#653).</summary>
+    private IReadOnlyList<string> _configuredSources = [];
+
     /// <summary>Post-run "delete empty source folders" step, injected so the failure path is
     /// testable — an undeletable folder cannot be created reliably from a test.</summary>
     private readonly Func<string, CancellationToken, Task> _deleteEmptyDirectories;
@@ -209,8 +222,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         Func<string, bool> fileExistsOnDisk,
         string historyDirectory,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
-        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null)
+        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
+        HiddenFeatures? hiddenFeatures = null)
     {
+        _hiddenFeatures = hiddenFeatures;
+        if (_hiddenFeatures is not null)
+        {
+            // The checkbox can be ticked while this tab is open.
+            _hiddenFeatures.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(HiddenFeatures.IsEnabled))
+                    OnPropertyChanged(nameof(ShowBrowseAnyFolder));
+            };
+        }
         _settingsService = settingsService;
         _logger = logger;
         _pathUpdater = pathUpdater ?? throw new ArgumentNullException(nameof(pathUpdater));
@@ -318,6 +342,13 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <see cref="SourceFilter"/> on purpose — the two panes answer different questions, and a
     /// renamed file does not even carry the same name on both sides.</summary>
     public SortPreviewFilterViewModel TargetFilter { get; }
+
+    /// <summary>
+    /// Set when the target is not inside any LoRA source folder configured in Settings (#653): the
+    /// library lists only files inside its sources, so what lands there is not part of it.
+    /// </summary>
+    [ObservableProperty]
+    private string? _targetOutsideSourcesHint;
 
     [ObservableProperty]
     private string? _previewSummary;
@@ -491,6 +522,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 if (_settingsService is not null)
                 {
                     var sources = await _settingsService.GetEnabledLoraSourcesAsync();
+                    _configuredSources = sources;
                     SourceFolders.Clear();
                     foreach (var source in sources)
                         SourceFolders.Add(source);
@@ -756,6 +788,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
 
             ApplyDiskPreflight(plan, targetRoot, targetSpace.Space, targetSpace.Exists);
 
+            // Re-read per pass: a source added or disabled in Settings while this tab stays open must
+            // count for the hint, the warning below and the run's copy registration.
+            await RefreshConfiguredSourcesAsync();
+            if (!IsCurrentPass()) return;
+
+            // #653: the library lists only files inside its configured sources, so say before the run
+            // what sorting into anywhere else means.
+            // One sentence true for move and copy alike, and for a browsed source whose LoRAs were
+            // never in the library; "enabled", because Settings lists disabled sources too.
+            TargetOutsideSourcesHint = IsInConfiguredSource(targetRoot)
+                ? null
+                : "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
+                  + "LoRAs sorted into it will not appear in your LoRA library.";
+
             // Only clear a stale preview warning — a sort-run result message ("Done: …"/"Cancelled — …")
             // set by StartSortingAsync after its post-run recompute must survive this pass.
             if (_statusMessageIsWarning)
@@ -769,7 +815,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 HasEnoughSpace = false;
                 BlockReason = "Copy into the source folder would duplicate every file — pick a different target.";
             }
-            else if (SourceFolders.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
+            // Configured sources only: a folder the user merely browsed to is listed in the dropdown
+            // but is no LoRA source, and the hint above already says so (#653 review).
+            else if (_configuredSources.Any(s => !string.Equals(s, sourceFolder, StringComparison.OrdinalIgnoreCase) && IsWithin(targetRoot, s)))
             {
                 StatusMessage = "⚠ Target is another LoRA source — colliding sources can lead to unpredictable outcomes (duplicate imports on the next scan).";
                 _statusMessageIsWarning = true;
@@ -1461,7 +1509,10 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             // would freeze the UI thread for the whole run (overlay never repaints, Cancel unclickable).
             // The executor touches no UI-bound state; `progress` was constructed above on the calling
             // (UI) context, so its Report() callbacks still marshal back correctly from the pool thread.
-            result = await Task.Run(() => executor.ExecuteAsync(plan, progress, linkedCts.Token));
+            // #653, decided by the owner: a copy gets a record only inside a configured LoRA source;
+            // anywhere else (a USB stick) it stays outside the library, as the tab's hint says.
+            var registerCopies = !plan.IsMove && IsInConfiguredSource(plan.TargetRoot);
+            result = await Task.Run(() => executor.ExecuteAsync(plan, progress, linkedCts.Token, registerCopies));
             taskHandle?.Complete($"{result.Moved + result.Copied} sorted, {result.Skipped} duplicates skipped, {result.Failed} failed.");
         }
         catch (Exception ex)
@@ -1895,10 +1946,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         ReapplyPreviewFilters();
     }
 
-    /// <summary>The summary and its duplicate link go together — a link must never list the
-    /// duplicates of a plan the screen no longer shows.</summary>
+    /// <summary>The summary, its duplicate link and the outside-sources hint go together — none may
+    /// describe a plan the screen no longer shows.</summary>
     private void ClearPreviewSummary()
     {
+        TargetOutsideSourcesHint = null;
         _summaryPlan = null;
         PreviewSummary = null;
         SkippedDuplicatesText = null;
@@ -2177,6 +2229,27 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         return node;
     }
 
+    /// <summary>Whether <paramref name="folder"/> lies inside a LoRA source configured in Settings —
+    /// the only places the library lists files from (#653).</summary>
+    private bool IsInConfiguredSource(string folder)
+        => _configuredSources.Any(source => IsWithin(folder, source));
+
+    /// <summary>Re-reads the enabled sources from Settings; on a failed read the last known list
+    /// stays, since the preview must not fail over a hint.</summary>
+    private async Task RefreshConfiguredSourcesAsync()
+    {
+        if (_settingsService is null) return;
+        try
+        {
+            _configuredSources = await _settingsService.GetEnabledLoraSourcesAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource,
+                $"Could not re-read the LoRA source folders; keeping the last known list: {ex.Message}");
+        }
+    }
+
     /// <summary>Whether <paramref name="path"/> is <paramref name="root"/> itself or nested beneath it.
     /// Boundary-aware — unlike a bare <c>StartsWith</c> this rejects a sibling folder that merely
     /// shares a name prefix (e.g. "E:\Loras" vs "E:\Loras_backup").</summary>
@@ -2233,6 +2306,9 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     private sealed class NullLocalPathUpdater : ILocalPathUpdater
     {
         public Task UpdateLocalPathsAsync(IReadOnlyList<(string OldPath, string NewPath)> changes, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public Task RegisterCopiesAsync(IReadOnlyList<(string SourcePath, string CopyPath)> copies, CancellationToken ct = default)
             => Task.CompletedTask;
     }
 

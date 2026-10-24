@@ -71,7 +71,9 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
         IUnifiedLogger? logger = null,
-        Func<string, string>? hashFile = null)
+        Func<string, string>? hashFile = null,
+        ILocalPathUpdater? pathUpdater = null,
+        HiddenFeatures? hiddenFeatures = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -82,7 +84,7 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         return new LoraSorterViewModel(
             _settings.Object, _sync.Object, logger,
-            pathUpdater: Mock.Of<ILocalPathUpdater>(),
+            pathUpdater: pathUpdater ?? Mock.Of<ILocalPathUpdater>(),
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
@@ -91,7 +93,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
             deleteEmptyDirectories: deleteEmptyDirectories,
-            loadCachedFiles: loadCachedFiles);
+            loadCachedFiles: loadCachedFiles,
+            hiddenFeatures: hiddenFeatures);
     }
 
     [Fact]
@@ -1164,6 +1167,162 @@ public sealed class LoraSorterViewModelTests : IDisposable
         report!.IsCancelled.Should().BeTrue();
         report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
         vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
+    /// #653: a copy run into a folder inside a configured LoRA source registers each copy, so the
+    /// next library scan does not give it a bare "???" record.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunIntoALoraSourceRegistersTheCopies()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var registered = new List<(string SourcePath, string CopyPath)>();
+        updater.Setup(u => u.RegisterCopiesAsync(It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<(string SourcePath, string CopyPath)> copies, CancellationToken _) => registered.AddRange(copies))
+            .Returns(Task.CompletedTask);
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(SourceRoot, "Sorted");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        var copy = Path.Combine(SourceRoot, "Sorted", "SDXL 1.0", "Character", "a.safetensors");
+        File.Exists(copy).Should().BeTrue("the premise: the copy was made");
+        registered.Should().Equal((a, copy));
+        vm.TargetOutsideSourcesHint.Should().BeNull("the target is inside a LoRA source");
+    }
+
+    /// <summary>
+    /// #653, decided by the owner: a copy outside every configured LoRA source (a USB stick, another
+    /// app's folder) stays outside the library — no record — and the tab says so before the run.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunOutsideTheLoraSourcesRegistersNothingAndSaysSo()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        updater.Verify(u => u.RegisterCopiesAsync(
+            It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// The library lists only files inside its ENABLED source folders (LoadCachedFilesAsync).
+    /// Review: "will no longer appear" was false for a browsed source (its LoRAs never were in the
+    /// library), and "not one of your source folders" for a disabled one that Settings lists. One
+    /// sentence is true for move and copy alike.
+    /// </summary>
+    [Fact]
+    public async Task AMoveOutsideTheLoraSourcesGetsTheSameHint()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+    }
+
+    private const string OutsideSourcesHint =
+        "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
+        + "LoRAs sorted into it will not appear in your LoRA library.";
+
+    /// <summary>
+    /// Review round 5: a folder the user only browsed to is listed among the source folders of the
+    /// dropdown, and "Target is another LoRA source" fired for a target inside it — next to the
+    /// hint saying it is not one of the LoRA source folders. Only configured sources are sources.
+    /// </summary>
+    [Fact]
+    public async Task ABrowsedFolderIsNotAnotherLoraSource()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        var browsed = Path.Combine(_root.FullName, "Downloads");
+        Directory.CreateDirectory(browsed);
+        vm.SourceFolders.Add(browsed);
+
+        vm.CustomTargetFolder = Path.Combine(browsed, "Sorted");
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+        (vm.StatusMessage ?? string.Empty).Should().NotContain("another LoRA source");
+    }
+
+    /// <summary>Review round 5: the configured sources were read once, when the tab opened, so a
+    /// source added in Settings meanwhile was still "outside" — its copies got no record.</summary>
+    [Fact]
+    public async Task ASourceAddedInSettingsMeanwhileCounts()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var added = Path.Combine(_root.FullName, "Loras2");
+        vm.CustomTargetFolder = added;
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise: not a source yet");
+
+        _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([SourceRoot, added]);
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Owner's call (#653): sorting a folder outside the library is an unofficial feature. A copy
+    /// from it lands in the library with no record to attach to, and "we cannot cover every use
+    /// case" — so "Browse any folder…" shows only while the sidebar's hidden-features checkbox is on.
+    /// </summary>
+    [Fact]
+    public void BrowseAnyFolderShowsOnlyWithHiddenFeaturesOn()
+    {
+        var hidden = new HiddenFeatures();
+        var vm = CreateVm(hiddenFeatures: hidden);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.ShowBrowseAnyFolder.Should().BeFalse();
+
+        hidden.IsEnabled = true;
+
+        vm.ShowBrowseAnyFolder.Should().BeTrue();
+        raised.Should().Contain(nameof(LoraSorterViewModel.ShowBrowseAnyFolder), "the button appears without reopening the tab");
+    }
+
+    [Fact]
+    public void WithoutTheHiddenFeaturesFlagBrowseAnyFolderStaysHidden()
+        => CreateVm().ShowBrowseAnyFolder.Should().BeFalse();
+
+    /// <summary>Review: the hint described a target and plan no longer on screen once the source
+    /// was cleared.</summary>
+    [Fact]
+    public async Task TheHintGoesWithThePreview()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise");
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
     }
 
     /// <summary>
