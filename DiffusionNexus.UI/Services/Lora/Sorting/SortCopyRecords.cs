@@ -164,9 +164,11 @@ public static class SortCopyRecords
     }
 
     /// <summary>
-    /// A local preview (<c>file://</c>) beside the original was copied next to the copy with the
-    /// rest of its sidecars, so the copy's image points at that one — not at the original's, which
-    /// the copy would otherwise depend on. Any other URL is kept as it is.
+    /// A local preview (<c>file://</c>) beside the original that the sorter copied next to the copy
+    /// with its other sidecars: the copy's image points at that one, not at the original's, which
+    /// the copy would otherwise depend on. Only when it is really there — the executor copies known
+    /// sidecars only, and a failed sidecar copy is just a warning — otherwise, and for any other URL,
+    /// the original's URL is kept.
     /// </summary>
     private static string CopyImageUrl(string url, string? originalPath, string copyPath)
     {
@@ -177,8 +179,10 @@ public static class SortCopyRecords
                                  StringComparison.OrdinalIgnoreCase)
                              && Path.GetFileName(previewPath).StartsWith(Path.GetFileNameWithoutExtension(originalPath),
                                  StringComparison.OrdinalIgnoreCase);
-        return besideOriginal
-            ? LocalPreviewFiles.FileUrlPrefix + SidecarLocator.DeriveSidecarTargetPath(previewPath, originalPath, copyPath)
-            : url;
+        if (!besideOriginal)
+            return url;
+
+        var copiedPreview = SidecarLocator.DeriveSidecarTargetPath(previewPath, originalPath, copyPath);
+        return File.Exists(copiedPreview) ? LocalPreviewFiles.FileUrlPrefix + copiedPreview : url;
     }
 }

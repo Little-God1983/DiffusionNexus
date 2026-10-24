@@ -37,6 +37,7 @@ public sealed class SortCopyRecordsTests : IDisposable
     {
         _serviceProvider.Dispose();
         _connection.Dispose();
+        try { _root.Delete(recursive: true); } catch (IOException) { }
     }
 
     private const string SourcePath = @"D:\Loras\flat\abyssal.safetensors";
@@ -293,14 +294,52 @@ public sealed class SortCopyRecordsTests : IDisposable
     [Fact]
     public async Task ALocalPreviewImagePointsAtTheCopysOwnPreview()
     {
-        await SeedOriginalAsync(imageUrl: @"file://D:\Loras\flat\abyssal.preview.png");
+        var (source, copy, copiedPreview) = WritePreviewPair(copyThePreview: true);
+        await SeedOriginalAsync(source, imageUrl: "file://" + Path.ChangeExtension(source, ".preview.png"));
 
-        await Updater().RegisterCopiesAsync([(SourcePath, CopyPath)]);
+        await Updater().RegisterCopiesAsync([(source, copy)]);
 
+        (await ImageUrlOfAsync(copy)).Should().Be("file://" + copiedPreview);
+    }
+
+    /// <summary>Review round 3: the executor copies only known sidecars, and a failed sidecar copy
+    /// is only a warning — a URL pointing at a preview that was never copied is a broken picture.
+    /// Only a preview that is really there is pointed at; otherwise the original's URL stays.</summary>
+    [Fact]
+    public async Task APreviewThatWasNotCopiedKeepsTheOriginalsUrl()
+    {
+        var (source, copy, _) = WritePreviewPair(copyThePreview: false);
+        var originalUrl = "file://" + Path.ChangeExtension(source, ".preview.png");
+        await SeedOriginalAsync(source, imageUrl: originalUrl);
+
+        await Updater().RegisterCopiesAsync([(source, copy)]);
+
+        (await ImageUrlOfAsync(copy)).Should().Be(originalUrl);
+    }
+
+    private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("dn-copyrecords-");
+
+    /// <summary>A model and its preview on disk, and its copy — with or without the preview the
+    /// sorter would have copied next to it.</summary>
+    private (string Source, string Copy, string CopiedPreview) WritePreviewPair(bool copyThePreview)
+    {
+        var source = Path.Combine(_root.FullName, "flat", "abyssal.safetensors");
+        var copy = Path.Combine(_root.FullName, "Sorted", "abyssal.safetensors");
+        var copiedPreview = Path.ChangeExtension(copy, ".preview.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(source)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        File.WriteAllText(source, "weights");
+        File.WriteAllText(Path.ChangeExtension(source, ".preview.png"), "png");
+        File.WriteAllText(copy, "weights");
+        if (copyThePreview) File.WriteAllText(copiedPreview, "png");
+        return (source, copy, copiedPreview);
+    }
+
+    private async Task<string> ImageUrlOfAsync(string filePath)
+    {
         using var scope = _serviceProvider.CreateScope();
-        var image = await scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>().Set<ModelImage>()
-            .AsNoTracking().Where(i => i.ModelVersion!.Files.Any(f => f.LocalPath == CopyPath)).SingleAsync();
-        image.Url.Should().Be(@"file://D:\Loras\Sorted\SDXL 1.0\Style\abyssal.preview.png");
+        return (await scope.ServiceProvider.GetRequiredService<DiffusionNexusCoreDbContext>().Set<ModelImage>()
+            .AsNoTracking().Where(i => i.ModelVersion!.Files.Any(f => f.LocalPath == filePath)).SingleAsync()).Url;
     }
 
     private async Task<int> SeedStaleRecordAsync(long sizeBytes)
