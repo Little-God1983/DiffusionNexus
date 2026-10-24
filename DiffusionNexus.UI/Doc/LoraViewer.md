@@ -124,14 +124,16 @@ RefreshAsync
 │   │   ├── Filters out files already in DB (by LocalPath)
 │   │   ├── For each new file:
 │   │   │   ├── TryMatchByHashAndSize → if a DB record of the same size and
-│   │   │   │   whole-file SHA256 is waiting for its file (flagged invalid, or
-│   │   │   │   its path no longer exists — the flag is only as fresh as the
-│   │   │   │   last verify, #654), update the path — counted as
-│   │   │   │   DiscoveryResult.RepointedCount (#537): a grid-visible change
-│   │   │   │   that is not a new file. A record whose file still exists is
-│   │   │   │   another copy and is never taken over. The whole file is read
-│   │   │   │   only when such a record exists (the first-10MB hash never
-│   │   │   │   equals a stored whole-file one)
+│   │   │   │   whole-file SHA256 is waiting for its file (its path no longer
+│   │   │   │   exists, whatever the valid flag says — the flag is only as
+│   │   │   │   fresh as the last verify, #654), update the path and file
+│   │   │   │   name — counted as DiscoveryResult.RepointedCount (#537): a
+│   │   │   │   grid-visible change that is not a new file. A record whose
+│   │   │   │   file still exists is another copy and is never taken over.
+│   │   │   │   The whole file is read only when such a record exists (the
+│   │   │   │   first-10MB hash never equals a stored whole-file one); a file
+│   │   │   │   that cannot be read (still being copied) is left for the
+│   │   │   │   next scan
 │   │   │   └── Otherwise → CreateModelFromFileAsync:
 │   │   │       Creates Model + ModelVersion + ModelFile with:
 │   │   │         Source = LocalFile
@@ -1034,7 +1036,7 @@ They run only when the rungs above came up empty **with an answer**, never when 
 
 The panel says what the option is worth on *this* library before it is turned on — `NameGuessHint`, e.g. *"5 LoRAs could not be identified — sorting by name will fix 4 of them."*, rewording to the past tense once it is on. Both counts are taken from the candidates as resolved, before any guess is folded in, so ticking the box changes the sentence and not the numbers. Because the guess travels with the candidate instead of being baked into it, toggling re-plans off the candidate cache and touches no disk at all.
 
-**DB-known rows get the same two rungs.** `ModelFileSyncService` stamps every locally-discovered model `BaseModelRaw = "???"`, and `IdentifyModelStep` only clears that when a library sync actually runs (it is due-gated on 30-day windows and attempt caps). `ResolveCandidatesAsync` therefore calls `IdentifyFromFileAsync` for any DB-known candidate whose base model is still a placeholder — without it, pointing the sorter at a *registered* LoRA root (which takes the DB-known branch for nearly every file) would do almost nothing for exactly the self-trained LoRAs this exists for. It applies only the header outright and merely *offers* the name (`FileIdentity.FromHeader` / `FileIdentity.FromName`), so this branch obeys the same opt-in as the rest. Each of those rows costs a real header read, so the pass reports `Reading headers n/N…` while it works. Before the header, such a row asks the file's `.civitai.info` sidecar (`SorterMetadataResolver.ReadSidecar`, #654), as a file with no record does: when it names a base model, that wins, and its tags give the category when the record has none. The header read still decides the file's kind. No hashing and no Civitai call here — asking Civitai about database records is the library sync's job.
+**DB-known rows get the same two rungs.** `ModelFileSyncService` stamps every locally-discovered model `BaseModelRaw = "???"`, and `IdentifyModelStep` only clears that when a library sync actually runs (it is due-gated on 30-day windows and attempt caps). `ResolveCandidatesAsync` therefore calls `IdentifyFromFileAsync` for any DB-known candidate whose base model is still a placeholder — without it, pointing the sorter at a *registered* LoRA root (which takes the DB-known branch for nearly every file) would do almost nothing for exactly the self-trained LoRAs this exists for. It applies only the header outright and merely *offers* the name (`FileIdentity.FromHeader` / `FileIdentity.FromName`), so this branch obeys the same opt-in as the rest. Each of those rows costs a real header read, so the pass reports `Reading headers n/N…` while it works. Such a row also asks the file's `.civitai.info` sidecar (`SorterMetadataResolver.ReadSidecar`, #654), as a file with no record does: when it names a base model, that wins over the header's, and its tags give the category when the record has none. The header is still read first, because it decides the file's kind. No hashing and no Civitai call here — asking Civitai about database records is the library sync's job.
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass — and stays unknown, since neither is an answer (see above) — and the API key is read once per pass, not once per file.
 

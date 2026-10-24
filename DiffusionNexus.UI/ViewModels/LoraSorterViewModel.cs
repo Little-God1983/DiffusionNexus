@@ -997,6 +997,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 // already carries a base model pays nothing.
                 var baseModelRaw = f.Version.BaseModelRaw;
                 string? nameGuess = null;
+                var answeredBySidecar = false;
                 ModelType? fileIdentityKind = null;
                 if (LoraPathBuilder.IsPlaceholderBaseModel(baseModelRaw))
                 {
@@ -1017,7 +1018,7 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                         baseModelRaw = sidecar.BaseModelRaw;
                         if (SorterCategoryResolver.ResolveForModel(f.Model) == CivitaiCategory.Unknown)
                             category = SorterCategoryResolver.InferFolderName(sidecar.Tags) ?? category;
-                        sidecarAnswered++;
+                        answeredBySidecar = true;
                     }
                     else
                     {
@@ -1079,6 +1080,8 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                     f.Version.CivitaiId, f.File.HashSHA256, sizeBytes, SidecarLocator.FindSidecars(path), nameGuess,
                     assetKind));
                 knownAdded++;
+                // Counted with the row, so "N of them" can never exceed the rows actually added.
+                if (answeredBySidecar) sidecarAnswered++;
             }
             catch (Exception ex) when (IsSkippableFileFailure(ex))
             {

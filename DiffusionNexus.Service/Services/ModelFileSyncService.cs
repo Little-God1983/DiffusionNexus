@@ -353,13 +353,24 @@ public class ModelFileSyncService : IModelSyncService
 
                 // First check if we can match by hash (file was moved)
                 var fileInfo = new FileInfo(filePath);
-                var matchedFile = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+                var (matchedFile, unreadable) = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+
+                if (unreadable)
+                {
+                    // Still being copied in (a restore) or held open. A bare record now would claim the
+                    // path for good and the waiting record could never come back — leave it to the next
+                    // scan, and keep the rest of this one.
+                    Serilog.Log.Warning("Discovery skipped {Path} this pass: it could not be read to match it against a record waiting for its file", filePath);
+                    processedCount++;
+                    continue;
+                }
 
                 if (matchedFile is not null)
                 {
-                    // Update the existing file's path. Counted (#537): the row was stamped invalid —
-                    // hidden from the grid — so this is a grid-visible change, just not a new file.
+                    // Update the existing file's path (and name: it may have been renamed on the way).
+                    // Counted (#537): a grid-visible change, just not a new file.
                     matchedFile.LocalPath = filePath;
+                    matchedFile.FileName = Path.GetFileName(filePath);
                     matchedFile.IsLocalFileValid = true;
                     matchedFile.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
                     repointed++;
@@ -787,37 +798,47 @@ public class ModelFileSyncService : IModelSyncService
     /// Tries to match a file by hash and size to find moved files.
     /// </summary>
     /// <remarks>
-    /// A candidate is a record whose file is gone: flagged invalid by a verify pass, or no longer
-    /// on disk although still flagged valid — the flag is only as fresh as the last verify, and at
-    /// startup discovery runs first (#654: a test lab recreated outside the app got 107 bare
-    /// records that way). A record whose file is still there belongs to another copy and is never
-    /// taken over. Matched by whole-file SHA-256, the value <see cref="ModelFile.HashSHA256"/>
-    /// holds; the first-10MB <see cref="ComputeFileHashAsync"/> never equals it for a file over
-    /// 10 MB, which is every real LoRA. The whole file is read only when a record of the same
-    /// size is waiting for its file.
+    /// A candidate is a record whose file is no longer on disk, whatever its valid flag says: the
+    /// flag is only as fresh as the last verify, and at startup discovery runs first (#654: a test
+    /// lab recreated outside the app got 107 bare records that way; and a record flagged invalid
+    /// while its drive was offline has its file back). A record whose file is there belongs to
+    /// another copy and is never taken over. Matched by whole-file SHA-256, the value
+    /// <see cref="ModelFile.HashSHA256"/> holds; the first-10MB <see cref="ComputeFileHashAsync"/>
+    /// never equals it for a file over 10 MB, which is every real LoRA. The whole file is read
+    /// only when a record of the same size is waiting for its file.
     /// </remarks>
-    private async Task<ModelFile?> TryMatchByHashAndSizeAsync(string filePath, long fileSize, CancellationToken cancellationToken)
+    /// <returns>The waiting record, if any; <c>Unreadable</c> when the file could not be read to
+    /// tell — the caller leaves it for the next scan.</returns>
+    private async Task<(ModelFile? Match, bool Unreadable)> TryMatchByHashAndSizeAsync(
+        string filePath, long fileSize, CancellationToken cancellationToken)
     {
         // First try to match by exact size (fast check)
         var candidatesBySize = (await _unitOfWork.ModelFiles
                 .FindBySizeWithLocalPathAsync(fileSize, cancellationToken)
                 .ConfigureAwait(false))
-            .Where(f => !string.IsNullOrEmpty(f.HashSHA256)
-                        && (!f.IsLocalFileValid || !File.Exists(f.LocalPath)))
+            .Where(f => !string.IsNullOrEmpty(f.HashSHA256) && !File.Exists(f.LocalPath))
             .ToList();
 
         if (candidatesBySize.Count == 0)
         {
-            return null;
+            return (null, false);
         }
 
-        var fileHash = await ComputeFullSha256Async(filePath, cancellationToken).ConfigureAwait(false);
+        string fileHash;
+        try
+        {
+            fileHash = await ComputeFullSha256Async(filePath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (null, true);
+        }
 
         // Try to find by SHA256 hash
         var matchByHash = candidatesBySize.FirstOrDefault(f =>
             string.Equals(f.HashSHA256, fileHash, StringComparison.OrdinalIgnoreCase));
 
-        return matchByHash;
+        return (matchByHash, false);
     }
 
     /// <summary>
@@ -866,8 +887,19 @@ public class ModelFileSyncService : IModelSyncService
                 // Hash check for confirmation
                 if (!string.IsNullOrEmpty(file.HashSHA256))
                 {
-                    var candidateHash = await ComputeFullSha256Async(candidatePath, cancellationToken)
-                        .ConfigureAwait(false);
+                    string candidateHash;
+                    try
+                    {
+                        candidateHash = await ComputeFullSha256Async(candidatePath, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // Locked or still being copied: not this pass. One unreadable file must not
+                        // abort verification of the whole library.
+                        continue;
+                    }
+
                     if (string.Equals(candidateHash, file.HashSHA256, StringComparison.OrdinalIgnoreCase))
                     {
                         return candidatePath;

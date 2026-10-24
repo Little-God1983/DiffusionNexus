@@ -191,6 +191,85 @@ public sealed class ModelFileSyncServiceMovedFileTests : IDisposable
         (await AllFilesAsync()).Single(f => f.Id == recordId).LocalPath.Should().BeOneOf(first, second);
     }
 
+    /// <summary>
+    /// Review: a file still being copied in (a restore, the test-lab reset) has its final length
+    /// already, so it matches a waiting record and gets hashed — and reading it fails. That threw
+    /// out of the scan and lost every other repoint and new file of the pass. The locked file is
+    /// left for the next scan instead: given a bare record now, it could never be re-attached.
+    /// </summary>
+    [Fact]
+    public async Task Discovery_SkipsALockedFileAndKeepsTheRestOfThePass()
+    {
+        var weights = Weights(7);
+        var recordId = await SeedRecordAsync("Being copied", Path.Combine(_root, "old", "a.safetensors"), weights, isValid: false);
+        var locked = WriteFile(@"new\a.safetensors", weights);
+        WriteFile(@"new\other.safetensors", Weights(8, length: 4096));
+
+        DiscoveryResult result;
+        using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            result = await DiscoverAsync();
+
+        result.NewModels.Should().ContainSingle("the unlocked new file is still discovered");
+        result.RepointedCount.Should().Be(0);
+        var files = await AllFilesAsync();
+        files.Should().NotContain(f => f.LocalPath == locked, "no bare record for a file that could not be read");
+
+        var retry = await DiscoverAsync();
+
+        retry.RepointedCount.Should().Be(1, "the next scan re-attaches it once the copy is done");
+        (await AllFilesAsync()).Single(f => f.Id == recordId).LocalPath.Should().Be(locked);
+    }
+
+    /// <summary>Review: the valid flag can also be stale the other way — a drive that was offline at
+    /// the last verify is back. A record whose file exists is never taken over, flag or not.</summary>
+    [Fact]
+    public async Task Discovery_NeverTakesOverARecordFlaggedInvalidWhoseFileIsBack()
+    {
+        var weights = Weights(9);
+        var originalPath = WriteFile(@"nas\a.safetensors", weights);
+        var recordId = await SeedRecordAsync("Back online", originalPath, weights, isValid: false);
+        WriteFile(@"local\a.safetensors", weights);
+
+        var result = await DiscoverAsync();
+
+        result.RepointedCount.Should().Be(0);
+        result.NewModels.Should().ContainSingle("the second copy is a file of its own");
+        (await AllFilesAsync()).Single(f => f.Id == recordId).LocalPath.Should().Be(originalPath);
+    }
+
+    /// <summary>Review: a file renamed while moved kept its old FileName on the record, which the
+    /// UI shows and the next moved-file search looks for.</summary>
+    [Fact]
+    public async Task Discovery_TakesTheNewNameOfAFileRenamedWhileMoved()
+    {
+        var weights = Weights(10);
+        var recordId = await SeedRecordAsync("Renamed", Path.Combine(_root, "old", "abc_v1.safetensors"), weights, isValid: false);
+        WriteFile(@"new\abc.safetensors", weights);
+
+        await DiscoverAsync();
+
+        (await AllFilesAsync()).Single(f => f.Id == recordId).FileName.Should().Be("abc.safetensors");
+    }
+
+    [Fact]
+    public async Task Verify_SkipsALockedCandidateAndFinishesThePass()
+    {
+        var weights = Weights(11);
+        var missingId = await SeedRecordAsync("Missing", Path.Combine(_root, "old", "a.safetensors"), weights, isValid: true);
+        var presentPath = WriteFile(@"present\b.safetensors", Weights(12, length: 4096));
+        var presentId = await SeedRecordAsync("Present", presentPath, Weights(12, length: 4096), isValid: false);
+        var locked = WriteFile(@"new\a.safetensors", weights);
+
+        FileSyncResult result;
+        using (new FileStream(locked, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            result = await VerifyAsync();
+
+        result.MovedCount.Should().Be(0);
+        var files = await AllFilesAsync();
+        files.Single(f => f.Id == missingId).IsLocalFileValid.Should().BeFalse("not found this pass; the next one retries");
+        files.Single(f => f.Id == presentId).IsLocalFileValid.Should().BeTrue("the rest of the pass still ran and was saved");
+    }
+
     [Fact]
     public async Task Verify_FindsAMovedFileOverTenMegabytes()
     {
