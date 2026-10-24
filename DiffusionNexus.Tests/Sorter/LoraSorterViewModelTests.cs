@@ -1033,6 +1033,41 @@ public sealed class LoraSorterViewModelTests : IDisposable
     }
 
     /// <summary>
+    /// Review: the report opened only after the post-run re-plan, which can run for minutes on a
+    /// large library (a copy re-run hashes every file). It opens as the run ends and the preview
+    /// rebuilds behind it.
+    /// </summary>
+    [Fact]
+    public async Task TheReportOpensWithoutWaitingForThePreviewToRebuild()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var reportClosed = new TaskCompletionSource();
+        string? statusWhenOpened = "never opened";
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback(() => statusWhenOpened = vm.StatusMessage)
+            .Returns(reportClosed.Task);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        var run = vm.StartSortingCommand.ExecuteAsync(null);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (vm.StatusMessage?.StartsWith("Done:") != true && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        // "Done: …" is written once the re-plan has finished.
+        statusWhenOpened.Should().NotBe("never opened");
+        (statusWhenOpened ?? string.Empty).Should().NotStartWith("Done:", "the report opens before the re-plan");
+        vm.StatusMessage.Should().StartWith("Done:", "the preview rebuilt while the report was still open");
+        run.IsCompleted.Should().BeFalse("the command ends when the report is closed");
+
+        reportClosed.SetResult();
+        await run;
+    }
+
+    /// <summary>
     /// #651: "N duplicates skipped" never said which. Two identical files that both want
     /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
     /// summary sentence and becomes its own link, which opens the list.

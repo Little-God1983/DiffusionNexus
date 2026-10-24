@@ -132,7 +132,7 @@ public sealed partial class SortReportDialogViewModel
     private readonly IUnifiedLogger? _logger;
 
     public SortReportDialogViewModel(LoraSortPlan plan, LoraSortResult result, IProcessLauncher launcher,
-        IUnifiedLogger? logger)
+        IUnifiedLogger? logger, bool emptyFolderCleanupFailed = false)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(result);
@@ -152,6 +152,13 @@ public sealed partial class SortReportDialogViewModel
             ? "Cancelled after every file had been reached. None were left untouched."
             : $"Cancelled after {reached} of {Files(plan.TransferCount)}. "
               + (remaining == 1 ? "The remaining file was not touched." : $"The remaining {remaining} were not touched.");
+
+        var warnings = new List<string>();
+        if (result.ManifestPath is null)
+            warnings.Add("No restore point was recorded for this run — see the log.");
+        if (emptyFolderCleanupFailed)
+            warnings.Add("Some empty source folders could not be removed.");
+        Warnings = warnings;
 
         FailedRows = result.Failures
             .Select(f => new SortReportFileRowViewModel(f.Move.Candidate.FilePath, null, null, f.Reason,
@@ -197,6 +204,11 @@ public sealed partial class SortReportDialogViewModel
 
     public string Title { get; }
     public bool IsCancelled { get; }
+
+    /// <summary>What the status line adds to its tally, so the report does not read as a clean run
+    /// when it was not one.</summary>
+    public IReadOnlyList<string> Warnings { get; }
+    public bool HasWarnings => Warnings.Count > 0;
     public string CancelledText { get; }
 
     public int TransferredCount { get; }

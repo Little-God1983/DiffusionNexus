@@ -1338,10 +1338,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             return;
         }
 
-        LoraSortResult result;
+        var report = Task.CompletedTask;
         try
         {
             _sortCts = new CancellationTokenSource();
+            LoraSortResult result;
             try
             {
                 result = await RunBusyAsync(() => ExecuteSortAsync(plan, deleteEmpty), "Sorting LoRAs…");
@@ -1351,6 +1352,11 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 _sortCts?.Dispose();
                 _sortCts = null;
             }
+
+            // The status line keeps the one-sentence tally; the report names the files (#651).
+            // Opened before the re-plan below, which can run for minutes on a large library — the
+            // preview rebuilds behind it. Built from the plan that RAN, which the re-plan replaces.
+            report = ShowSortReportAsync(plan, result);
 
             // Files moved/copied to new locations — the cached candidate list (built from their
             // old paths) is now stale and must be rebuilt from disk, not just re-planned.
@@ -1377,17 +1383,20 @@ public partial class LoraSorterViewModel : BusyViewModelBase
             _logger?.Error(LogCategory.FileSystem, LogSource, $"Sort failed: {ex.Message}", ex);
             StatusMessage = $"Sorting failed: {ex.Message}";
             _statusMessageIsWarning = false;
-            return;
         }
 
-        // The status line keeps the one-sentence tally; the report names the files (#651).
-        // Built from the plan that RAN — the post-run recompute above already replaced _lastPlan.
-        // Outside the run's try: a report that cannot open must not turn a finished run into
-        // "Sorting failed".
+        await report;
+    }
+
+    /// <summary>Never throws: a report that cannot open must not turn a finished run into
+    /// "Sorting failed".</summary>
+    private async Task ShowSortReportAsync(LoraSortPlan plan, LoraSortResult result)
+    {
         try
         {
             if (DialogService is { } dialogs)
-                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(plan, result, ProcessLauncher, _logger));
+                await dialogs.ShowSortReportDialogAsync(new SortReportDialogViewModel(
+                    plan, result, ProcessLauncher, _logger, _emptyFolderCleanupFailed));
         }
         catch (Exception ex)
         {
@@ -1563,16 +1572,6 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// is a highlight nobody sees.
     /// </remarks>
     /// <summary>
-    /// The "N duplicates skipped" link (#651): lists which files the current plan skips and the
-    /// identical copy each one matched.
-    /// </summary>
-    [RelayCommand(CanExecute = nameof(HasSkippedDuplicates))]
-    private Task ShowSkippedDuplicatesAsync()
-        => _summaryPlan is { } plan && DialogService is { } dialogs
-            ? dialogs.ShowSortDuplicatesDialogAsync(new SortDuplicatesDialogViewModel(plan, ProcessLauncher, _logger))
-            : Task.CompletedTask;
-
-    /// <summary>
     /// "Open in folder" from a row's context menu: a file is selected in Explorer, a folder is
     /// opened, and a file that has not been sorted yet falls back to the folder it will land in —
     /// which exists whenever the destination is an established part of the library.
@@ -1603,6 +1602,16 @@ public partial class LoraSorterViewModel : BusyViewModelBase
                 $"Could not open '{path}' in the file manager: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// The "N duplicates skipped" link (#651): lists which files the current plan skips and the
+    /// identical copy each one matched.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSkippedDuplicates))]
+    private Task ShowSkippedDuplicatesAsync()
+        => _summaryPlan is { } plan && DialogService is { } dialogs
+            ? dialogs.ShowSortDuplicatesDialogAsync(new SortDuplicatesDialogViewModel(plan, ProcessLauncher, _logger))
+            : Task.CompletedTask;
 
     /// <summary>Context-menu "Never sort this folder": source-side folders only.</summary>
     [RelayCommand]

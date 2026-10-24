@@ -207,6 +207,37 @@ public sealed class SortReportDialogViewModelTests : IDisposable
         vm.DuplicateRows.Should().ContainSingle().Which.HasDetail.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Review: the status line warns when no restore point was recorded or empty folders could not
+    /// be removed, and the report — the summary the user actually reads — showed a clean run.
+    /// </summary>
+    [Fact]
+    public void TheReportCarriesTheWarningsTheStatusLineGives()
+    {
+        var moved = Move(@"Loras\a.safetensors", @"Sorted\SDXL 1.0\a.safetensors");
+        var result = new LoraSortResult(1, 0, 0, 0, false, ManifestPath: null) { Transferred = [moved] };
+
+        var vm = new SortReportDialogViewModel(Plan(isMove: true, moved), result, _launcher.Object, logger: null,
+            emptyFolderCleanupFailed: true);
+
+        vm.HasWarnings.Should().BeTrue();
+        vm.Warnings.Should().Equal(
+            "No restore point was recorded for this run — see the log.",
+            "Some empty source folders could not be removed.");
+    }
+
+    [Fact]
+    public void ARunWithARestorePointAndCleanFoldersHasNoWarnings()
+    {
+        var moved = Move(@"Loras\a.safetensors", @"Sorted\SDXL 1.0\a.safetensors");
+        var result = new LoraSortResult(1, 0, 0, 0, false, ManifestPath: In("history", "run.json")) { Transferred = [moved] };
+
+        var vm = new SortReportDialogViewModel(Plan(isMove: true, moved), result, _launcher.Object, logger: null);
+
+        vm.HasWarnings.Should().BeFalse();
+        vm.Warnings.Should().BeEmpty();
+    }
+
     [Fact]
     public void OpenTargetFolderOpensThePlansTargetRoot()
     {
