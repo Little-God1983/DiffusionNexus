@@ -49,6 +49,15 @@ public partial class LoraSorterViewModel : BusyViewModelBase
     /// <summary>The copies the last run made, so the re-plan after it does not hash them.</summary>
     private readonly SortedCopyRegistry _sortedCopies = new();
 
+    private readonly HiddenFeatures? _hiddenFeatures;
+
+    /// <summary>
+    /// "Browse any folder…" — sorting a folder outside the library — is an unofficial feature
+    /// (#653, owner's call): a copy from such a folder lands in the library with no record to attach
+    /// to. Shown only while the sidebar's hidden-features checkbox is on.
+    /// </summary>
+    public bool ShowBrowseAnyFolder => _hiddenFeatures?.IsEnabled == true;
+
     /// <summary>The LoRA source folders configured in Settings — unlike <see cref="SourceFolders"/>,
     /// which also lists folders the user only browsed to (#653).</summary>
     private IReadOnlyList<string> _configuredSources = [];
@@ -213,8 +222,19 @@ public partial class LoraSorterViewModel : BusyViewModelBase
         Func<string, bool> fileExistsOnDisk,
         string historyDirectory,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
-        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null)
+        Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
+        HiddenFeatures? hiddenFeatures = null)
     {
+        _hiddenFeatures = hiddenFeatures;
+        if (_hiddenFeatures is not null)
+        {
+            // The checkbox can be ticked while this tab is open.
+            _hiddenFeatures.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(HiddenFeatures.IsEnabled))
+                    OnPropertyChanged(nameof(ShowBrowseAnyFolder));
+            };
+        }
         _settingsService = settingsService;
         _logger = logger;
         _pathUpdater = pathUpdater ?? throw new ArgumentNullException(nameof(pathUpdater));

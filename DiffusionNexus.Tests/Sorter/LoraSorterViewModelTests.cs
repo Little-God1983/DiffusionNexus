@@ -72,7 +72,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
         IUnifiedLogger? logger = null,
         Func<string, string>? hashFile = null,
-        ILocalPathUpdater? pathUpdater = null)
+        ILocalPathUpdater? pathUpdater = null,
+        HiddenFeatures? hiddenFeatures = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -92,7 +93,8 @@ public sealed class LoraSorterViewModelTests : IDisposable
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
             deleteEmptyDirectories: deleteEmptyDirectories,
-            loadCachedFiles: loadCachedFiles);
+            loadCachedFiles: loadCachedFiles,
+            hiddenFeatures: hiddenFeatures);
     }
 
     [Fact]
@@ -1280,6 +1282,31 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         vm.TargetOutsideSourcesHint.Should().BeNull();
     }
+
+    /// <summary>
+    /// Owner's call (#653): sorting a folder outside the library is an unofficial feature. A copy
+    /// from it lands in the library with no record to attach to, and "we cannot cover every use
+    /// case" — so "Browse any folder…" shows only while the sidebar's hidden-features checkbox is on.
+    /// </summary>
+    [Fact]
+    public void BrowseAnyFolderShowsOnlyWithHiddenFeaturesOn()
+    {
+        var hidden = new HiddenFeatures();
+        var vm = CreateVm(hiddenFeatures: hidden);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.ShowBrowseAnyFolder.Should().BeFalse();
+
+        hidden.IsEnabled = true;
+
+        vm.ShowBrowseAnyFolder.Should().BeTrue();
+        raised.Should().Contain(nameof(LoraSorterViewModel.ShowBrowseAnyFolder), "the button appears without reopening the tab");
+    }
+
+    [Fact]
+    public void WithoutTheHiddenFeaturesFlagBrowseAnyFolderStaysHidden()
+        => CreateVm().ShowBrowseAnyFolder.Should().BeFalse();
 
     /// <summary>Review: the hint described a target and plan no longer on screen once the source
     /// was cleared.</summary>

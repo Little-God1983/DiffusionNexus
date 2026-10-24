@@ -120,27 +120,36 @@ public partial class DiffusionNexusMainWindowViewModel : ViewModelBase
     private string? _activeDownloadName;
 
     /// <summary>
-    /// Hidden feature toggle exposed in the main window sidebar.
-    /// When enabled, the Diffusion Canvas navigation entry is shown.
-    /// (Previously this property gated the Dataset Quality tab; that tab is now always visible.)
+    /// The hidden-features toggle: the faint checkbox at the bottom of the main window sidebar.
+    /// It reveals the app's unofficial features — the Diffusion Canvas navigation entry, and
+    /// through <see cref="HiddenFeatures"/> anything else that follows it (the LoRA Sorter's
+    /// "Browse any folder…", #653). Off at every start.
     /// </summary>
     [ObservableProperty]
-    private bool _isDiffusionCanvasEnabled;
+    private bool _isHiddenFeaturesEnabled;
+
+    /// <summary>The app-wide flag other features read; set from DI at startup.</summary>
+    public HiddenFeatures? HiddenFeatures { get; set; }
 
     private ModuleItem? _diffusionCanvasModule;
 
     /// <summary>
     /// Registers the Diffusion Canvas <see cref="ModuleItem"/> so its sidebar visibility
-    /// can be driven by <see cref="IsDiffusionCanvasEnabled"/>.
+    /// can be driven by <see cref="IsHiddenFeaturesEnabled"/>.
     /// </summary>
     public void SetDiffusionCanvasModule(ModuleItem module)
     {
         _diffusionCanvasModule = module;
-        _diffusionCanvasModule.IsVisible = IsDiffusionCanvasEnabled;
+        _diffusionCanvasModule.IsVisible = IsHiddenFeaturesEnabled;
     }
 
-    partial void OnIsDiffusionCanvasEnabledChanged(bool value)
+    partial void OnIsHiddenFeaturesEnabledChanged(bool value)
     {
+        if (HiddenFeatures is not null)
+        {
+            HiddenFeatures.IsEnabled = value;
+        }
+
         if (_diffusionCanvasModule is not null)
         {
             _diffusionCanvasModule.IsVisible = value;

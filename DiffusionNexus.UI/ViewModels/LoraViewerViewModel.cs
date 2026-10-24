@@ -517,7 +517,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 FileHasher.Sha256Upper,
                 File.Exists,
                 SortHistoryWriter.DefaultHistoryDirectory,
-                loadCachedFiles: LoadCachedFilesForSorterAsync);
+                loadCachedFiles: LoadCachedFilesForSorterAsync,
+                hiddenFeatures: App.Services?.GetService<HiddenFeatures>());
         SorterViewModel.SortCompleted += (_, _) => _ = RefreshAsync();
 
         _ = InitializeBaseModelFilterAsync();

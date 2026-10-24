@@ -191,7 +191,9 @@
             <ComboBox ItemsSource="{Binding SourceFolders}"
                       SelectedItem="{Binding SelectedSourceFolder}"
                       HorizontalAlignment="Stretch"/>
+            <!-- Unofficial (#653): shown only while the sidebar's hidden-features checkbox is on. -->
             <Button Content="Browse any folder…" Command="{Binding BrowseSourceCommand}"
+                    IsVisible="{Binding ShowBrowseAnyFolder}"
                     HorizontalAlignment="Stretch" FontSize="12"/>
           </StackPanel>
 
