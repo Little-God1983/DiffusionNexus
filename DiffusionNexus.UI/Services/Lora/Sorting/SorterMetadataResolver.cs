@@ -488,6 +488,11 @@ public sealed class SorterMetadataResolver
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(sidecarPath));
             var root = doc.RootElement;
+
+            // A failed lookup some tools write as null, [] or a bare string is no sidecar; reading
+            // properties off it threw InvalidOperationException out of the whole preview.
+            if (root.ValueKind != JsonValueKind.Object)
+                return false;
             string? baseModel = root.TryGetProperty("baseModel", out var bmProp) && bmProp.ValueKind == JsonValueKind.String
                 ? bmProp.GetString()
                 : null;

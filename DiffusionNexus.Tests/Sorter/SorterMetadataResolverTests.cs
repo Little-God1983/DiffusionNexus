@@ -67,6 +67,20 @@ public sealed class SorterMetadataResolverTests : IDisposable
         meta.CivitaiVersionId.Should().BeNull();
     }
 
+    /// <summary>Review round 3: a sidecar that is valid JSON but not an object (a failed lookup
+    /// written as <c>null</c> or <c>[]</c>) threw InvalidOperationException out of the preview.</summary>
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("\"not found\"")]
+    public void ASidecarThatIsNotAJsonObjectIsNoSidecar(string json)
+    {
+        var model = WriteModel();
+        File.WriteAllText(In("lora.civitai.info"), json);
+
+        Resolver().ReadSidecar(model).Should().BeNull();
+    }
+
     [Fact]
     public async Task ApiResultIsReturnedAndCachedByHash()
     {

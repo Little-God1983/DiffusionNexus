@@ -320,6 +320,7 @@ public class ModelFileSyncService : IModelSyncService
         });
 
         var newModels = new List<Model>();
+        var reachableRoots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var repointed = 0;
 
         // Deliberately NOT an early return when newFiles.Count == 0 (#527 round 2): a returning
@@ -353,7 +354,15 @@ public class ModelFileSyncService : IModelSyncService
 
                 // First check if we can match by hash (file was moved)
                 var fileInfo = new FileInfo(filePath);
-                var (matchedFile, unreadable) = await TryMatchByHashAndSizeAsync(filePath, fileInfo.Length, cancellationToken);
+                if (!fileInfo.Exists)
+                {
+                    // Gone since the folder scan (the LoRA Sorter moving it, say): nothing to record.
+                    processedCount++;
+                    continue;
+                }
+
+                var (matchedFile, unreadable) = await TryMatchByHashAndSizeAsync(
+                    filePath, fileInfo.Length, reachableRoots, cancellationToken);
 
                 if (unreadable)
                 {
@@ -458,23 +467,37 @@ public class ModelFileSyncService : IModelSyncService
             .Where(f => !string.IsNullOrEmpty(f.LocalPath))
             .GroupBy(f => f.LocalPath!, StringComparer.OrdinalIgnoreCase);
 
-        // A missing record is never moved onto a path a record WITH a hash already claims: matching
-        // by whole-file hash finds copies as well as moves, and that record can prove the bytes are
-        // its own. A path held only by hashless records — the bare one a scan creates for a file it
-        // did not recognise — stays open: the missing record moves there and the contested-path
-        // arbitration below gives the path to whichever record's hash matches (#654: this is what
-        // repairs a library the 10 MB hash bug already split into a missing Civitai record and a
-        // bare one holding its file).
-        var claimedPaths = files
+        // Where a missing record may move (#654). Matching by whole-file hash finds copies as well
+        // as moves, so a path a record WITH a hash holds is never taken: that record can prove the
+        // bytes are its own. A path held only by hashless records — the bare one a scan creates for
+        // a file it did not recognise — is open to a mover whose hash matched the bytes, which then
+        // owns it outright and the bare claimant lets go (below). This is what repairs a library the
+        // 10 MB hash bug split into a missing Civitai record and a bare one holding its file. A mover
+        // WITHOUT a hash proves nothing, so for it every held path is closed.
+        var claimantsByPath = files
+            .Where(f => !string.IsNullOrEmpty(f.LocalPath))
+            .ToLookup(f => f.LocalPath!, StringComparer.OrdinalIgnoreCase);
+        var heldByHashed = files
             .Where(f => !string.IsNullOrEmpty(f.LocalPath) && !string.IsNullOrEmpty(f.HashSHA256))
             .Select(f => f.LocalPath!)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var heldByAny = claimantsByPath.Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var reachableRoots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var claim in byPath)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var claimants = claim.ToList();
+            // Only rows still on this path: a bare row that let go of it earlier in this pass is
+            // settled, and must not be re-validated here.
+            var claimants = claim
+                .Where(f => string.Equals(f.LocalPath, claim.Key, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (claimants.Count == 0)
+            {
+                processedCount += claim.Count();
+                continue;
+            }
 
             progress?.Report(new SyncProgress
             {
@@ -490,12 +513,30 @@ public class ModelFileSyncService : IModelSyncService
                 {
                     // File is missing - try to find by hash. Not when its whole drive or share is
                     // gone: that is offline, not moved.
-                    var newPath = IsOnReachableVolume(claim.Key)
-                        ? await TryFindMovedFileAsync(file, claimedPaths, cancellationToken)
+                    var hasHash = !string.IsNullOrEmpty(file.HashSHA256);
+                    var newPath = IsOnReachableVolume(claim.Key, reachableRoots)
+                        ? await TryFindMovedFileAsync(file, hasHash ? heldByHashed : heldByAny, cancellationToken)
                         : null;
                     if (newPath is not null)
                     {
-                        if (!string.IsNullOrEmpty(file.HashSHA256)) claimedPaths.Add(newPath);
+                        if (hasHash)
+                        {
+                            // The bytes are this record's: a bare claimant of the path lets go of it now,
+                            // in this pass, rather than contest it (a whole-file hash) on every verify.
+                            foreach (var bare in claimantsByPath[newPath].Where(other => other != file
+                                         && string.IsNullOrEmpty(other.HashSHA256)
+                                         && string.Equals(other.LocalPath, newPath, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                Serilog.Log.Information(
+                                    "Re-attached {Path} to the record whose SHA256 matches it; the bare record (file {BareId}) lets go of the path",
+                                    newPath, bare.Id);
+                                bare.LocalPath = null;
+                                bare.IsLocalFileValid = false;
+                                bare.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
+                            }
+                            heldByHashed.Add(newPath);
+                        }
+                        heldByAny.Add(newPath);
                         file.LocalPath = newPath;
                         file.IsLocalFileValid = true;
                         file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
@@ -819,14 +860,14 @@ public class ModelFileSyncService : IModelSyncService
     /// <returns>The waiting record, if any; <c>Unreadable</c> when the file could not be read to
     /// tell — the caller leaves it for the next scan.</returns>
     private async Task<(ModelFile? Match, bool Unreadable)> TryMatchByHashAndSizeAsync(
-        string filePath, long fileSize, CancellationToken cancellationToken)
+        string filePath, long fileSize, Dictionary<string, bool> reachableRoots, CancellationToken cancellationToken)
     {
         // First try to match by exact size (fast check)
         var candidatesBySize = (await _unitOfWork.ModelFiles
                 .FindBySizeWithLocalPathAsync(fileSize, cancellationToken)
                 .ConfigureAwait(false))
             .Where(f => !string.IsNullOrEmpty(f.HashSHA256) && !File.Exists(f.LocalPath)
-                        && IsOnReachableVolume(f.LocalPath!))
+                        && IsOnReachableVolume(f.LocalPath!, reachableRoots))
             .ToList();
 
         if (candidatesBySize.Count == 0)
@@ -857,17 +898,24 @@ public class ModelFileSyncService : IModelSyncService
     /// its metadata to a deliberate second copy, and the original got a bare record once the drive
     /// came back (#654 review).
     /// </summary>
-    private static bool IsOnReachableVolume(string path)
+    /// <param name="reachableRoots">Per-pass answers by root: a share that is down can block each
+    /// check for the SMB timeout, and a pass asks about the same few roots many times.</param>
+    private static bool IsOnReachableVolume(string path, Dictionary<string, bool> reachableRoots)
     {
+        string? root;
         try
         {
-            var root = Path.GetPathRoot(path);
-            return !string.IsNullOrEmpty(root) && Directory.Exists(root);
+            root = Path.GetPathRoot(path);
         }
         catch (ArgumentException)
         {
             return false;
         }
+
+        if (string.IsNullOrEmpty(root)) return false;
+        if (!reachableRoots.TryGetValue(root, out var reachable))
+            reachableRoots[root] = reachable = Directory.Exists(root);
+        return reachable;
     }
 
     /// <summary>
@@ -896,7 +944,9 @@ public class ModelFileSyncService : IModelSyncService
             }
 
             // Search for files with matching name first (common case: file renamed in same location)
-            var matchingFiles = Directory.EnumerateFiles(folder, file.FileName, SearchOption.AllDirectories);
+            // IgnoreInaccessible: one subfolder the user cannot list must not abort the whole verify.
+            var matchingFiles = Directory.EnumerateFiles(folder, file.FileName,
+                new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true });
 
             foreach (var candidatePath in matchingFiles)
             {
@@ -905,10 +955,11 @@ public class ModelFileSyncService : IModelSyncService
                     continue;
                 }
 
+                // Quick size check. A candidate gone since enumeration (the LoRA Sorter moving it)
+                // is simply not this record's file.
                 var candidateInfo = new FileInfo(candidatePath);
-
-                // Quick size check
-                if (file.FileSizeBytes.HasValue && candidateInfo.Length != file.FileSizeBytes.Value)
+                if (!candidateInfo.Exists
+                    || (file.FileSizeBytes.HasValue && candidateInfo.Length != file.FileSizeBytes.Value))
                 {
                     continue;
                 }

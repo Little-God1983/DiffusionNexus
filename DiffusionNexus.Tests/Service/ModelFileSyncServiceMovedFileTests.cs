@@ -284,13 +284,46 @@ public sealed class ModelFileSyncServiceMovedFileTests : IDisposable
         var civitaiId = await SeedRecordAsync("Abyssal Tech", Path.Combine(_root, "Target", "a.safetensors"), weights, isValid: true);
         var bareId = await SeedBareRecordAsync(newPath, weights.Length);
 
-        var first = await VerifyAsync();
-        await VerifyAsync();
+        var result = await VerifyAsync();
 
-        first.MovedCount.Should().Be(1);
+        // Review round 3: settled in the same pass. Left to the next one, the bare row was stamped
+        // valid later in this pass and won the viewer's "most recently verified" pick, and the two
+        // rows then contested the path — a whole-file hash — on every verify after.
+        result.MovedCount.Should().Be(1);
         var files = await AllFilesAsync();
         files.Single(f => f.Id == civitaiId).Should().Match<ModelFile>(f => f.LocalPath == newPath && f.IsLocalFileValid);
-        files.Single(f => f.Id == bareId).IsLocalFileValid.Should().BeFalse("the record whose hash matches the bytes owns the path");
+        var bare = await FileByIdAsync(bareId);
+        bare.LocalPath.Should().BeNull("the record whose hash matches the bytes owns the path; the bare one lets go of it");
+        bare.IsLocalFileValid.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Review round 3: a record WITHOUT a hash cannot prove which file is its own. Moved onto a path
+    /// another hashless record holds, the contested-path check found no owner and invalidated
+    /// both, and the LoRA disappeared from the library.
+    /// </summary>
+    [Fact]
+    public async Task Verify_NeverMovesAHashlessRecordOntoAPathAnotherRecordHolds()
+    {
+        var weights = Weights(15, length: 4096);
+        var newPath = WriteFile(@"B\x.safetensors", weights);
+        var missingId = await SeedBareRecordAsync(Path.Combine(_root, "A", "x.safetensors"), weights.Length);
+        var holderId = await SeedBareRecordAsync(newPath, weights.Length);
+
+        var result = await VerifyAsync();
+        await VerifyAsync();
+
+        result.MovedCount.Should().Be(0);
+        var files = await AllFilesAsync();
+        files.Single(f => f.Id == holderId).IsLocalFileValid.Should().BeTrue("the LoRA stays in the library");
+        files.Single(f => f.Id == missingId).LocalPath.Should().NotBe(newPath);
+    }
+
+    private async Task<ModelFile> FileByIdAsync(int id)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var context = scope.ServiceProvider.GetRequiredService<DiffusionNexus.DataAccess.Data.DiffusionNexusCoreDbContext>();
+        return await context.Set<ModelFile>().AsNoTracking().SingleAsync(f => f.Id == id);
     }
 
     /// <summary>
