@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DiffusionNexus.DataAccess.UnitOfWork;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Service.Services.Lora;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
@@ -56,21 +57,31 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
         var released = 0;
         foreach (var (sourcePath, copyPath) in copies)
         {
-            // The record whose file is really there wins over a stale twin on the same path.
+            // The record whose file is really there wins over a stale twin on the same path, and one
+            // that knows its base model over a bare "???" twin (a historic duplicate).
             var original = (await unitOfWork.ModelFiles.GetByLocalPathWithMetadataAsync(sourcePath, ct))
+                .Where(f => f.ModelVersion?.Model is not null)
                 .OrderByDescending(f => f.IsLocalFileValid)
-                .FirstOrDefault(f => f.ModelVersion?.Model is not null);
+                .ThenByDescending(f => !LoraPathBuilder.IsPlaceholderBaseModel(f.ModelVersion!.BaseModelRaw))
+                .ThenByDescending(f => !string.IsNullOrEmpty(f.HashSHA256))
+                .FirstOrDefault();
             if (original is null)
                 continue; // nothing known about the original: the next scan gives the copy a record
 
             var claimants = await unitOfWork.ModelFiles.GetByLocalPathAsync(copyPath, ct);
 
             // Already registered — an earlier run, or a scan the sync has since identified — when a
-            // record on the path carries the original's hash. Without a hash nothing proves which
-            // record is the copy's, so any record there counts.
-            if (claimants.Any(c => SameHash(c.HashSHA256, original.HashSHA256))
-                || (claimants.Count > 0 && string.IsNullOrEmpty(original.HashSHA256)))
+            // record on the path carries the original's hash, or, for an original never hashed, its
+            // size. That record is the copy's: the file is there again, whatever a verify said.
+            var registered = claimants.FirstOrDefault(c => SameHash(c.HashSHA256, original.HashSHA256)
+                || (string.IsNullOrEmpty(original.HashSHA256) && original.FileSizeBytes is { } size
+                    && c.FileSizeBytes == size));
+            if (registered is not null)
+            {
+                registered.IsLocalFileValid = true;
+                registered.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
                 continue;
+            }
 
             // The copy was written with overwrite off, so no file sat on this path before it:
             // whatever record still points here is stale — a file deleted outside the app, or a

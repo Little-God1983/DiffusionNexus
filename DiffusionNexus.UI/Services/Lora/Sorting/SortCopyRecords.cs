@@ -1,4 +1,5 @@
 using DiffusionNexus.Domain.Entities;
+using DiffusionNexus.Service.Services.Sync.Thumbnails;
 
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
@@ -97,7 +98,7 @@ public static class SortCopyRecords
             copyVersion.Images.Add(new ModelImage
             {
                 CivitaiId = image.CivitaiId,
-                Url = image.Url,
+                Url = CopyImageUrl(image.Url, original.LocalPath, copyPath),
                 MediaType = image.MediaType,
                 NsfwLevel = image.NsfwLevel,
                 Width = image.Width,
@@ -160,5 +161,24 @@ public static class SortCopyRecords
         });
         copyModel.Versions.Add(copyVersion);
         return copyModel;
+    }
+
+    /// <summary>
+    /// A local preview (<c>file://</c>) beside the original was copied next to the copy with the
+    /// rest of its sidecars, so the copy's image points at that one — not at the original's, which
+    /// the copy would otherwise depend on. Any other URL is kept as it is.
+    /// </summary>
+    private static string CopyImageUrl(string url, string? originalPath, string copyPath)
+    {
+        if (originalPath is null || !LocalPreviewFiles.TryGetLocalPath(url, out var previewPath))
+            return url;
+
+        var besideOriginal = string.Equals(Path.GetDirectoryName(previewPath), Path.GetDirectoryName(originalPath),
+                                 StringComparison.OrdinalIgnoreCase)
+                             && Path.GetFileName(previewPath).StartsWith(Path.GetFileNameWithoutExtension(originalPath),
+                                 StringComparison.OrdinalIgnoreCase);
+        return besideOriginal
+            ? LocalPreviewFiles.FileUrlPrefix + SidecarLocator.DeriveSidecarTargetPath(previewPath, originalPath, copyPath)
+            : url;
     }
 }
