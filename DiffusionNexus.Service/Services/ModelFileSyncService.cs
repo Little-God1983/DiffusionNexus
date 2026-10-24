@@ -447,6 +447,14 @@ public class ModelFileSyncService : IModelSyncService
             .Where(f => !string.IsNullOrEmpty(f.LocalPath))
             .GroupBy(f => f.LocalPath!, StringComparer.OrdinalIgnoreCase);
 
+        // A missing record is never moved onto a path another record already claims: matching by
+        // whole-file hash finds copies as well as moves, and two records on one path is exactly
+        // the contested state this pass then has to arbitrate.
+        var claimedPaths = files
+            .Where(f => !string.IsNullOrEmpty(f.LocalPath))
+            .Select(f => f.LocalPath!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         foreach (var claim in byPath)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -466,9 +474,10 @@ public class ModelFileSyncService : IModelSyncService
                 foreach (var file in claimants)
                 {
                     // File is missing - try to find by hash
-                    var newPath = await TryFindMovedFileAsync(file, cancellationToken);
+                    var newPath = await TryFindMovedFileAsync(file, claimedPaths, cancellationToken);
                     if (newPath is not null)
                     {
+                        claimedPaths.Add(newPath);
                         file.LocalPath = newPath;
                         file.IsLocalFileValid = true;
                         file.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
@@ -578,9 +587,9 @@ public class ModelFileSyncService : IModelSyncService
     /// <summary>
     /// Full-file SHA256, uppercase hex — comparable to the Civitai-recorded
     /// <see cref="ModelFile.HashSHA256"/>. Unlike <see cref="ComputeFileHashAsync"/>
-    /// (a first-10MB partial for cheap moved-file candidate checks), ownership
-    /// arbitration of a contested path must hash the whole file: partial hashes
-    /// never equal a stored full-file SHA256.
+    /// (a first-10MB partial), ownership arbitration of a contested path and moved-file
+    /// matching must hash the whole file: partial hashes never equal a stored full-file
+    /// SHA256 (#654).
     /// </summary>
     private static async Task<string> ComputeFullSha256Async(string filePath, CancellationToken cancellationToken)
     {
@@ -777,20 +786,32 @@ public class ModelFileSyncService : IModelSyncService
     /// <summary>
     /// Tries to match a file by hash and size to find moved files.
     /// </summary>
+    /// <remarks>
+    /// A candidate is a record whose file is gone: flagged invalid by a verify pass, or no longer
+    /// on disk although still flagged valid — the flag is only as fresh as the last verify, and at
+    /// startup discovery runs first (#654: a test lab recreated outside the app got 107 bare
+    /// records that way). A record whose file is still there belongs to another copy and is never
+    /// taken over. Matched by whole-file SHA-256, the value <see cref="ModelFile.HashSHA256"/>
+    /// holds; the first-10MB <see cref="ComputeFileHashAsync"/> never equals it for a file over
+    /// 10 MB, which is every real LoRA. The whole file is read only when a record of the same
+    /// size is waiting for its file.
+    /// </remarks>
     private async Task<ModelFile?> TryMatchByHashAndSizeAsync(string filePath, long fileSize, CancellationToken cancellationToken)
     {
         // First try to match by exact size (fast check)
-        var candidatesBySize = await _unitOfWork.ModelFiles
-            .FindBySizeWithInvalidPathAsync(fileSize, cancellationToken)
-            .ConfigureAwait(false);
+        var candidatesBySize = (await _unitOfWork.ModelFiles
+                .FindBySizeWithLocalPathAsync(fileSize, cancellationToken)
+                .ConfigureAwait(false))
+            .Where(f => !string.IsNullOrEmpty(f.HashSHA256)
+                        && (!f.IsLocalFileValid || !File.Exists(f.LocalPath)))
+            .ToList();
 
         if (candidatesBySize.Count == 0)
         {
             return null;
         }
 
-        // If we have candidates, compute hash and try to match
-        var fileHash = await ComputeFileHashAsync(filePath, cancellationToken);
+        var fileHash = await ComputeFullSha256Async(filePath, cancellationToken).ConfigureAwait(false);
 
         // Try to find by SHA256 hash
         var matchByHash = candidatesBySize.FirstOrDefault(f =>
@@ -802,7 +823,12 @@ public class ModelFileSyncService : IModelSyncService
     /// <summary>
     /// Tries to find a moved file by scanning configured folders.
     /// </summary>
-    private async Task<string?> TryFindMovedFileAsync(ModelFile file, CancellationToken cancellationToken)
+    /// <param name="claimedPaths">Paths other records already point at; a file there is another
+    /// record's copy, never this record's new location.</param>
+    /// <remarks>Whole-file SHA-256, for the reason <see cref="TryMatchByHashAndSizeAsync"/>
+    /// gives.</remarks>
+    private async Task<string?> TryFindMovedFileAsync(ModelFile file, IReadOnlySet<string> claimedPaths,
+        CancellationToken cancellationToken)
     {
         // Only try if we have hash or size info
         if (string.IsNullOrEmpty(file.HashSHA256) && !file.FileSizeBytes.HasValue)
@@ -824,6 +850,11 @@ public class ModelFileSyncService : IModelSyncService
 
             foreach (var candidatePath in matchingFiles)
             {
+                if (claimedPaths.Contains(candidatePath))
+                {
+                    continue;
+                }
+
                 var candidateInfo = new FileInfo(candidatePath);
 
                 // Quick size check
@@ -835,7 +866,8 @@ public class ModelFileSyncService : IModelSyncService
                 // Hash check for confirmation
                 if (!string.IsNullOrEmpty(file.HashSHA256))
                 {
-                    var candidateHash = await ComputeFileHashAsync(candidatePath, cancellationToken);
+                    var candidateHash = await ComputeFullSha256Async(candidatePath, cancellationToken)
+                        .ConfigureAwait(false);
                     if (string.Equals(candidateHash, file.HashSHA256, StringComparison.OrdinalIgnoreCase))
                     {
                         return candidatePath;

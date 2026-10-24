@@ -51,12 +51,12 @@ internal sealed class ModelFileRepository : RepositoryBase<ModelFile>, IModelFil
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ModelFile>> FindBySizeWithInvalidPathAsync(
+    public async Task<IReadOnlyList<ModelFile>> FindBySizeWithLocalPathAsync(
         long fileSize,
         CancellationToken cancellationToken = default)
     {
         return await DbSet
-            .Where(f => f.FileSizeBytes == fileSize && f.LocalPath != null && !f.IsLocalFileValid)
+            .Where(f => f.FileSizeBytes == fileSize && f.LocalPath != null)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

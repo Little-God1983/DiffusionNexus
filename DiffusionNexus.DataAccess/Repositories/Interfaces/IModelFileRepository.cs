@@ -35,11 +35,12 @@ public interface IModelFileRepository : IRepository<ModelFile>
     Task<IReadOnlyList<ModelFile>> GetByLocalPathAsync(string localPath, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Finds model files matching a specific file size that have an invalid local path,
-    /// used for detecting moved files.
+    /// Finds model files matching a specific file size that have a local path, used for
+    /// detecting moved files. Valid and invalid alike: the valid flag is only as fresh as the
+    /// last verify pass, so the caller checks whether each candidate's file is still there.
     /// </summary>
     /// <param name="fileSize">Exact file size in bytes.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Candidate model files for hash comparison.</returns>
-    Task<IReadOnlyList<ModelFile>> FindBySizeWithInvalidPathAsync(long fileSize, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ModelFile>> FindBySizeWithLocalPathAsync(long fileSize, CancellationToken cancellationToken = default);
 }

@@ -12,7 +12,7 @@ namespace DiffusionNexus.Tests.DataAccess.Repositories;
 /// <summary>
 /// Covers <c>ModelFileRepository.GetExistingLocalPathsAsync</c> (the case-insensitive
 /// dedup set <c>ModelFileSyncService</c> relies on) and
-/// <c>FindBySizeWithInvalidPathAsync</c> (moved-file detection).
+/// <c>FindBySizeWithLocalPathAsync</c> (moved-file detection).
 /// </summary>
 public class ModelFileRepositoryTests : IDisposable
 {
@@ -109,7 +109,7 @@ public class ModelFileRepositoryTests : IDisposable
 
     #endregion
 
-    #region FindBySizeWithInvalidPathAsync
+    #region FindBySizeWithLocalPathAsync
 
     [Fact]
     public async Task WhenSizeMatchesAndLocalFileIsInvalidThenTheCandidateIsReturned()
@@ -123,7 +123,7 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(144_703_488);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(144_703_488);
 
         candidates.Should().ContainSingle();
         candidates[0].FileName.Should().Be("moved.safetensors");
@@ -142,13 +142,17 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(999_999);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(999_999);
 
         candidates.Should().BeEmpty();
     }
 
+    /// <summary>
+    /// #654: the valid flag is only as fresh as the last verify pass. A record whose file vanished
+    /// since is still flagged valid, so the query returns it and the caller checks the disk.
+    /// </summary>
     [Fact]
-    public async Task WhenSizeMatchesButLocalFileIsStillValidThenItIsFilteredOut()
+    public async Task WhenSizeMatchesAndLocalFileIsStillFlaggedValidThenItIsReturnedToo()
     {
         await SeedAsync(CreateModel("Present", NewFile(
             "present.safetensors",
@@ -159,9 +163,9 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(144_703_488);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(144_703_488);
 
-        candidates.Should().BeEmpty("a file that is still where we expect it has not been moved");
+        candidates.Should().ContainSingle();
     }
 
     [Fact]
@@ -176,7 +180,7 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(144_703_488);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(144_703_488);
 
         candidates.Should().BeEmpty("a file that was never downloaded is not a moved-file candidate");
     }
@@ -198,7 +202,7 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(144_703_488);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(144_703_488);
 
         candidates.Select(c => c.FileName).Should().BeEquivalentTo(new[] { "a.safetensors", "b.safetensors" });
     }
@@ -215,7 +219,7 @@ public class ModelFileRepositoryTests : IDisposable
         using var scope = _serviceProvider.CreateScope();
         var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
 
-        var candidates = await uow.ModelFiles.FindBySizeWithInvalidPathAsync(0);
+        var candidates = await uow.ModelFiles.FindBySizeWithLocalPathAsync(0);
 
         candidates.Should().BeEmpty("a NULL size must not be treated as 0 bytes");
     }
