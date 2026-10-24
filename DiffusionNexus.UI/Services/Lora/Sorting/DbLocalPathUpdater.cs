@@ -53,14 +53,14 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
         var stopwatch = Stopwatch.StartNew();
         using var scope = _scopeFactory.CreateScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-        var created = 0;
+        var attached = 0;
         var released = 0;
         foreach (var (sourcePath, copyPath) in copies)
         {
             // The record whose file is really there wins over a stale twin on the same path, and one
             // that knows its base model over a bare "???" twin (a historic duplicate).
-            var original = (await unitOfWork.ModelFiles.GetByLocalPathWithMetadataAsync(sourcePath, ct))
-                .Where(f => f.ModelVersion?.Model is not null)
+            var original = (await unitOfWork.ModelFiles.GetByLocalPathAsync(sourcePath, ct))
+                .Where(f => f.ModelVersion is not null)
                 .OrderByDescending(f => f.IsLocalFileValid)
                 .ThenByDescending(f => !LoraPathBuilder.IsPlaceholderBaseModel(f.ModelVersion!.BaseModelRaw))
                 .ThenByDescending(f => !string.IsNullOrEmpty(f.HashSHA256))
@@ -70,24 +70,20 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
 
             var claimants = await unitOfWork.ModelFiles.GetByLocalPathAsync(copyPath, ct);
 
-            // Already registered — an earlier run, or a scan the sync has since identified — when a
-            // record on the path carries the original's hash, or, for an original never hashed, its
-            // size. That record is the copy's: the file is there again, whatever a verify said.
-            var registered = claimants.FirstOrDefault(c => SameHash(c.HashSHA256, original.HashSHA256)
-                || (string.IsNullOrEmpty(original.HashSHA256) && original.FileSizeBytes is { } size
-                    && c.FileSizeBytes == size));
-            if (registered is not null)
+            // A file of the original's version on the path is the copy's own (an earlier run): the
+            // file is there again, whatever a verify said.
+            var own = claimants.FirstOrDefault(c => c.ModelVersionId == original.ModelVersionId);
+            if (own is not null)
             {
-                registered.IsLocalFileValid = true;
-                registered.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
-                continue;
+                own.IsLocalFileValid = true;
+                own.LocalFileVerifiedAt = DateTimeOffset.UtcNow;
             }
 
-            // The copy was written with overwrite off, so no file sat on this path before it:
-            // whatever record still points here is stale — a file deleted outside the app, or a
-            // bare record a scan made after a failed flush. It lets go of the path, or the library
-            // would show the copy under that record's name and base model.
-            foreach (var stale in claimants)
+            // The copy was written with overwrite off, so no file sat on this path before it: any
+            // other record still pointing here is stale — a file deleted outside the app, or a bare
+            // record a scan made for the copy (same hash or not). It lets go of the path, or the
+            // library would show the copy under that record's name and base model.
+            foreach (var stale in claimants.Where(c => c != own))
             {
                 stale.LocalPath = null;
                 stale.IsLocalFileValid = false;
@@ -95,16 +91,16 @@ public sealed class DbLocalPathUpdater : ILocalPathUpdater
                 released++;
             }
 
-            await unitOfWork.Models.AddAsync(SortCopyRecords.CreateFor(original, copyPath), ct);
-            created++;
+            if (own is null)
+            {
+                await unitOfWork.ModelFiles.AddAsync(SortCopyRecords.CreateFileFor(original, copyPath), ct);
+                attached++;
+            }
         }
         await unitOfWork.SaveChangesAsync(ct);
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"DB batch: {copies.Count} copies, {created} registered with the original's metadata"
+            $"DB batch: {copies.Count} copies, {attached} attached to their original's version"
             + (released > 0 ? $", {released} stale records on their paths released" : string.Empty)
             + $" in {stopwatch.ElapsedMilliseconds} ms");
     }
-
-    private static bool SameHash(string? left, string? right)
-        => !string.IsNullOrEmpty(left) && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 }
