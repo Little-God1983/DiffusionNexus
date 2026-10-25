@@ -9,8 +9,8 @@
     entry and any taskbar pin open. Older versions stay beside the new one; delete them by hand when
     you like.
 
-    The version is Major.Minor.Build from Directory.Build.props plus the number of commits on
-    develop. It is stamped for this build only: nothing is committed or pushed, so the repo is
+    The version is the Major.Minor.Build the next release will get (see Releases in
+    Scripts\README.md) plus the number of commits on develop. It is stamped for this build only: nothing is committed or pushed, so the repo is
     exactly as it was afterwards. Building the same develop commit twice is refused.
 
     Tests come before the publish on purpose: a build you are about to use is the worst place to
@@ -108,7 +108,7 @@ if ($stable) {
     # Branch, clean tree and origin are checked before a single file is built, so a wrong branch
     # costs seconds, not a build and a test run.
     Assert-ReleaseReady
-    $version = Get-StableVersion -Current $current -CommitCount (Get-CommitCount)
+    $version = Get-StableVersion -Current (Get-ReleaseVersion).Version -CommitCount (Get-CommitCount)
     $InstallDir = Get-VersionedInstallDir -InstallRoot $InstallRoot -Version $version
     Assert-StableTargetFree -InstallDir $InstallDir -Version $version
     Write-Ok "version $version"

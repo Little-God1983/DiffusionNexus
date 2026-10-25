@@ -23,14 +23,13 @@ Older versions stay beside the new one. Delete them by hand when you like.
 
 ### The version
 
-The version is `Major.Minor.Build` from `Directory.Build.props` plus the number of commits on
-`develop`: `0.11.0.2483`. It is passed to the build only. Nothing is committed or pushed, so the
+The version is the `Major.Minor.Build` the next release will get, plus the number of commits on
+`develop`: `0.13.0.2483`. It is passed to the build only. Nothing is committed or pushed, so the
 repo is exactly as it was afterwards. `develop` takes commits only through PRs, and `release.yml`
 stamps the revision on `main` the same way, from the run number.
 
 Each new commit on `develop` gets a new number, so it gets a new folder. Building the same commit
 twice is refused: that folder is the version the Start Menu opens. Merge something new first.
-To raise `Major.Minor.Build`, change `Directory.Build.props` in a PR.
 
 ### What it refuses
 
@@ -103,3 +102,20 @@ to force the wait.
 It does not regenerate the third-party notices (CI checks on every PR that the committed ones are
 current), stage the GPL corresponding source, or make a zip. Those are for a release you hand out,
 which is `publish.ps1`.
+
+## Releases
+
+A merge from `develop` into `main` is a release. Nothing else to do: no version to type, no tag to
+push. `.github/workflows/release.yml` then:
+
+1. Takes the last release tag (the highest `vX.Y.Z`) and the commit subjects since it. A `feat:`
+   among them raises the middle number (`v0.12.0` → `0.13.0`), anything else the third
+   (`v0.12.0` → `0.12.1`). Nothing new since the tag means no release.
+2. Builds the zip with `publish.ps1`, the fourth part being the run number (`0.13.0.57`).
+3. Tags the merge commit `v0.13.0` and publishes a GitHub Release with the zip and the merged PRs
+   as its notes. A failed build leaves no tag, so a re-run gets the same version.
+
+`build.ps1` uses the same function (`Get-ReleaseVersion` in `_common.ps1`), so a stable build of
+`develop` carries the number that code will ship as. A commit message never raises the first
+number. For that, or any other jump, raise `<Version>` in `Directory.Build.props` in a PR: it is
+the lowest version the next release may have.
