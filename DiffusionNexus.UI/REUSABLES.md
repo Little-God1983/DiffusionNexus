@@ -105,7 +105,10 @@ Generic building blocks — try these before writing a new dialog:
 Domain dialogs already covered (check here before building a new one): dataset create /
 version / export / add-to, training-run create / export, caption compare, captioning and
 captioning models, Civitai token, assign Civitai IDs, download LoRA version, "download
-LoRA has moved" (pointer to the Browse Civitai link search), download preflight, sync plan / sync report, workloads / workload details / core
+LoRA has moved" (pointer to the Browse Civitai link search), download preflight, sync plan / sync report, LoRA Sorter
+duplicate list / sort report (`SortDuplicatesDialog`, `SortReportDialog`; their per-file line `SortReportFileRow` +
+`SortReportFileRowViewModel` is a path, an optional paired path and detail, with "Open in folder" for both — reuse it for
+any post-run file list), workloads / workload details / core
 workloads, VRAM selection, add / edit / remove installation, backup compare, feedback,
 save-as, replace image, file conflict, select versions to delete (dataset and LoRA).
 
@@ -149,6 +152,7 @@ Others worth knowing:
 | `SafeAssetExtension` | [Markup/SafeAssetExtension.cs](Markup/SafeAssetExtension.cs) | XAML markup extension for assets that may be missing (pairs with `SafeAssetBitmap`). |
 | `IUiScheduler` / `AvaloniaUiScheduler` | [Services/](Services/) | Marshal to the UI thread — inject this rather than calling `Dispatcher.UIThread` from a ViewModel. |
 | `IThumbnailOrchestrator` / `ThumbnailService` / `LruKeyTracker` | [Services/](Services/) | Thumbnail generation and caching. Any new image grid uses this. |
+| `HiddenFeatures` | [Services/HiddenFeatures.cs](Services/HiddenFeatures.cs) | Hiding an unofficial feature. DI singleton driven by the faint checkbox at the bottom of the sidebar (`DiffusionNexusMainWindowViewModel.IsHiddenFeaturesEnabled`, off at every start, never saved). Take it as an optional constructor parameter, expose a `Show…` property that reads `IsEnabled`, and raise it on the flag's `PropertyChanged` so ticking the box shows the feature without reopening the view. Used by the Diffusion Canvas entry and the LoRA Sorter's "Browse any folder…". |
 | `UrlLauncher` | [Services/UrlLauncher.cs](Services/UrlLauncher.cs) | Opening a web URL in the system browser. Give the ViewModel a swappable `Action<string>` opener defaulting to `UrlLauncher.Open` (tests capture the URL) and launch through `UrlLauncher.TryOpen(url, opener, logger, source)`, which logs a warning instead of throwing when there is no default browser. Never call `Process.Start(url)` from a command. |
 | `CommunityLinkSlots` | [ViewModels/CommunityLinkSlots.cs](ViewModels/CommunityLinkSlots.cs) | Fitting a list of any length into a fixed number of slots: all items when they fit, otherwise all but the last slot plus a "More" overflow (`Split` returns inline + overflow). Used by the sidebar's community links; reuse it for any "N visible, the rest behind More" list. |
 | `AvaloniaClipboardService` | [Services/AvaloniaClipboardService.cs](Services/AvaloniaClipboardService.cs) | Clipboard access. |

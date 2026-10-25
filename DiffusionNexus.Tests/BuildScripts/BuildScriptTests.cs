@@ -32,6 +32,93 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
     }
 
     [Theory]
+    [InlineData("'feat(ui): add a tab', 'fix: a crash'", "0.12.0", "0.13.0 True")]
+    [InlineData("'feat!: drop the old setting'", "0.12.0", "0.13.0 True")]
+    [InlineData("'fix: a crash', 'docs: readme', 'chore(deps): bump'", "0.12.0", "0.12.1 True")]
+    [InlineData("'fix: the feat: button'", "0.12.0", "0.12.1 True")]
+    [InlineData("'fix: a crash'", "1.0.0", "1.0.0 True")]
+    [InlineData("'feat: a tab'", "0.13.0", "0.13.0 True")]
+    [InlineData("", "0.12.0", "0.12.0 False")]
+    public void TheNextRelease_RaisesMinorForAFeatureAndBuildOtherwise_NeverBelowTheProps(string subjects, string floor, string expected)
+    {
+        // The last release was v0.12.0. A feat: anywhere since raises the middle number; anything else
+        // the third. The props number is a floor, the one way to jump (to 1.0.0, say). Nothing new since
+        // the tag is nothing to release, and the version is the tag's own.
+        var result = Pwsh.RunCommon(
+            $"$r = Get-NextReleaseVersion -LastTag 'v0.12.0' -Subjects @({subjects}) -Floor '{floor}'; \"$($r.Version) $($r.New)\"");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        result.Output.Trim().Should().Be(expected);
+    }
+
+    [Fact]
+    public void WithNoReleaseTagYet_TheFirstReleaseIsTheProps()
+    {
+        var result = Pwsh.RunCommon(
+            "$r = Get-NextReleaseVersion -LastTag '' -Subjects @('feat: a tab') -Floor '0.12.0'; \"$($r.Version) $($r.New)\"");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        result.Output.Trim().Should().Be("0.12.0 True");
+    }
+
+    [Fact]
+    public void TheLastRelease_IsTheHighestPlainVersionTag_NotTheNewestOrTheFirstListed()
+    {
+        // git lists tags by name, so v0.9.12 sorts after v0.12.0 as text. A tag that is not a plain
+        // vX.Y.Z (a pre-release, someone's marker) is no release.
+        var git =
+            "function Invoke-Git { param([string[]]$Arguments, [switch]$Quiet) $global:LASTEXITCODE = 0; " +
+            "switch ($Arguments[0]) { " +
+            "'tag' { 'v0.12.0'; 'v0.9.12'; 'v1.0.0-rc.1'; 'nightly'; 'v0.11.0' } " +
+            "'log' { Add-Content -LiteralPath $env:TEMP_LOG -Value ($Arguments -join ' '); 'fix: a crash' } } }";
+        using var temp = new TempFolder();
+        var log = Path.Combine(temp.Path, "git.log");
+
+        var result = Pwsh.RunCommon(
+            $"$env:TEMP_LOG = '{log}'; {git}; $r = Get-ReleaseVersion; \"$($r.LastTag) $($r.Version) $($r.New)\"");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        result.Output.Trim().Should().Be("v0.12.0 0.12.1 True");
+        File.ReadAllText(log).Should().Contain("v0.12.0..HEAD").And.Contain("--no-merges");
+    }
+
+    [Fact]
+    public void AGitLogThatFails_StopsTheRelease()
+    {
+        // A shallow clone without the tag's commit makes git log exit non-zero with nothing on stdout,
+        // which would otherwise read as "nothing new".
+        var git =
+            "function Invoke-Git { param([string[]]$Arguments, [switch]$Quiet) $global:LASTEXITCODE = 0; " +
+            "switch ($Arguments[0]) { 'tag' { 'v0.12.0' } 'log' { $global:LASTEXITCODE = 128 } } }";
+
+        var result = Pwsh.RunCommon($"{git}; Get-ReleaseVersion");
+
+        result.ExitCode.Should().Be(1);
+        result.Output.Should().Contain("v0.12.0");
+    }
+
+    [Theory]
+    [InlineData("abc1234 p1 p2", 0)]
+    [InlineData("abc1234 p1", 1)]
+    public void AReleaseOfASquashOrRebaseMerge_IsRefused(string parents, int expectedExitCode)
+    {
+        // A squash or rebase merge into main has one parent. Its subject is the PR title, so the feat:
+        // commits are lost, and develop never contains the commit the tag would go on: every later
+        // count would start from the merge before it.
+        var git =
+            "function Invoke-Git { param([string[]]$Arguments, [switch]$Quiet) $global:LASTEXITCODE = 0; " +
+            $"if ($Arguments[0] -eq 'rev-list' -and $Arguments -contains '--parents') {{ '{parents}' }} }}";
+
+        var result = Pwsh.RunCommon($"{git}; Assert-ReleaseMerge");
+
+        result.ExitCode.Should().Be(expectedExitCode, result.Output);
+        if (expectedExitCode != 0)
+        {
+            result.Output.Should().Contain("merge commit");
+        }
+    }
+
+    [Theory]
     [InlineData(@"root\DiffusionNexus-0.11.0.9", true)]
     [InlineData(@"root", false)]
     [InlineData(@"rootOld\DiffusionNexus", false)]
@@ -495,6 +582,40 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
         repo.PropsText.Should().Be(FakeRepo.OriginalProps);
     }
 
+    [Theory]
+    [InlineData("feat: a tab|fix: a crash", "0.12.0.2483")]
+    [InlineData("fix: a crash", "0.11.1.2483")]
+    [InlineData("", "0.11.0.2483")]
+    public void AStableBuild_CarriesTheVersionTheNextReleaseGets(string subjects, string expected)
+    {
+        // release.yml counts up from the last tag, so the stable build of develop does too: the number
+        // in the title bar is the one this code will ship as. With nothing new since the tag, develop
+        // is the release itself.
+        using var repo = new FakeRepo();
+
+        var result = repo.Build(before: $"$env:FAKE_TAGS = 'v0.11.0'; $env:FAKE_LOG = '{subjects}'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.CurrentLinkTarget.Should().Be(repo.VersionFolder(expected));
+        repo.PropsText.Should().Be(FakeRepo.OriginalProps);
+    }
+
+    [Fact]
+    public void AStableBuild_FetchesTheReleaseTags()
+    {
+        // Release tags sit on main's merge commits, which develop never contains, so fetching develop
+        // alone never brings them: the build would count from an old tag and stamp a number that has
+        // already shipped. --force: a release tag re-made on origin otherwise stops the fetch with
+        // "would clobber existing tag", which the build reports as a network problem.
+        using var repo = new FakeRepo();
+
+        var result = repo.Build();
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.Calls.Should().Contain(call =>
+            call.StartsWith("git fetch") && call.Contains("--tags") && call.Contains("--force") && call.EndsWith("origin develop"));
+    }
+
     [Fact]
     public void ASecondRunOfTheSameCommit_LeavesTheInstalledVersionAlone()
     {
@@ -731,17 +852,18 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     public void AOneOffBuild_IsStampedAndLeavesTheStableRootAlone()
     {
         // AssemblyVersion and FileVersion follow $(Version) in Directory.Build.props and must be
-        // numeric, so they keep the props number while the shown version carries the stamp.
+        // numeric, so they keep the plain number while the shown version carries the stamp. With no
+        // release tag yet, that number is the props floor.
         using var repo = new FakeRepo();
         var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
 
         var result = repo.Build($"-InstallDir '{folder}'", before: "$env:FAKE_BRANCH = 'feature/x'");
 
         result.ExitCode.Should().Be(0, result.Output);
-        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.1-oneoff.gabc1234\"");
+        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.0-oneoff.gabc1234\"");
         FakeRepo.IsMarkedComplete(folder).Should().BeTrue();
         repo.Calls.Should().Contain(
-            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.11.0.1-oneoff.gabc1234 -p:AssemblyVersion=0.11.0.1 -p:FileVersion=0.11.0.1");
+            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.11.0.0-oneoff.gabc1234 -p:AssemblyVersion=0.11.0.0 -p:FileVersion=0.11.0.0");
         repo.Calls.Should().NotContain(call => call.StartsWith("shortcut"));
         repo.CurrentLinkTarget.Should().BeNull();
     }
@@ -762,6 +884,23 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void AOneOffBuild_CarriesTheVersionTheNextReleaseGets()
+    {
+        // The props number is only a floor and falls behind with every release. A one-off stamped
+        // from it would sit below every build that has shipped since.
+        using var repo = new FakeRepo();
+        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
+
+        var result = repo.Build(
+            $"-InstallDir '{folder}'",
+            before: "$env:FAKE_BRANCH = 'feature/x'; $env:FAKE_TAGS = 'v0.11.0'; $env:FAKE_LOG = 'feat: a tab'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.Calls.Should().Contain(
+            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.12.0.0-oneoff.gabc1234 -p:AssemblyVersion=0.12.0.0 -p:FileVersion=0.12.0.0");
+    }
+
+    [Fact]
     public void AOneOffBuildOfUncommittedChanges_SaysSoInItsVersion()
     {
         // Two one-offs of the same commit with different uncommitted edits are different code.
@@ -771,7 +910,7 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
         var result = repo.Build($"-InstallDir '{folder}'", before: "$env:FAKE_DIRTY = '1'");
 
         result.ExitCode.Should().Be(0, result.Output);
-        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.1-oneoff.gabc1234.dirty\"");
+        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.0-oneoff.gabc1234.dirty\"");
     }
 
     [Fact]
@@ -1039,6 +1178,8 @@ public abstract class BuildScriptTestBase
                         elseif ($env:FAKE_COMMIT_COUNT) { $env:FAKE_COMMIT_COUNT }
                         else { '2483' }
                     }
+                    'tag' { if ($env:FAKE_TAGS) { $env:FAKE_TAGS -split ',' } }
+                    'log' { if ($env:FAKE_LOG) { $env:FAKE_LOG -split '\|' } }
                 }
             }
             function dotnet {

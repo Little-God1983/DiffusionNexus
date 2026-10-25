@@ -41,22 +41,24 @@ internal sealed class ModelFileRepository : RepositoryBase<ModelFile>, IModelFil
         CancellationToken cancellationToken = default)
     {
         // ToLower() (→ SQL LOWER()) rather than a collation so the comparison is
-        // provider-portable; ASCII-only folding is fine for Windows drive paths.
+        // provider-portable. SQLite's lower() folds ASCII only, so the exact path is matched too:
+        // "D:\Öffentlich\…" lowered in .NET never equals the stored value lowered in SQL (#653
+        // review), while the stored path normally carries exactly the casing the disk reports.
         var normalized = localPath.ToLowerInvariant();
         return await DbSet
             .Include(f => f.ModelVersion)
-            .Where(f => f.LocalPath != null && f.LocalPath.ToLower() == normalized)
+            .Where(f => f.LocalPath != null && (f.LocalPath == localPath || f.LocalPath.ToLower() == normalized))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<ModelFile>> FindBySizeWithInvalidPathAsync(
+    public async Task<IReadOnlyList<ModelFile>> FindBySizeWithLocalPathAsync(
         long fileSize,
         CancellationToken cancellationToken = default)
     {
         return await DbSet
-            .Where(f => f.FileSizeBytes == fileSize && f.LocalPath != null && !f.IsLocalFileValid)
+            .Where(f => f.FileSizeBytes == fileSize && f.LocalPath != null)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

@@ -191,7 +191,9 @@
             <ComboBox ItemsSource="{Binding SourceFolders}"
                       SelectedItem="{Binding SelectedSourceFolder}"
                       HorizontalAlignment="Stretch"/>
+            <!-- Unofficial (#653): shown only while the sidebar's hidden-features checkbox is on. -->
             <Button Content="Browse any folder…" Command="{Binding BrowseSourceCommand}"
+                    IsVisible="{Binding ShowBrowseAnyFolder}"
                     HorizontalAlignment="Stretch" FontSize="12"/>
           </StackPanel>
 
@@ -209,6 +211,12 @@
                         IsVisible="{Binding CustomTargetFolder, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
               </StackPanel>
             </Grid>
+            <!-- #653: the library lists only files inside its configured sources. -->
+            <Border Background="#2A2A2A" BorderBrush="#444" BorderThickness="1" CornerRadius="4" Padding="8,6"
+                    IsVisible="{Binding TargetOutsideSourcesHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+              <TextBlock Text="{Binding TargetOutsideSourcesHint, StringFormat='ⓘ {0}'}"
+                         Foreground="#FFA726" FontSize="11.5" TextWrapping="Wrap"/>
+            </Border>
           </StackPanel>
 
           <StackPanel Spacing="4">
@@ -354,8 +362,20 @@
           </Grid>
 
         </Grid>
-        <TextBlock Grid.Row="2" Text="{Binding PreviewSummary}" Margin="16,8,16,12"
-                   FontSize="12" Opacity="0.85"/>
+        <!-- The duplicate count trails the sentence as its own element so it can be a link to
+             the list of which files they are (#651); plain text when there are none. -->
+        <WrapPanel Grid.Row="2" Margin="16,8,16,12" IsVisible="{Binding PreviewSummary, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Text="{Binding PreviewSummary}" FontSize="12" Opacity="0.85" VerticalAlignment="Center"/>
+          <TextBlock Text="   ·   " FontSize="12" Opacity="0.85" VerticalAlignment="Center"/>
+          <Button Command="{Binding ShowSkippedDuplicatesCommand}" IsVisible="{Binding HasSkippedDuplicates}"
+                  Background="Transparent" BorderThickness="0" Padding="0" Cursor="Hand"
+                  ToolTip.Tip="Show which files are skipped and the identical copy each one matched">
+            <TextBlock Text="{Binding SkippedDuplicatesText}" FontSize="12" Foreground="#6CB6FF"
+                       TextDecorations="Underline"/>
+          </Button>
+          <TextBlock Text="{Binding SkippedDuplicatesText}" IsVisible="{Binding !HasSkippedDuplicates}"
+                     FontSize="12" Opacity="0.85" VerticalAlignment="Center"/>
+        </WrapPanel>
       </Grid>
     </Grid>
 

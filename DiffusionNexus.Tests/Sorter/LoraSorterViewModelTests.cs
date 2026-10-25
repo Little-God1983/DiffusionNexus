@@ -70,7 +70,10 @@ public sealed class LoraSorterViewModelTests : IDisposable
         Func<string, string>? resolverHash = null,
         Func<string, CancellationToken, Task>? deleteEmptyDirectories = null,
         Func<CancellationToken, Task<IReadOnlyList<InstalledModelFile>>>? loadCachedFiles = null,
-        IUnifiedLogger? logger = null)
+        IUnifiedLogger? logger = null,
+        Func<string, string>? hashFile = null,
+        ILocalPathUpdater? pathUpdater = null,
+        HiddenFeatures? hiddenFeatures = null)
     {
         _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync([SourceRoot]);
@@ -81,16 +84,17 @@ public sealed class LoraSorterViewModelTests : IDisposable
 
         return new LoraSorterViewModel(
             _settings.Object, _sync.Object, logger,
-            pathUpdater: Mock.Of<ILocalPathUpdater>(),
+            pathUpdater: pathUpdater ?? Mock.Of<ILocalPathUpdater>(),
             metadataResolver: new SorterMetadataResolver(null, () => Task.FromResult<string?>(null),
                 Path.Combine(_root.FullName, "cache"), resolverHash ?? (_ => "hash"), logger: null),
             fileOperations: new FileOperations(),
             getAvailableSpace: getAvailableSpace ?? (_ => FreeSpaceResult.Known(freeSpace)),
-            hashFile: _ => "hash",
+            hashFile: hashFile ?? (_ => "hash"),
             fileExistsOnDisk: fileExistsOnDisk ?? File.Exists,
             historyDirectory: Path.Combine(_root.FullName, "history"),
             deleteEmptyDirectories: deleteEmptyDirectories,
-            loadCachedFiles: loadCachedFiles);
+            loadCachedFiles: loadCachedFiles,
+            hiddenFeatures: hiddenFeatures);
     }
 
     [Fact]
@@ -137,6 +141,71 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.PreviewRoots.Select(n => n.Name).Should()
             .Contain("SDXL 1.0", "the row says \"???\", but the file itself does not")
             .And.NotContain(LoraPathBuilder.UnknownFolderName);
+    }
+
+    /// <summary>
+    /// #654: a bare record — what the library scan creates for a file it did not recognise: "???",
+    /// no tags — only had its file's header asked, while a file with no record at all gets the
+    /// <c>.civitai.info</c> sidecar first. An empty record beat a full sidecar, and the test lab's
+    /// re-created files went to Unknown although 56 of them carry one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordWithASidecarSortsByTheSidecar()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["character"]}}""");
+        var bare = new InstalledModelFile(new Model { Type = ModelType.LORA }, new ModelVersion { BaseModelRaw = "???" },
+            new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [bare]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("Pony");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
+    }
+
+    /// <summary>
+    /// Review (#654): the sidecar's version id was not passed on, so two different bare-record
+    /// LoRAs with the same name in the same target folder got a numbered rename where the same
+    /// files without records get the version-id one.
+    /// </summary>
+    [Fact]
+    public async Task ABareRecordAnsweredByItsSidecarCarriesTheSidecarsVersionId()
+    {
+        var first = WriteLora(@"one\v1.safetensors");
+        var second = WriteLora(@"two\v1.safetensors");
+        File.WriteAllText(second, "other weights");
+        File.WriteAllText(Path.ChangeExtension(first, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":11,"model":{"tags":["character"]}}""");
+        File.WriteAllText(Path.ChangeExtension(second, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":22,"model":{"tags":["character"]}}""");
+        InstalledModelFile Bare(string path) => new(new Model { Type = ModelType.LORA },
+            new ModelVersion { BaseModelRaw = "???" }, new ModelFile { LocalPath = path }, Path.GetDirectoryName(path)!);
+        var vm = CreateVm(cached: [Bare(first), Bare(second)], hashFile: p => p);
+
+        await vm.InitializeAsync();
+
+        var character = vm.PreviewRoots.Single(n => n.Name == "Pony").Children.Single(c => c.Name == "Character");
+        character.Children.Select(c => c.Name).Should().Contain("v1_22.safetensors");
+    }
+
+    /// <summary>The sidecar fills in what the record lacks; it never overrules a record that
+    /// already knows its base model (Civitai's by-hash answer, or the user's edit).</summary>
+    [Fact]
+    public async Task ASidecarDoesNotOverruleARecordThatKnowsItsBaseModel()
+    {
+        var path = WriteLora(@"flat\hero.safetensors");
+        File.WriteAllText(Path.ChangeExtension(path, null) + ".civitai.info",
+            """{"baseModel":"Pony","id":4242,"model":{"tags":["style"]}}""");
+        var vm = CreateVm(cached: [Installed(path, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        var root = vm.PreviewRoots.Should().ContainSingle().Subject;
+        root.Name.Should().Be("SDXL 1.0");
+        root.Children.Should().ContainSingle(c => !c.IsFile).Which.Name.Should().Be("Character");
     }
 
     /// <summary>
@@ -986,6 +1055,350 @@ public sealed class LoraSorterViewModelTests : IDisposable
         vm.StatusMessage.Should().NotContain("Preview changed");
         // The snapshot is taken before the dialog opens, so the late tick governs the NEXT run.
         cleanedRoot.Should().BeNull();
+    }
+
+    /// <summary>#651: a finished run used to leave nothing but a status line behind.</summary>
+    [Fact]
+    public async Task AFinishedRunOpensTheReportForThePlanThatRan()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report.Should().NotBeNull();
+        report!.TransferredRows.Should().ContainSingle().Which.Path.Should().Be(a);
+        report.IsCancelled.Should().BeFalse();
+        vm.StatusMessage.Should().StartWith("Done:", "the one-line summary stays");
+    }
+
+    /// <summary>
+    /// Review: the report was awaited inside the run's try, so a dialog that failed to open turned
+    /// a run that had sorted every file into "Sorting failed: …".
+    /// </summary>
+    [Fact]
+    public async Task AReportThatFailsToOpenDoesNotTurnASuccessfulRunIntoAFailure()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .ThrowsAsync(new InvalidOperationException("Cannot show a window with a closed owner."));
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        vm.StatusMessage.Should().StartWith("Done: 1 sorted");
+    }
+
+    /// <summary>
+    /// Review: the report opened only after the post-run re-plan, which can run for minutes on a
+    /// large library (a copy re-run hashes every file). It opens as the run ends and the preview
+    /// rebuilds behind it.
+    /// </summary>
+    [Fact]
+    public async Task TheReportOpensWithoutWaitingForThePreviewToRebuild()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        var reportClosed = new TaskCompletionSource();
+        string? statusWhenOpened = "never opened";
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback(() => statusWhenOpened = vm.StatusMessage)
+            .Returns(reportClosed.Task);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        var run = vm.StartSortingCommand.ExecuteAsync(null);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (vm.StatusMessage?.StartsWith("Done:") != true && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+
+        // "Done: …" is written once the re-plan has finished.
+        statusWhenOpened.Should().NotBe("never opened");
+        (statusWhenOpened ?? string.Empty).Should().NotStartWith("Done:", "the report opens before the re-plan");
+        vm.StatusMessage.Should().StartWith("Done:", "the preview rebuilt while the report was still open");
+        run.IsCompleted.Should().BeFalse("the command ends when the report is closed");
+
+        reportClosed.SetResult();
+        await run;
+    }
+
+    /// <summary>
+    /// Review: after a cancel the status line said "1 done, rest untouched" (successes only) while
+    /// the report said "after 2 of 4" (failures included). One run, one count, in both places.
+    /// </summary>
+    [Fact]
+    public async Task ACancelledRunsStatusLineAndReportGiveTheSameCount()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var b = WriteLora(@"flat\b.safetensors");
+        LoraSorterViewModel? vm = null;
+        var logger = new Mock<IUnifiedLogger>();
+        // Cancel as soon as the first file has been transferred: the executor's per-file line.
+        logger.Setup(l => l.Info(It.IsAny<LogCategory>(), It.IsAny<string>(),
+                It.Is<string>(m => m.StartsWith(a + " → ") || m.StartsWith(b + " → ")), It.IsAny<string?>()))
+            .Callback(() => vm!.CancelSortCommand.Execute(null));
+        vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character"), Installed(b, "SDXL 1.0", "character")],
+            logger: logger.Object);
+        var dialog = new Mock<IDialogService>();
+        dialog.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
+        SortReportDialogViewModel? report = null;
+        dialog.Setup(d => d.ShowSortReportDialogAsync(It.IsAny<SortReportDialogViewModel>()))
+            .Callback((SortReportDialogViewModel r) => report = r)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        report!.IsCancelled.Should().BeTrue();
+        report.CancelledText.Should().Be("Cancelled after 1 of 2 files: 1 sorted, 0 failed. The remaining file was not touched.");
+        vm.StatusMessage.Should().StartWith(report.CancelledText);
+    }
+
+    /// <summary>
+    /// #653: a copy run into a folder inside a configured LoRA source registers each copy, so the
+    /// next library scan does not give it a bare "???" record.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunIntoALoraSourceRegistersTheCopies()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var registered = new List<(string SourcePath, string CopyPath)>();
+        updater.Setup(u => u.RegisterCopiesAsync(It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((IReadOnlyList<(string SourcePath, string CopyPath)> copies, CancellationToken _) => registered.AddRange(copies))
+            .Returns(Task.CompletedTask);
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(SourceRoot, "Sorted");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        var copy = Path.Combine(SourceRoot, "Sorted", "SDXL 1.0", "Character", "a.safetensors");
+        File.Exists(copy).Should().BeTrue("the premise: the copy was made");
+        registered.Should().Equal((a, copy));
+        vm.TargetOutsideSourcesHint.Should().BeNull("the target is inside a LoRA source");
+    }
+
+    /// <summary>
+    /// #653, decided by the owner: a copy outside every configured LoRA source (a USB stick, another
+    /// app's folder) stays outside the library — no record — and the tab says so before the run.
+    /// </summary>
+    [Fact]
+    public async Task ACopyRunOutsideTheLoraSourcesRegistersNothingAndSaysSo()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var updater = new Mock<ILocalPathUpdater>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")], pathUpdater: updater.Object);
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        updater.Verify(u => u.RegisterCopiesAsync(
+            It.IsAny<IReadOnlyList<(string SourcePath, string CopyPath)>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// The library lists only files inside its ENABLED source folders (LoadCachedFilesAsync).
+    /// Review: "will no longer appear" was false for a browsed source (its LoRAs never were in the
+    /// library), and "not one of your source folders" for a disabled one that Settings lists. One
+    /// sentence is true for move and copy alike.
+    /// </summary>
+    [Fact]
+    public async Task AMoveOutsideTheLoraSourcesGetsTheSameHint()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+
+        await vm.InitializeAsync();
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+    }
+
+    private const string OutsideSourcesHint =
+        "This folder is not one of your enabled LoRA source folders (Settings → Source Folders). "
+        + "LoRAs sorted into it will not appear in your LoRA library.";
+
+    /// <summary>
+    /// Review round 5: a folder the user only browsed to is listed among the source folders of the
+    /// dropdown, and "Target is another LoRA source" fired for a target inside it — next to the
+    /// hint saying it is not one of the LoRA source folders. Only configured sources are sources.
+    /// </summary>
+    [Fact]
+    public async Task ABrowsedFolderIsNotAnotherLoraSource()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        await vm.InitializeAsync();
+        var browsed = Path.Combine(_root.FullName, "Downloads");
+        Directory.CreateDirectory(browsed);
+        vm.SourceFolders.Add(browsed);
+
+        vm.CustomTargetFolder = Path.Combine(browsed, "Sorted");
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().Be(OutsideSourcesHint);
+        (vm.StatusMessage ?? string.Empty).Should().NotContain("another LoRA source");
+    }
+
+    /// <summary>Review round 5: the configured sources were read once, when the tab opened, so a
+    /// source added in Settings meanwhile was still "outside" — its copies got no record.</summary>
+    [Fact]
+    public async Task ASourceAddedInSettingsMeanwhileCounts()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        var added = Path.Combine(_root.FullName, "Loras2");
+        vm.CustomTargetFolder = added;
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise: not a source yet");
+
+        _settings.Setup(s => s.GetEnabledLoraSourcesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([SourceRoot, added]);
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Owner's call (#653): sorting a folder outside the library is an unofficial feature. A copy
+    /// from it lands in the library with no record to attach to, and "we cannot cover every use
+    /// case" — so "Browse any folder…" shows only while the sidebar's hidden-features checkbox is on.
+    /// </summary>
+    [Fact]
+    public void BrowseAnyFolderShowsOnlyWithHiddenFeaturesOn()
+    {
+        var hidden = new HiddenFeatures();
+        var vm = CreateVm(hiddenFeatures: hidden);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.ShowBrowseAnyFolder.Should().BeFalse();
+
+        hidden.IsEnabled = true;
+
+        vm.ShowBrowseAnyFolder.Should().BeTrue();
+        raised.Should().Contain(nameof(LoraSorterViewModel.ShowBrowseAnyFolder), "the button appears without reopening the tab");
+    }
+
+    [Fact]
+    public void WithoutTheHiddenFeaturesFlagBrowseAnyFolderStaysHidden()
+        => CreateVm().ShowBrowseAnyFolder.Should().BeFalse();
+
+    /// <summary>Review: the hint described a target and plan no longer on screen once the source
+    /// was cleared.</summary>
+    [Fact]
+    public async Task TheHintGoesWithThePreview()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "UsbStick");
+        await vm.InitializeAsync();
+        vm.TargetOutsideSourcesHint.Should().NotBeNull("the premise");
+
+        vm.SelectedSourceFolder = null;
+        await vm.RecomputePreviewCommand.ExecuteAsync(null);
+
+        vm.TargetOutsideSourcesHint.Should().BeNull();
+    }
+
+    /// <summary>
+    /// #651, real run: after copying 106 files (26 GB) the re-plan hashed every source and the copy
+    /// the run had just made, 79 s behind the overlay, to learn what the run already knew.
+    /// </summary>
+    [Fact]
+    public async Task TheReplanAfterACopyRunDoesNotHashTheCopiesItJustMade()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var hashed = new List<string>();
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")],
+            hashFile: p => { hashed.Add(p); return "hash"; });
+        vm.IsMove = false;
+        vm.CustomTargetFolder = Path.Combine(_root.FullName, "Elsewhere");
+        vm.DialogService = ConfirmingDialogService();
+        await vm.InitializeAsync();
+        hashed.Should().BeEmpty("nothing collides before the run");
+
+        await vm.StartSortingCommand.ExecuteAsync(null);
+
+        File.Exists(Path.Combine(_root.FullName, "Elsewhere", "SDXL 1.0", "Character", "a.safetensors"))
+            .Should().BeTrue("the copy was made");
+        hashed.Should().BeEmpty("the run vouches for the copy it made");
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.TransferCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// #651: "N duplicates skipped" never said which. Two identical files that both want
+    /// SDXL 1.0\Character\a.safetensors — the second is the duplicate. The count leaves the
+    /// summary sentence and becomes its own link, which opens the list.
+    /// </summary>
+    [Fact]
+    public async Task TheDuplicateCountIsALinkToTheListOfDuplicates()
+    {
+        var first = WriteLora(@"one\a.safetensors");
+        var second = WriteLora(@"two\a.safetensors");
+        var vm = CreateVm(cached:
+        [
+            Installed(first, "SDXL 1.0", "character"),
+            Installed(second, "SDXL 1.0", "character"),
+        ]);
+        var dialog = new Mock<IDialogService>();
+        SortDuplicatesDialogViewModel? shown = null;
+        dialog.Setup(d => d.ShowSortDuplicatesDialogAsync(It.IsAny<SortDuplicatesDialogViewModel>()))
+            .Callback((SortDuplicatesDialogViewModel d) => shown = d)
+            .Returns(Task.CompletedTask);
+        vm.DialogService = dialog.Object;
+
+        await vm.InitializeAsync();
+
+        vm.HasSkippedDuplicates.Should().BeTrue();
+        vm.SkippedDuplicatesText.Should().Be("1 duplicate skipped");
+        vm.PreviewSummary.Should().NotContain("duplicate");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeTrue();
+
+        await vm.ShowSkippedDuplicatesCommand.ExecuteAsync(null);
+
+        var row = shown!.Rows.Should().ContainSingle().Subject;
+        new[] { first, second }.Should().Contain(row.Path);
+        row.RelatedPath.Should().EndWith(Path.Combine("SDXL 1.0", "Character", "a.safetensors"));
+    }
+
+    [Fact]
+    public async Task WithoutDuplicatesThereIsNoLinkToFollow()
+    {
+        var a = WriteLora(@"flat\a.safetensors");
+        var vm = CreateVm(cached: [Installed(a, "SDXL 1.0", "character")]);
+
+        await vm.InitializeAsync();
+
+        vm.PreviewSummary.Should().Contain("will move", "the preview did run");
+        vm.HasSkippedDuplicates.Should().BeFalse();
+        vm.SkippedDuplicatesText.Should().Be("0 duplicates skipped");
+        vm.ShowSkippedDuplicatesCommand.CanExecute(null).Should().BeFalse();
     }
 
     private static IDialogService ConfirmingDialogService()

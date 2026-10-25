@@ -5,7 +5,20 @@ using DiffusionNexus.UI.Utilities;
 namespace DiffusionNexus.UI.Services.Lora.Sorting;
 
 public sealed record LoraSortResult(int Moved, int Copied, int Skipped, int Failed, bool Cancelled,
-    string? ManifestPath);
+    string? ManifestPath)
+{
+    /// <summary>The moves that actually reached their target, in plan order (#651 report).</summary>
+    public IReadOnlyList<PlannedMove> Transferred { get; init; } = [];
+
+    /// <summary>The moves that failed, each with the reason the file system gave.</summary>
+    public IReadOnlyList<SortFailure> Failures { get; init; } = [];
+
+    /// <summary>Wall-clock time of the whole run: manifest write, transfer loop and DB flushes.</summary>
+    public TimeSpan Elapsed { get; init; }
+}
+
+/// <summary>One file the run could not transfer, and why.</summary>
+public sealed record SortFailure(PlannedMove Move, string Reason);
 
 /// <summary>
 /// Executes a <see cref="LoraSortPlan"/> against disk: transfers each model file
@@ -31,9 +44,13 @@ public sealed class LoraSortExecutor
         _logger = logger;
     }
 
+    /// <param name="registerCopies">Copy runs only: give each copy a record of its own (#653).
+    /// The caller passes true when the target lies inside a configured LoRA source — a copy
+    /// anywhere else stays outside the library.</param>
     public async Task<LoraSortResult> ExecuteAsync(LoraSortPlan plan,
         IProgress<(double Fraction, string Status)>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool registerCopies = false)
     {
         var runWatch = Stopwatch.StartNew();
         var manifestPath = _historyWriter.WritePlan(plan, DateTimeOffset.Now);
@@ -48,6 +65,16 @@ public sealed class LoraSortExecutor
             + $"{plan.SkippedDuplicateCount} duplicates skipped, {plan.RenamedCount} renamed, "
             + $"{plan.AlreadyInPlaceCount} already in place — {plan.SourceRoot} → {plan.TargetRoot}");
 
+        // A count alone left the user asking "which ones?" (#651) — and in move mode these are
+        // files that stay behind in the source folder, so the log names each and its twin.
+        foreach (var duplicate in plan.Moves.Where(m => m.Action == PlannedAction.SkippedDuplicate))
+        {
+            _logger?.Info(LogCategory.FileSystem, LogSource,
+                $"Skipped duplicate: {duplicate.Candidate.FilePath} is identical to {duplicate.TargetFilePath}");
+        }
+
+        var transferred = new List<PlannedMove>();
+        var failures = new List<SortFailure>();
         var moved = 0;
         var copied = 0;
         var failed = 0;
@@ -57,6 +84,11 @@ public sealed class LoraSortExecutor
         // Rows whose batch flush failed for a non-cancellation reason. They are retried
         // exactly once, folded into the terminal flush — never re-attempted per file.
         var deferredDbChanges = new List<(string OldPath, string NewPath)>();
+        var dbWork = plan.IsMove ? "paths repointed" : "copies registered";
+        Task FlushAsync(IReadOnlyList<(string, string)> batch, CancellationToken token)
+            => plan.IsMove
+                ? _pathUpdater.UpdateLocalPathsAsync(batch, token)
+                : _pathUpdater.RegisterCopiesAsync(batch, token);
 
         // The whole loop sits in a try/finally: whatever unwinds out of it — an
         // exception the per-file filter does not cover, or a plain break — the
@@ -88,9 +120,13 @@ public sealed class LoraSortExecutor
 
                     TransferSidecars(move, source, plan.IsMove);
 
-                    if (plan.IsMove)
+                    if (plan.IsMove) moved++;
+                    else copied++;
+
+                    // A move repoints the file's record; a copy into a LoRA source gets a record of its
+                    // own (#653). Both are batched the same way, so a killed run keeps what it made.
+                    if (plan.IsMove || registerCopies)
                     {
-                        moved++;
                         pendingDbChanges.Add((source, move.TargetFilePath));
                         if (pendingDbChanges.Count >= DbBatchSize)
                         {
@@ -98,10 +134,10 @@ public sealed class LoraSortExecutor
                             {
                                 var batchWatch = Stopwatch.StartNew();
                                 var batchSize = pendingDbChanges.Count;
-                                await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, ct);
+                                await FlushAsync(pendingDbChanges, ct);
                                 pendingDbChanges.Clear();
                                 _logger?.Info(LogCategory.FileSystem, LogSource,
-                                    $"DB batch flushed: {batchSize} paths repointed in {batchWatch.ElapsedMilliseconds} ms ({done + 1}/{plan.TransferCount} files done)");
+                                    $"DB batch flushed: {batchSize} {dbWork} in {batchWatch.ElapsedMilliseconds} ms ({done + 1}/{plan.TransferCount} files done)");
                             }
                             catch (OperationCanceledException)
                             {
@@ -122,14 +158,11 @@ public sealed class LoraSortExecutor
                             }
                         }
                     }
-                    else
-                    {
-                        copied++;
-                    }
 
                     // The file IS transferred by this point whatever the DB did — journal it,
                     // count it and report it, or the manifest and the progress bar contradict disk.
                     MarkCompletedSafely(manifestPath, source);
+                    transferred.Add(move);
                     done++;
                     _logger?.Info(LogCategory.FileSystem, LogSource, $"{source} → {move.TargetFilePath}");
                     progress?.Report(((double)done / plan.TransferCount, Path.GetFileName(move.TargetFilePath)));
@@ -140,6 +173,7 @@ public sealed class LoraSortExecutor
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     _logger?.Error(LogCategory.FileSystem, LogSource, $"Failed to transfer {source}", ex);
+                    failures.Add(new SortFailure(move, ex.Message));
                     failed++;
                 }
             }
@@ -159,15 +193,17 @@ public sealed class LoraSortExecutor
                 {
                     var finalWatch = Stopwatch.StartNew();
                     var finalSize = pendingDbChanges.Count;
-                    await _pathUpdater.UpdateLocalPathsAsync(pendingDbChanges, CancellationToken.None);
+                    await FlushAsync(pendingDbChanges, CancellationToken.None);
                     pendingDbChanges.Clear();
                     _logger?.Info(LogCategory.FileSystem, LogSource,
-                        $"Final DB flush: {finalSize} paths repointed in {finalWatch.ElapsedMilliseconds} ms");
+                        $"Final DB flush: {finalSize} {dbWork} in {finalWatch.ElapsedMilliseconds} ms");
                 }
                 catch (Exception ex)
                 {
                     _logger?.Error(LogCategory.FileSystem, LogSource,
-                        $"Final DB batch flush failed; {pendingDbChanges.Count} rows stay stale and will be re-resolved by hash on the next library sync.", ex);
+                        plan.IsMove
+                            ? $"Final DB batch flush failed; {pendingDbChanges.Count} rows stay stale and will be re-resolved by hash on the next library sync."
+                            : $"Final DB batch flush failed; {pendingDbChanges.Count} copies stay without a record until the next library scan.", ex);
                 }
             }
         }
@@ -177,7 +213,12 @@ public sealed class LoraSortExecutor
             $"Sort run finished in {runWatch.ElapsedMilliseconds} ms: {moved} moved, {copied} copied, "
             + $"{skipped} skipped, {failed} failed, cancelled={cancelled}");
 
-        return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath);
+        return new LoraSortResult(moved, copied, skipped, failed, cancelled, manifestPath)
+        {
+            Transferred = transferred,
+            Failures = failures,
+            Elapsed = runWatch.Elapsed
+        };
     }
 
     /// <summary>

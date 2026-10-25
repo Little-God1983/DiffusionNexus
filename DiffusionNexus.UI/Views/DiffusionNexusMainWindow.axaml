@@ -68,11 +68,11 @@ x:Name="MainWin">
 
                             <!-- Bottom Social Links -->
                             <StackPanel DockPanel.Dock="Bottom" Spacing="5" Margin="0,0,0,10">
-                                <CheckBox IsChecked="{Binding IsDiffusionCanvasEnabled}"
+                                <CheckBox IsChecked="{Binding IsHiddenFeaturesEnabled}"
                                           Width="20" Height="20"
                                           Margin="14,0,0,0"
                                           Opacity="0.15"
-                                          ToolTip.Tip="Toggle Diffusion Canvas (hidden feature)"/>
+                                          ToolTip.Tip="Show hidden features (Diffusion Canvas, LoRA Sorter: Browse any folder)"/>
 
                                 <Button Width="196" Height="48" Margin="2,2"
                                         Command="{Binding OpenFeedbackCommand}"

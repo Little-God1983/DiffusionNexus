@@ -120,7 +120,10 @@ public partial class App : Application
 
                 // Create main window view model
                 Serilog.Log.Information("Creating main window view model...");
-                var mainViewModel = new DiffusionNexusMainWindowViewModel();
+                var mainViewModel = new DiffusionNexusMainWindowViewModel
+                {
+                    HiddenFeatures = Services!.GetRequiredService<HiddenFeatures>()
+                };
                 mainViewModel.StartupOverlay = new StartupOverlayViewModel(
                     Services!.GetRequiredService<DiffusionNexus.UI.Services.Startup.StartupProgressService>());
 
@@ -542,6 +545,8 @@ public partial class App : Application
         services.AddSingleton<IUiScheduler, AvaloniaUiScheduler>();
         // Which install runs right now; the catalog apply waits while one does (#618).
         services.AddSingleton<IInstallActivity, InstallActivity>();
+        // The sidebar's hidden-features checkbox, readable by any feature that follows it (#653).
+        services.AddSingleton<HiddenFeatures>();
 
         // System-clipboard seam (testability; #438)
         services.AddSingleton<IClipboardService, AvaloniaClipboardService>();
@@ -1315,7 +1320,7 @@ public partial class App : Application
         // Gated behind DiffusionFeatureFlags.UseLocalDiffusionBackend so the module disappears
         // entirely when the local backend is disabled (e.g., for ComfyUI-only builds).
         // Also hidden by default in the sidebar; the obscure checkbox in the main window
-        // (IsDiffusionCanvasEnabled) reveals it.
+        // (IsHiddenFeaturesEnabled) reveals it.
         if (DiffusionNexus.UI.Services.Diffusion.DiffusionFeatureFlags.UseLocalDiffusionBackend)
         {
             startupProgress.Begin("diffusion-canvas");
@@ -1331,7 +1336,7 @@ public partial class App : Application
                     "Diffusion Canvas",
                     "avares://DiffusionNexus.UI/Assets/PromptEdit.png", // TODO: dedicated canvas icon
                     diffusionCanvasView,
-                    isVisible: mainViewModel.IsDiffusionCanvasEnabled)
+                    isVisible: mainViewModel.IsHiddenFeaturesEnabled)
                 {
                     ViewModel = diffusionCanvasVm
                 };

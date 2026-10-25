@@ -146,6 +146,43 @@ public class LoraSortPlannerTests
         plan.Moves.Single().Action.Should().Be(PlannedAction.SkippedDuplicate);
     }
 
+    /// <summary>
+    /// #651: right after a copy run every source collides with the copy the run just made, and
+    /// proving them identical cost a full SHA-256 of both (real run: 26 GB, 79 s). A pair the run
+    /// vouches for is a duplicate without being hashed.
+    /// </summary>
+    [Fact]
+    public void ACopyTheLastRunMadeIsADuplicateWithoutHashing()
+    {
+        const string target = @"F:\Target\SDXL 1.0\Character\V1.safetensors";
+        var planner = new LoraSortPlanner(
+            _ => throw new InvalidOperationException("hashFile must not be called"),
+            p => p == target,
+            isKnownCopy: (source, copy) => source == @"F:\Lab\x\V1.safetensors" && copy == target);
+
+        var plan = planner.BuildPlan([Candidate(@"F:\Lab\x\V1.safetensors")],
+            Options(isMove: false, source: @"F:\Lab", target: @"F:\Target"));
+
+        var move = plan.Moves.Single();
+        move.Action.Should().Be(PlannedAction.SkippedDuplicate);
+        move.TargetFilePath.Should().Be(target);
+    }
+
+    [Fact]
+    public void AFileTheLastRunDidNotCopyIsStillHashed()
+    {
+        const string target = @"F:\Target\SDXL 1.0\Character\V1.safetensors";
+        var planner = new LoraSortPlanner(
+            p => p == target ? "disk" : "mine",
+            p => p == target,
+            isKnownCopy: (_, _) => false);
+
+        var plan = planner.BuildPlan([Candidate(@"F:\Lab\x\V1.safetensors", versionId: 9)],
+            Options(isMove: false, source: @"F:\Lab", target: @"F:\Target"));
+
+        plan.Moves.Single().TargetFilePath.Should().Be(@"F:\Target\SDXL 1.0\Character\V1_9.safetensors");
+    }
+
     [Fact]
     public void UnreadableCollisionTargetIsRenamedNotSkippedAndNeverEscapes()
     {

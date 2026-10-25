@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:DiffusionNexus.UI.ViewModels"
+        xmlns:dlg="using:DiffusionNexus.UI.Views.Dialogs"
+        x:Class="DiffusionNexus.UI.Views.Dialogs.SortDuplicatesDialog"
+        x:DataType="vm:SortDuplicatesDialogViewModel"
+        Title="{Binding Title}"
+        Width="760"
+        SizeToContent="Height"
+        MaxHeight="700"
+        WindowStartupLocation="CenterOwner"
+        Background="#2D2D30">
+
+  <DockPanel Margin="20">
+    <Button DockPanel.Dock="Bottom" HorizontalAlignment="Right" Content="Close" Width="90"
+            Margin="0,14,0,0" Click="OnCloseClick" IsCancel="True" IsDefault="True"/>
+
+    <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,10">
+      <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
+      <TextBlock Text="{Binding Note}" FontSize="12" Foreground="#CCCCCC" TextWrapping="Wrap"/>
+      <TextBlock Text="Right-click a file to open it, or the copy it matched, in Explorer."
+                 FontSize="12" Foreground="#888888"/>
+    </StackPanel>
+
+    <ScrollViewer>
+      <ItemsControl ItemsSource="{Binding Rows}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:SortReportFileRowViewModel">
+            <dlg:SortReportFileRow/>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

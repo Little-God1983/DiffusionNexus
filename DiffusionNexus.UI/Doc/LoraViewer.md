@@ -123,10 +123,18 @@ RefreshAsync
 │   │   ├── Scans folders for ModelFileExtensions.Sortable (.safetensors / .sft / .ckpt / .pt / .pth)
 │   │   ├── Filters out files already in DB (by LocalPath)
 │   │   ├── For each new file:
-│   │   │   ├── TryMatchByHashAndSize → if a DB record exists with same hash
-│   │   │   │   but invalid path (file was moved), update the path — counted
-│   │   │   │   as DiscoveryResult.RepointedCount (#537): a grid-visible
-│   │   │   │   change that is not a new file
+│   │   │   ├── TryMatchByHashAndSize → if a DB record of the same size and
+│   │   │   │   whole-file SHA256 is waiting for its file (its path no longer
+│   │   │   │   exists on a drive that is there — an offline drive is not a
+│   │   │   │   move — whatever the valid flag says; the flag is only as
+│   │   │   │   fresh as the last verify, #654), update the path and file
+│   │   │   │   name — counted as DiscoveryResult.RepointedCount (#537): a
+│   │   │   │   grid-visible change that is not a new file. A record whose
+│   │   │   │   file still exists is another copy and is never taken over.
+│   │   │   │   The whole file is read only when such a record exists (the
+│   │   │   │   first-10MB hash never equals a stored whole-file one); a file
+│   │   │   │   that cannot be read (still being copied) is left for the
+│   │   │   │   next scan
 │   │   │   └── Otherwise → CreateModelFromFileAsync:
 │   │   │       Creates Model + ModelVersion + ModelFile with:
 │   │   │         Source = LocalFile
@@ -159,7 +167,10 @@ RefreshAsync
 └── 6. VerifyFilesInBackgroundAsync (fire-and-forget, low priority)
         Uses scoped IModelSyncService to avoid DbContext conflicts
         Checks File.Exists for every ModelFile.LocalPath
-        Tries to find moved files by hash+size match
+        Tries to find moved files by name + size + whole-file SHA256, never
+        onto a path a record with a hash already claims (a hashless mover:
+        onto no held path at all), and not for a file whose drive or share
+        is offline (#654)
 ```
 
 ### Fallbacks at each stage
@@ -169,10 +180,10 @@ RefreshAsync
 | Source folders not configured | No files discovered | Empty state shown: "Add LoRA source folders in Settings" |
 | Folder doesn't exist on disk | Skipped with progress message | Other folders still scanned |
 | File already in DB | Skipped (dedup by LocalPath) | — |
-| File was moved (old path invalid) | `TryMatchByHashAndSize` matches by SHA256 + file size | Path updated in-place |
+| File was moved (old path invalid or gone) | `TryMatchByHashAndSize` matches by whole-file SHA256 + file size | Path updated in-place |
 | No Civitai data yet | `Source = LocalFile`, `BaseModelRaw = "???"` | Tile shows filename, "???" badge |
 | DB load fails | Exception caught, SyncStatus shows error | — |
-| Verification finds missing file | Scans all source folders for same filename + hash | `IsLocalFileValid = false` if not found |
+| Verification finds missing file | Scans all source folders for same filename + whole-file hash, skipping paths a record with a hash already claims. A path held only by a hashless bare record stays open to a record whose hash matches the bytes; that record takes the path and the bare one lets go of it (`LocalPath` cleared) in the same pass. A record without a hash never takes a held path. Not searched at all when the file's drive or share is offline | `IsLocalFileValid = false` if not found |
 
 ---
 
@@ -977,10 +988,10 @@ The Sorter takes the LoRAs the app already knows about (the same set as the Inst
 
 | Option | Choices | Default | Notes |
 |--------|---------|---------|-------|
-| **Source folder** | One enabled LoRA source, or any folder via Browse | Favorite source, else first | Arbitrary folders trigger metadata resolution on the fly via hash lookup. |
-| **Target folder** | "Same as source" or any picked folder | Same as source | If target lies in a different registered LoRA source, a warning alerts that colliding sources can lead to unpredictable outcomes. |
+| **Source folder** | One enabled LoRA source, or any folder via Browse | Favorite source, else first | Arbitrary folders trigger metadata resolution on the fly via hash lookup. "Browse any folder…" is an unofficial feature (#653, owner's call): shown only while the sidebar's hidden-features checkbox is on (`HiddenFeatures`, `ShowBrowseAnyFolder`), because a copy from a folder outside the library has no record to attach to and gets a bare `???` one until the library sync fills it in. |
+| **Target folder** | "Same as source" or any picked folder | Same as source | If target lies in a different registered LoRA source, a warning alerts that colliding sources can lead to unpredictable outcomes. If it lies in **no** enabled LoRA source configured in Settings (a browsed folder counts as none), `TargetOutsideSourcesHint` says so under the folder (#653): the library lists only files inside its enabled sources, so LoRAs sorted into it will not appear there. The hint goes with the preview (`ClearPreviewSummary`). |
 | **Folder structure** | Base model only · Base model + category | Base model + category | Categories inferred from tags by `SorterCategoryResolver`, the one helper the download pipeline also uses. Unknown base model → `Unknown\` folder; an unresolved **category** adds no segment at all, exactly as the downloader omits it — otherwise sorting and downloading would move the same files back and forth forever. |
-| **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). |
+| **Operation** | Move · Copy | Move | Move shows a warning that old folder structure cannot be restored automatically. Copy into the source root itself is blocked (would re-import on next scan). A copy into a configured LoRA source is attached to the original's version as one more `ModelFile` (`ILocalPathUpdater.RegisterCopiesAsync` → `SortCopyRecords.CreateFileFor`, batched like a move's repoints, #653) — the way a re-download of a known version is attached (#380) — so it shares the original's Civitai ids, tags, images, sync state and edits with nothing duplicated; without it the next scan gave it a bare `???` record. In another source the copy is a tile of its own (tiles are per page and source folder); in the same source it is one more location of the same version (one button per version, last file wins — `FromModelInLocation`). Any other record still on the copy's path — the copy is written with overwrite off, so it is stale, including a bare record a scan made for the copy — lets go of it. A copy outside every configured source gets no record, as the hint above says. |
 | **Delete empty source dirs** | on/off | off | Move mode only; triggered after the run completes. |
 | **Excluded folders** | Right-click a source folder → *Never sort this folder* | none | Files under these never enter the plan; drawn dimmed in both trees. Persisted (`LoraSorterExcludedFoldersJson`). See *Excluded folders* under the preview section. |
 
@@ -1028,7 +1039,7 @@ They run only when the rungs above came up empty **with an answer**, never when 
 
 The panel says what the option is worth on *this* library before it is turned on — `NameGuessHint`, e.g. *"5 LoRAs could not be identified — sorting by name will fix 4 of them."*, rewording to the past tense once it is on. Both counts are taken from the candidates as resolved, before any guess is folded in, so ticking the box changes the sentence and not the numbers. Because the guess travels with the candidate instead of being baked into it, toggling re-plans off the candidate cache and touches no disk at all.
 
-**DB-known rows get the same two rungs.** `ModelFileSyncService` stamps every locally-discovered model `BaseModelRaw = "???"`, and `IdentifyModelStep` only clears that when a library sync actually runs (it is due-gated on 30-day windows and attempt caps). `ResolveCandidatesAsync` therefore calls `IdentifyFromFileAsync` for any DB-known candidate whose base model is still a placeholder — without it, pointing the sorter at a *registered* LoRA root (which takes the DB-known branch for nearly every file) would do almost nothing for exactly the self-trained LoRAs this exists for. It applies only the header outright and merely *offers* the name (`FileIdentity.FromHeader` / `FileIdentity.FromName`), so this branch obeys the same opt-in as the rest. Each of those rows costs a real header read, so the pass reports `Reading headers n/N…` while it works.
+**DB-known rows get the same two rungs.** `ModelFileSyncService` stamps every locally-discovered model `BaseModelRaw = "???"`, and `IdentifyModelStep` only clears that when a library sync actually runs (it is due-gated on 30-day windows and attempt caps). `ResolveCandidatesAsync` therefore calls `IdentifyFromFileAsync` for any DB-known candidate whose base model is still a placeholder — without it, pointing the sorter at a *registered* LoRA root (which takes the DB-known branch for nearly every file) would do almost nothing for exactly the self-trained LoRAs this exists for. It applies only the header outright and merely *offers* the name (`FileIdentity.FromHeader` / `FileIdentity.FromName`), so this branch obeys the same opt-in as the rest. Each of those rows costs a real header read, so the pass reports `Reading headers n/N…` while it works. Such a row also asks the file's `.civitai.info` sidecar (`SorterMetadataResolver.ReadSidecar`, #654), as a file with no record does: when it names a base model, that wins over the header's, and its tags give the category when the record has none. The header is still read first, because it decides the file's kind. No hashing and no Civitai call here — asking Civitai about database records is the library sync's job.
 
 DB rows are matched by path earlier, when the cached library is loaded; there is no by-hash DB lookup (descoped from the spec). A file that cannot be hashed or an API shape change resolves as unknown rather than failing the pass — and stays unknown, since neither is an answer (see above) — and the API key is read once per pass, not once per file.
 
@@ -1182,7 +1193,9 @@ Its markers are drawn from names observed in a real library, and the bar for add
    - **Copy mode:** DB untouched.
 3. **Logging:** every step logs to the Unified Console (`LogCategory.FileSystem`, source `"LoraSorter"`) **with elapsed timings**, so an exported log can tell "slow" from "hung" by which step last succeeded: candidate resolution (known/unknown/skipped counts, plus a heartbeat every 50 resolved files), plan summary, sort start, each DB batch, and the final tally. A run whose history file could not be written still completes and says so — there is simply no restore point for it.
 4. **Cancellation / partial failure:** cancelling a *preview* keeps the tree on screen and marks it possibly stale (Start is disarmed until a Refresh rebuilds it) rather than blanking it. Cancelling a *run*: already-moved files stay (their DB rows are updated — the library remains consistent). The run stops at the current file and reports tally. A locked or inaccessible file is skipped and logged, not fatal.
-5. **After completion:** result summary in status bar; the Installed tab's cached tiles refresh so paths shown are current.
+5. **After completion:** the **Sort report** dialog opens as the run ends (#651) and the preview re-plan runs behind it (after a copy run, the copies the run just made count as duplicates without a SHA-256 of either file — `SortedCopyRegistry`, valid while both files keep their size and last-write time); then the result summary goes to the status bar and the Installed tab's cached tiles refresh so paths shown are current. The report is built from the plan that ran and the executor's result (`LoraSortResult.Transferred` / `Failures` / `Elapsed`): totals tiles, a cancelled banner ("Cancelled after X of Y files: A sorted, B failed. The remaining Z were not touched." — a failed file counts as reached; the status line shows the same sentence), the status line's warnings (no restore point, empty folders left), and per-file sections Failed (with the reason), Duplicates skipped, Renamed and Moved/Copied (collapsed). Empty sections are hidden; every row opens its file, or the path it is paired with, in Explorer.
+
+**Which duplicates.** The preview summary ends with the duplicate count as its own element: a link when there are any, opening `SortDuplicatesDialog` — each skipped file and the identical copy (same SHA-256) it matched, which may already be in the destination or arrive there in this run. The link lists the plan the summary describes, not the armed plan, so it keeps working after a cancelled preview, which disarms Start but leaves the preview on screen. The run also logs one `Skipped duplicate: <file> is identical to <copy>` line per file. The sorter never deletes a skipped duplicate: in move mode it stays in the source folder, and the report says so.
 
 ### Known limitations (v1)
 

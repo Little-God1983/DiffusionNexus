@@ -12,11 +12,17 @@ public sealed class LoraSortPlanner
 {
     private readonly Func<string, string> _hashFile;
     private readonly Func<string, bool> _fileExistsOnDisk;
+    private readonly Func<string, string, bool>? _isKnownCopy;
 
-    public LoraSortPlanner(Func<string, string> hashFile, Func<string, bool> fileExistsOnDisk)
+    /// <param name="isKnownCopy">(source, on-disk file) → whether that file is a copy the last run
+    /// made of the source and is unchanged since (<see cref="SortedCopyRegistry"/>). Such a pair is
+    /// identical content without being hashed.</param>
+    public LoraSortPlanner(Func<string, string> hashFile, Func<string, bool> fileExistsOnDisk,
+        Func<string, string, bool>? isKnownCopy = null)
     {
         _hashFile = hashFile;
         _fileExistsOnDisk = fileExistsOnDisk;
+        _isKnownCopy = isKnownCopy;
     }
 
     /// <param name="ct">Planning re-hashes on every collision and every option toggle
@@ -137,7 +143,11 @@ public sealed class LoraSortPlanner
                     freeName = name;
                     break;
                 }
-                if (SameContent(MyHash(), HashOfClaimant(name)))
+                // A file on disk the last run copied from this very candidate needs no hash: the
+                // run made it, and the registry has checked that neither file changed since.
+                var knownCopy = !names.ContainsKey(name)
+                                && _isKnownCopy?.Invoke(candidate.FilePath, Path.Combine(targetDir, name)) == true;
+                if (knownCopy || SameContent(MyHash(), HashOfClaimant(name)))
                 {
                     duplicateOf = name;
                     break;

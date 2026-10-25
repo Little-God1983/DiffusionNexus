@@ -9,8 +9,8 @@
     entry and any taskbar pin open. Older versions stay beside the new one; delete them by hand when
     you like.
 
-    The version is Major.Minor.Build from Directory.Build.props plus the number of commits on
-    develop. It is stamped for this build only: nothing is committed or pushed, so the repo is
+    The version is the Major.Minor.Build the next release will get (see Releases in
+    Scripts\README.md) plus the number of commits on develop. It is stamped for this build only: nothing is committed or pushed, so the repo is
     exactly as it was afterwards. Building the same develop commit twice is refused.
 
     Tests come before the publish on purpose: a build you are about to use is the worst place to
@@ -108,7 +108,7 @@ if ($stable) {
     # Branch, clean tree and origin are checked before a single file is built, so a wrong branch
     # costs seconds, not a build and a test run.
     Assert-ReleaseReady
-    $version = Get-StableVersion -Current $current -CommitCount (Get-CommitCount)
+    $version = Get-StableVersion -Current (Get-ReleaseVersion).Version -CommitCount (Get-CommitCount)
     $InstallDir = Get-VersionedInstallDir -InstallRoot $InstallRoot -Version $version
     Assert-StableTargetFree -InstallDir $InstallDir -Version $version
     Write-Ok "version $version"
@@ -116,7 +116,11 @@ if ($stable) {
     if ($Clean) { Write-Warn "-Clean has nothing to do here: a versioned folder always starts empty" }
 }
 else {
-    $version = Get-OneOffVersion -Current $current -Commit (Get-HeadCommit) -Dirty:(Test-WorkingTreeDirty)
+    # The next release's number, as the stable build has; the props floor only without git, which
+    # has no tags to count from.
+    $commit = Get-HeadCommit
+    if ($commit) { $current = "$((Get-ReleaseVersion).Version).0" }
+    $version = Get-OneOffVersion -Current $current -Commit $commit -Dirty:(Test-WorkingTreeDirty)
     Write-Ok "version $version"
     if ($NoShortcut) { Write-Note "-NoShortcut is implied: a one-off build never writes the Start Menu shortcut" }
 }
@@ -181,7 +185,7 @@ else         { $publishFailedHints += "$InstallDir holds a part of this build; r
 # PowerShell unwraps a one-element array from an `if`, and splatting a plain string with @ hands
 # MSBuild the characters one by one - so the array is built explicitly rather than cast.
 # Directory.Build.props derives AssemblyVersion and FileVersion from $(Version), and both must be
-# numeric, so a one-off build keeps the props number there; only the version the app shows carries
+# numeric, so a one-off build keeps the plain number there; only the version the app shows carries
 # the stamp.
 $versionArgs = @("-p:Version=$version")
 if (-not $stable) { $versionArgs += @("-p:AssemblyVersion=$current", "-p:FileVersion=$current") }

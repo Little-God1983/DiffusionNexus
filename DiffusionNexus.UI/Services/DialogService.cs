@@ -761,4 +761,30 @@ public class DialogService : IDialogService
         var dialog = new SyncReportDialog().WithViewModel(viewModel);
         await dialog.ShowDialog(_window);
     }
+
+    public async Task ShowSortDuplicatesDialogAsync(SortDuplicatesDialogViewModel viewModel)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSortDuplicatesDialogAsync(viewModel));
+            return;
+        }
+
+        var dialog = new SortDuplicatesDialog().WithViewModel(viewModel);
+        await dialog.ShowDialog(_window);
+    }
+
+    public async Task ShowSortReportDialogAsync(SortReportDialogViewModel viewModel)
+    {
+        if (!Avalonia.Threading.Dispatcher.UIThread.CheckAccess())
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => ShowSortReportDialogAsync(viewModel));
+            return;
+        }
+
+        var dialog = new SortReportDialog().WithViewModel(viewModel);
+        await dialog.ShowDialog(_window);
+    }
     }
