@@ -4,21 +4,29 @@ name: Release on Main
 # subjects since it (Get-ReleaseVersion in Scripts/_common.ps1, which build.ps1 uses too): a feat:
 # raises Minor, anything else Build, and Directory.Build.props is a floor for a jump. Nothing is
 # committed back; the merge commit gets the tag and a GitHub Release carrying the zip.
+#
+# Two jobs, so the restore and the build - third-party MSBuild code - never run with a token that
+# can write to the repo. Only the release job, which builds nothing, gets contents: write.
 
 on:
   push:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-main
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      tag: ${{ steps.version.outputs.tag }}
+      last_tag: ${{ steps.version.outputs.last_tag }}
+      version: ${{ steps.version.outputs.version }}
 
     steps:
     - name: Checkout code
@@ -26,8 +34,6 @@ jobs:
       with:
         # The whole history and every tag: the version is counted from the last release tag.
         fetch-depth: 0
-        # The job's token can write (for the release step, which gets it as GH_TOKEN). Kept out of
-        # .git/config, where the restore and the build's third-party MSBuild code could read it.
         persist-credentials: false
 
     - name: Work out the version
@@ -43,10 +49,10 @@ jobs:
             exit 0
         }
         $full = "$($release.Version).$env:GITHUB_RUN_NUMBER"
-        "release=true"                | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-        "tag=v$($release.Version)"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "release=true"                 | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "tag=v$($release.Version)"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
         "last_tag=$($release.LastTag)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-        "version=$full"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        "version=$full"                | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
         Write-Host "Releasing v$($release.Version) as $full (last release: $(if ($release.LastTag) { $release.LastTag } else { 'none' }))"
 
     - name: Setup .NET 10
@@ -81,17 +87,41 @@ jobs:
       env:
         GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
 
-    # Last, so a failed build leaves no tag behind and a re-run gets the same version.
-    - name: Tag and publish the GitHub Release
+    # Only a hand-over to the release job; the GitHub Release is where the zip is kept.
+    - name: Hand the zip to the release job
       if: steps.version.outputs.release == 'true'
-      shell: pwsh
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-zip
+        path: diffusion_nexus.V${{ steps.version.outputs.version }}.zip
+        if-no-files-found: error
+        retention-days: 1
+
+  # After the build, so a failed build leaves no tag behind and a re-run gets the same version.
+  release:
+    needs: build
+    if: needs.build.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Fetch the zip
+      uses: actions/download-artifact@v4
+      with:
+        name: release-zip
+
+    - name: Tag and publish the GitHub Release
       run: |
-        $notes = @('--generate-notes')
-        if ('${{ steps.version.outputs.last_tag }}') { $notes += @('--notes-start-tag', '${{ steps.version.outputs.last_tag }}') }
-        gh release create '${{ steps.version.outputs.tag }}' 'diffusion_nexus.V${{ steps.version.outputs.version }}.zip' `
-            --target $env:GITHUB_SHA `
-            --title 'DiffusionNexus ${{ steps.version.outputs.tag }}' `
-            @notes
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        notes=(--generate-notes)
+        if [ -n "$LAST_TAG" ]; then notes+=(--notes-start-tag "$LAST_TAG"); fi
+        gh release create "$TAG" "diffusion_nexus.V$VERSION.zip" \
+          --repo "$GITHUB_REPOSITORY" \
+          --target "$GITHUB_SHA" \
+          --title "DiffusionNexus $TAG" \
+          "${notes[@]}"
       env:
         GH_TOKEN: ${{ github.token }}
+        TAG: ${{ needs.build.outputs.tag }}
+        LAST_TAG: ${{ needs.build.outputs.last_tag }}
+        VERSION: ${{ needs.build.outputs.version }}

@@ -605,13 +605,15 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     {
         // Release tags sit on main's merge commits, which develop never contains, so fetching develop
         // alone never brings them: the build would count from an old tag and stamp a number that has
-        // already shipped.
+        // already shipped. --force: a release tag re-made on origin otherwise stops the fetch with
+        // "would clobber existing tag", which the build reports as a network problem.
         using var repo = new FakeRepo();
 
         var result = repo.Build();
 
         result.ExitCode.Should().Be(0, result.Output);
-        repo.Calls.Should().Contain(call => call.StartsWith("git fetch") && call.Contains("--tags") && call.EndsWith("origin develop"));
+        repo.Calls.Should().Contain(call =>
+            call.StartsWith("git fetch") && call.Contains("--tags") && call.Contains("--force") && call.EndsWith("origin develop"));
     }
 
     [Fact]

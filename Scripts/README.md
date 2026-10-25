@@ -117,6 +117,7 @@ push. `.github/workflows/release.yml` then:
    as its notes. A failed build leaves no tag, so a re-run gets the same version.
 
 `build.ps1` uses the same function (`Get-ReleaseVersion` in `_common.ps1`), so a stable build of
-`develop` carries the number that code will ship as. A commit message never raises the first
+`develop` carries the `Major.Minor.Build` that code will ship as. Only the fourth part differs: the
+commit count there, the run number in a release. A commit message never raises the first
 number. For that, or any other jump, raise `<Version>` in `Directory.Build.props` in a PR: it is
 the lowest version the next release may have.

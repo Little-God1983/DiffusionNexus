@@ -728,9 +728,10 @@ function Assert-ReleaseReady {
     }
 
     # --tags: the version counts from the last release tag, and those sit on main's merge commits,
-    # which develop never contains - fetching develop alone never brings them.
+    # which develop never contains - fetching develop alone never brings them. --force: origin's tags
+    # win, or a release tag re-made there stops the fetch with "would clobber existing tag".
     Write-Note "fetching origin/$ReleaseBranch and the release tags"
-    Invoke-Git @('fetch', '--quiet', '--tags', 'origin', $ReleaseBranch)
+    Invoke-Git @('fetch', '--quiet', '--tags', '--force', 'origin', $ReleaseBranch)
     if ($LASTEXITCODE -ne 0) {
         Fail "git fetch failed." @("Check your network and GitHub login, then run this script again.")
     }
