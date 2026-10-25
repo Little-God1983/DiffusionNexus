@@ -110,7 +110,8 @@ push. `.github/workflows/release.yml` then:
 
 1. Takes the last release tag (the highest `vX.Y.Z`) and the commit subjects since it. A `feat:`
    among them raises the middle number (`v0.12.0` → `0.13.0`), anything else the third
-   (`v0.12.0` → `0.12.1`). Nothing new since the tag means no release.
+   (`v0.12.0` → `0.12.1`). Nothing new since the tag means no release. A squash or rebase
+   merge is refused: it drops those subjects, so merge with **Create a merge commit**.
 2. Builds the zip with `publish.ps1`, the fourth part being the run number (`0.13.0.57`).
 3. Tags the merge commit `v0.13.0` and publishes a GitHub Release with the zip and the merged PRs
    as its notes. A failed build leaves no tag, so a re-run gets the same version.

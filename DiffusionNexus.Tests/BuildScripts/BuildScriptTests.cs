@@ -98,6 +98,27 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
     }
 
     [Theory]
+    [InlineData("abc1234 p1 p2", 0)]
+    [InlineData("abc1234 p1", 1)]
+    public void AReleaseOfASquashOrRebaseMerge_IsRefused(string parents, int expectedExitCode)
+    {
+        // A squash or rebase merge into main has one parent. Its subject is the PR title, so the feat:
+        // commits are lost, and develop never contains the commit the tag would go on: every later
+        // count would start from the merge before it.
+        var git =
+            "function Invoke-Git { param([string[]]$Arguments, [switch]$Quiet) $global:LASTEXITCODE = 0; " +
+            $"if ($Arguments[0] -eq 'rev-list' -and $Arguments -contains '--parents') {{ '{parents}' }} }}";
+
+        var result = Pwsh.RunCommon($"{git}; Assert-ReleaseMerge");
+
+        result.ExitCode.Should().Be(expectedExitCode, result.Output);
+        if (expectedExitCode != 0)
+        {
+            result.Output.Should().Contain("merge commit");
+        }
+    }
+
+    [Theory]
     [InlineData(@"root\DiffusionNexus-0.11.0.9", true)]
     [InlineData(@"root", false)]
     [InlineData(@"rootOld\DiffusionNexus", false)]
@@ -580,6 +601,20 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void AStableBuild_FetchesTheReleaseTags()
+    {
+        // Release tags sit on main's merge commits, which develop never contains, so fetching develop
+        // alone never brings them: the build would count from an old tag and stamp a number that has
+        // already shipped.
+        using var repo = new FakeRepo();
+
+        var result = repo.Build();
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.Calls.Should().Contain(call => call.StartsWith("git fetch") && call.Contains("--tags") && call.EndsWith("origin develop"));
+    }
+
+    [Fact]
     public void ASecondRunOfTheSameCommit_LeavesTheInstalledVersionAlone()
     {
         // develop has not moved, so the count - and the folder - are the same as last time. That
@@ -815,17 +850,18 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     public void AOneOffBuild_IsStampedAndLeavesTheStableRootAlone()
     {
         // AssemblyVersion and FileVersion follow $(Version) in Directory.Build.props and must be
-        // numeric, so they keep the props number while the shown version carries the stamp.
+        // numeric, so they keep the plain number while the shown version carries the stamp. With no
+        // release tag yet, that number is the props floor.
         using var repo = new FakeRepo();
         var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
 
         var result = repo.Build($"-InstallDir '{folder}'", before: "$env:FAKE_BRANCH = 'feature/x'");
 
         result.ExitCode.Should().Be(0, result.Output);
-        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.1-oneoff.gabc1234\"");
+        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.0-oneoff.gabc1234\"");
         FakeRepo.IsMarkedComplete(folder).Should().BeTrue();
         repo.Calls.Should().Contain(
-            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.11.0.1-oneoff.gabc1234 -p:AssemblyVersion=0.11.0.1 -p:FileVersion=0.11.0.1");
+            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.11.0.0-oneoff.gabc1234 -p:AssemblyVersion=0.11.0.0 -p:FileVersion=0.11.0.0");
         repo.Calls.Should().NotContain(call => call.StartsWith("shortcut"));
         repo.CurrentLinkTarget.Should().BeNull();
     }
@@ -846,6 +882,23 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void AOneOffBuild_CarriesTheVersionTheNextReleaseGets()
+    {
+        // The props number is only a floor and falls behind with every release. A one-off stamped
+        // from it would sit below every build that has shipped since.
+        using var repo = new FakeRepo();
+        var folder = Path.Combine(repo.Outside, "DiffusionNexus-test");
+
+        var result = repo.Build(
+            $"-InstallDir '{folder}'",
+            before: "$env:FAKE_BRANCH = 'feature/x'; $env:FAKE_TAGS = 'v0.11.0'; $env:FAKE_LOG = 'feat: a tab'");
+
+        result.ExitCode.Should().Be(0, result.Output);
+        repo.Calls.Should().Contain(
+            "dotnet publish DiffusionNexus.UI.csproj -p:Version=0.12.0.0-oneoff.gabc1234 -p:AssemblyVersion=0.12.0.0 -p:FileVersion=0.12.0.0");
+    }
+
+    [Fact]
     public void AOneOffBuildOfUncommittedChanges_SaysSoInItsVersion()
     {
         // Two one-offs of the same commit with different uncommitted edits are different code.
@@ -855,7 +908,7 @@ public sealed class BuildScriptRunTests : BuildScriptTestBase
         var result = repo.Build($"-InstallDir '{folder}'", before: "$env:FAKE_DIRTY = '1'");
 
         result.ExitCode.Should().Be(0, result.Output);
-        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.1-oneoff.gabc1234.dirty\"");
+        File.ReadAllText(Path.Combine(folder, MarkerName)).Should().Contain("\"version\": \"0.11.0.0-oneoff.gabc1234.dirty\"");
     }
 
     [Fact]

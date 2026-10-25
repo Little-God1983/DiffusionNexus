@@ -26,12 +26,16 @@ jobs:
       with:
         # The whole history and every tag: the version is counted from the last release tag.
         fetch-depth: 0
+        # The job's token can write (for the release step, which gets it as GH_TOKEN). Kept out of
+        # .git/config, where the restore and the build's third-party MSBuild code could read it.
+        persist-credentials: false
 
     - name: Work out the version
       id: version
       shell: pwsh
       run: |
         . ./Scripts/_common.ps1
+        Assert-ReleaseMerge
         $release = Get-ReleaseVersion
         if (-not $release.New) {
             Write-Host "Nothing new since $($release.LastTag) - no release."

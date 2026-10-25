@@ -116,7 +116,11 @@ if ($stable) {
     if ($Clean) { Write-Warn "-Clean has nothing to do here: a versioned folder always starts empty" }
 }
 else {
-    $version = Get-OneOffVersion -Current $current -Commit (Get-HeadCommit) -Dirty:(Test-WorkingTreeDirty)
+    # The next release's number, as the stable build has; the props floor only without git, which
+    # has no tags to count from.
+    $commit = Get-HeadCommit
+    if ($commit) { $current = "$((Get-ReleaseVersion).Version).0" }
+    $version = Get-OneOffVersion -Current $current -Commit $commit -Dirty:(Test-WorkingTreeDirty)
     Write-Ok "version $version"
     if ($NoShortcut) { Write-Note "-NoShortcut is implied: a one-off build never writes the Start Menu shortcut" }
 }
@@ -181,7 +185,7 @@ else         { $publishFailedHints += "$InstallDir holds a part of this build; r
 # PowerShell unwraps a one-element array from an `if`, and splatting a plain string with @ hands
 # MSBuild the characters one by one - so the array is built explicitly rather than cast.
 # Directory.Build.props derives AssemblyVersion and FileVersion from $(Version), and both must be
-# numeric, so a one-off build keeps the props number there; only the version the app shows carries
+# numeric, so a one-off build keeps the plain number there; only the version the app shows carries
 # the stamp.
 $versionArgs = @("-p:Version=$version")
 if (-not $stable) { $versionArgs += @("-p:AssemblyVersion=$current", "-p:FileVersion=$current") }

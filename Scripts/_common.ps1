@@ -636,6 +636,20 @@ function Get-ReleaseVersion {
     return Get-NextReleaseVersion -LastTag $lastTag -Subjects $subjects -Floor (Get-PropsVersion)
 }
 
+# release.yml's refusal of a squash or rebase merge into main. Either leaves HEAD with one parent and
+# the PR title as its only subject, so the feat: commits are lost, and develop never contains the
+# commit the tag would go on, so every later count would start from the merge before it.
+function Assert-ReleaseMerge {
+    $line = "$(Invoke-Git @('rev-list', '--parents', '-n', '1', 'HEAD') -Quiet)".Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $line) { Fail "git could not read the parents of HEAD." }
+    if (@($line -split '\s+').Count -lt 3) {
+        Fail "HEAD is not a merge commit, so it is not released." @(
+            "A squash or rebase merge into main loses the commit subjects the version is counted from.",
+            "Merge develop into main with 'Create a merge commit'; that merge is released."
+        )
+    }
+}
+
 # The number of commits HEAD has, or a refusal. A shallow clone counts only what it fetched, which
 # would hand out a number some earlier build already had.
 function Get-CommitCount {
@@ -713,8 +727,10 @@ function Assert-ReleaseReady {
         )
     }
 
-    Write-Note "fetching origin/$ReleaseBranch"
-    Invoke-Git @('fetch', '--quiet', 'origin', $ReleaseBranch)
+    # --tags: the version counts from the last release tag, and those sit on main's merge commits,
+    # which develop never contains - fetching develop alone never brings them.
+    Write-Note "fetching origin/$ReleaseBranch and the release tags"
+    Invoke-Git @('fetch', '--quiet', '--tags', 'origin', $ReleaseBranch)
     if ($LASTEXITCODE -ne 0) {
         Fail "git fetch failed." @("Check your network and GitHub login, then run this script again.")
     }
