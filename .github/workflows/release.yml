@@ -5,8 +5,9 @@ name: Release on Main
 # raises Minor, anything else Build, and Directory.Build.props is a floor for a jump. Nothing is
 # committed back; the merge commit gets the tag and a GitHub Release carrying the zip.
 #
-# Two jobs, so the restore and the build - third-party MSBuild code - never run with a token that
-# can write to the repo. Only the release job, which builds nothing, gets contents: write.
+# Two jobs, so the restore and the build - third-party MSBuild code - never run with the workflow
+# token's write rights. Only the release job, which builds nothing, gets contents: write. The build
+# still sees PACKAGES_PAT for the GitHub Packages feed, so that secret should be read:packages only.
 
 on:
   push:
@@ -87,7 +88,9 @@ jobs:
       env:
         GITHUB_PACKAGES_TOKEN: ${{ secrets.PACKAGES_PAT }}
 
-    # Only a hand-over to the release job; the GitHub Release is where the zip is kept.
+    # Only a hand-over to the release job; the GitHub Release is where the zip is kept. A week, so
+    # "Re-run failed jobs" on a release that failed still finds it; overwrite, so "Re-run all jobs"
+    # can upload it again under the same name.
     - name: Hand the zip to the release job
       if: steps.version.outputs.release == 'true'
       uses: actions/upload-artifact@v4
@@ -95,7 +98,8 @@ jobs:
         name: release-zip
         path: diffusion_nexus.V${{ steps.version.outputs.version }}.zip
         if-no-files-found: error
-        retention-days: 1
+        overwrite: true
+        retention-days: 7
 
   # After the build, so a failed build leaves no tag behind and a re-run gets the same version.
   release:
