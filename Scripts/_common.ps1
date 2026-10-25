@@ -17,10 +17,10 @@ $script:UiProject = Join-Path $RepoRoot 'DiffusionNexus.UI\DiffusionNexus.UI.csp
 # was built at: E:\StableVersion\DiffusionNexus-0.11.0.2483. Older versions stay beside it.
 # E:\StableVersion\DiffusionNexus is a junction to the newest one.
 #
-# The version is Major.Minor.Build from the <Version> in Directory.Build.props plus the number of
-# commits on develop, stamped for the build only. Nothing is committed or pushed: develop takes
-# commits only through PRs, and release.yml stamps its own revision on main the same way, from
-# the run number. A commit count only grows on develop, so every new develop commit gets a new
+# The version is the Major.Minor.Build the next release will get (Get-ReleaseVersion, the same one
+# release.yml uses) plus the number of commits on develop, stamped for the build only. Nothing is
+# committed or pushed: develop takes commits only through PRs, and release.yml stamps its own
+# revision on main the same way, from the run number. A commit count only grows on develop, so every new develop commit gets a new
 # folder, and building the same commit twice is refused.
 #
 # The database and the settings live in %LocalAppData%\DiffusionNexus whichever folder the app
@@ -593,6 +593,63 @@ function Get-StableVersion {
     return '{0}.{1}.{2}.{3}' -f $n[0], $n[1], $n[2], $CommitCount
 }
 
+# The version the next release gets, from the last release tag and the commit subjects since it: a
+# feat: anywhere raises Minor, anything else Build. Major is never raised by a commit message. The
+# props number is a floor, the one way to jump (to 1.0.0, say). With no subjects since the tag there
+# is nothing to release, and the version is the tag's own. With no tag yet the props number is the
+# first release.
+function Get-NextReleaseVersion {
+    param([string]$LastTag, [string[]]$Subjects, [string]$Floor)
+    $subjects = @($Subjects | Where-Object { $_ })
+    $floorVersion = [version](($Floor -split '\.')[0..2] -join '.')
+    if (-not $LastTag) {
+        return [pscustomobject]@{ Version = "$floorVersion"; New = $true; LastTag = '' }
+    }
+    $last = [version]$LastTag.Substring(1)
+    if ($subjects.Count -eq 0) {
+        return [pscustomobject]@{ Version = "$last"; New = $false; LastTag = $LastTag }
+    }
+    $feature = @($subjects | Where-Object { $_ -match '^feat(\([^)]*\))?!?:' }).Count -gt 0
+    $next = if ($feature) { [version]::new($last.Major, $last.Minor + 1, 0) }
+            else          { [version]::new($last.Major, $last.Minor, $last.Build + 1) }
+    if ($floorVersion -gt $next) { $next = $floorVersion }
+    return [pscustomobject]@{ Version = "$next"; New = $true; LastTag = $LastTag }
+}
+
+# Get-NextReleaseVersion for HEAD. The last release is the highest plain vX.Y.Z tag: git lists tags by
+# name, where v0.9.12 comes after v0.12.0. Release tags sit on main's merge commits, which develop
+# never contains, so the subjects are what HEAD has and the tag has not (tag..HEAD), not what lies
+# between them on one line of history.
+function Get-ReleaseVersion {
+    $tags = @(Invoke-Git @('tag', '--list', 'v*') -Quiet | Where-Object { "$_" -match '^v\d+\.\d+\.\d+$' })
+    if ($LASTEXITCODE -ne 0) { Fail "git could not list the release tags." }
+    $lastTag = $tags | Sort-Object { [version]"$_".Substring(1) } -Descending | Select-Object -First 1
+    $subjects = @()
+    if ($lastTag) {
+        $subjects = @(Invoke-Git @('log', '--no-merges', '--format=%s', "$lastTag..HEAD") -Quiet)
+        if ($LASTEXITCODE -ne 0) {
+            Fail "git could not list the commits since $lastTag." @(
+                "A shallow clone may not have that tag's commit: git fetch --unshallow --tags"
+            )
+        }
+    }
+    return Get-NextReleaseVersion -LastTag $lastTag -Subjects $subjects -Floor (Get-PropsVersion)
+}
+
+# release.yml's refusal of a squash or rebase merge into main. Either leaves HEAD with one parent and
+# the PR title as its only subject, so the feat: commits are lost, and develop never contains the
+# commit the tag would go on, so every later count would start from the merge before it.
+function Assert-ReleaseMerge {
+    $line = "$(Invoke-Git @('rev-list', '--parents', '-n', '1', 'HEAD') -Quiet)".Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $line) { Fail "git could not read the parents of HEAD." }
+    if (@($line -split '\s+').Count -lt 3) {
+        Fail "HEAD is not a merge commit, so it is not released." @(
+            "A squash or rebase merge into main loses the commit subjects the version is counted from.",
+            "Merge develop into main with 'Create a merge commit'; that merge is released."
+        )
+    }
+}
+
 # The number of commits HEAD has, or a refusal. A shallow clone counts only what it fetched, which
 # would hand out a number some earlier build already had.
 function Get-CommitCount {
@@ -670,8 +727,11 @@ function Assert-ReleaseReady {
         )
     }
 
-    Write-Note "fetching origin/$ReleaseBranch"
-    Invoke-Git @('fetch', '--quiet', 'origin', $ReleaseBranch)
+    # --tags: the version counts from the last release tag, and those sit on main's merge commits,
+    # which develop never contains - fetching develop alone never brings them. --force: origin's tags
+    # win, or a release tag re-made there stops the fetch with "would clobber existing tag".
+    Write-Note "fetching origin/$ReleaseBranch and the release tags"
+    Invoke-Git @('fetch', '--quiet', '--tags', '--force', 'origin', $ReleaseBranch)
     if ($LASTEXITCODE -ne 0) {
         Fail "git fetch failed." @("Check your network and GitHub login, then run this script again.")
     }
