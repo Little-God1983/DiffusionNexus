@@ -40,7 +40,9 @@ Instead of the card grid, the browser shows one recipe view:
 - **Resources used:** one row per resource the image was made with: tick box, thumbnail, name,
   version, type, base model, **weight**, file size, and the same INSTALLED / EA / PAID badges the
   browser cards already show.
-- **Footer:** "N selected · size" and *Add N to queue*.
+- **Footer:** "N selected · size", *Add N to queue*, and a **greyed-out *Send to ComfyUI*** button
+  (owner's decision: the feature comes later, #665). It is disabled at all times in #628, and its
+  tooltip says "Coming in a later version". It is there so the place for the feature is visible.
 
 The notice above it follows the #630 wording: showing the image from your link, filters are
 ignored, clear the search box to go back.
@@ -130,7 +132,8 @@ with `"on": false` must be ignored.
 Goals: one paste shows the image, its generation data and its LoRAs; one click queues the missing
 LoRAs; the weights are visible wherever the file has them.
 
-Non-goals for #628: saving recipes (piece 2), building or opening a ComfyUI workflow (piece 3),
+Non-goals for #628: saving recipes (piece 2), building or opening a ComfyUI workflow (piece 3, #665;
+only its disabled button is in #628),
 scraping the Civitai web page or its internal endpoints, `/posts/<id>` links, downloading
 checkpoints.
 
@@ -156,7 +159,7 @@ the recipe's LoRAs are all on disk (*Ready*) or how many are missing. Clicking a
 recipe view. My call: a recipe is a folder on disk (image file + JSON with everything the recipe
 view showed), not database rows.
 
-### Piece 3: Send to ComfyUI
+### Piece 3: Send to ComfyUI (#665)
 
 Once a recipe's LoRAs are on disk, one click builds a ComfyUI workflow (checkpoint, LoRAs with
 weights, prompt, sampler settings) and opens it. When the file carries a full ComfyUI graph (14% of
