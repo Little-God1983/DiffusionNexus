@@ -7,8 +7,8 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 internal sealed record RecipeMatchResult(IReadOnlyDictionary<int, RecipeLoraUse> ByVersionId, IReadOnlyList<RecipeLoraUse> Unlinked);
 
 /// <summary>
-/// Pairs the LoRAs an image file names with the resources Civitai lists for it (#628). A hash
-/// decides first — compared against every hash kind of every file of the version, since image tools
+/// Pairs the LoRAs an image file names with the resources Civitai lists for it (#628). A version id
+/// the file names (Civitai's own generator writes them) decides first, then a hash — compared against every hash kind of every file of the version, since image tools
 /// write AutoV2, AutoV3 or SHA256_12 — then the file name without folders, extension, case, or a
 /// download copy suffix (Civitai lists <c>AIM-KREA-V1 (1).safetensors</c> for a file the example's
 /// graph calls <c>Krea2\Style\AIM-KREA-V1.safetensors</c>). Each side is used at most once.
@@ -23,7 +23,15 @@ internal static partial class RecipeResourceMatcher
         var byVersion = new Dictionary<int, RecipeLoraUse>();
         var left = uses.ToList();
 
-        foreach (var use in uses.Where(u => !string.IsNullOrWhiteSpace(u.Hash)))
+        // Civitai's own generator names the version outright.
+        foreach (var use in uses.Where(u => u.VersionId is not null))
+        {
+            if (byVersion.ContainsKey(use.VersionId!.Value) || versions.All(v => v.Id != use.VersionId)) continue;
+            byVersion[use.VersionId.Value] = use;
+            left.Remove(use);
+        }
+
+        foreach (var use in left.Where(u => !string.IsNullOrWhiteSpace(u.Hash)).ToList())
         {
             var version = versions.FirstOrDefault(v => !byVersion.ContainsKey(v.Id)
                 && v.Files.Any(f => f.Hashes?.AllValues().Contains(use.Hash!, StringComparer.OrdinalIgnoreCase) == true));

@@ -55,7 +55,23 @@ internal static class JpegExifReader
         return null;
     }
 
-    private static string? ReadUserCommentFromTiff(ReadOnlyMemory<byte> memory)
+    /// <summary>
+    /// The UserComment of a bare TIFF block — also what a PNG <c>eXIf</c> chunk holds (some Civitai
+    /// PNGs carry their parameters only there). Null when absent or unreadable.
+    /// </summary>
+    public static string? ReadUserCommentFromTiff(ReadOnlyMemory<byte> memory)
+    {
+        try
+        {
+            return ReadUserCommentFromTiffCore(memory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadUserCommentFromTiffCore(ReadOnlyMemory<byte> memory)
     {
         var tiff = memory.Span;
         if (tiff.Length < 8) return null;

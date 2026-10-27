@@ -7,7 +7,12 @@ namespace DiffusionNexus.Tests.Viewer.CivitaiRecipe;
 internal static class RecipeTestFiles
 {
     /// <summary>A PNG with one tEXt chunk per entry (CRCs are zero; the reader does not check them).</summary>
-    public static byte[] PngWithText(params (string Key, string Value)[] texts)
+    public static byte[] PngWithText(params (string Key, string Value)[] texts) => Png(null, texts);
+
+    /// <summary>A PNG carrying an <c>eXIf</c> chunk (a TIFF block, as some Civitai PNGs do) and no text chunks.</summary>
+    public static byte[] PngWithExif(byte[] tiff) => Png(tiff);
+
+    private static byte[] Png(byte[]? exif, params (string Key, string Value)[] texts)
     {
         using var ms = new MemoryStream();
         ms.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
@@ -17,6 +22,7 @@ internal static class RecipeTestFiles
         ihdr[8] = 8;
         ihdr[9] = 2;
         WriteChunk(ms, "IHDR", ihdr);
+        if (exif is not null) WriteChunk(ms, "eXIf", exif);
         foreach (var (key, value) in texts)
         {
             WriteChunk(ms, "tEXt", [.. Encoding.Latin1.GetBytes(key), 0, .. Encoding.Latin1.GetBytes(value)]);
@@ -36,10 +42,27 @@ internal static class RecipeTestFiles
     }
 
     /// <summary>
-    /// A JPEG holding one APP1 Exif segment: IFD0 → Exif IFD → UserComment (prefix + text).
+    /// A JPEG holding one APP1 Exif segment with <see cref="TiffWithUserComment"/>.
     /// <paramref name="truncateAfter"/> cuts the TIFF block after that many bytes.
     /// </summary>
     public static byte[] JpegWithUserComment(bool bigEndianTiff, byte[] prefix, byte[] text, int? truncateAfter = null)
+    {
+        var tiff = TiffWithUserComment(bigEndianTiff, prefix, text);
+        if (truncateAfter is int cut) tiff = tiff[..cut];
+
+        using var ms = new MemoryStream();
+        ms.Write([0xFF, 0xD8, 0xFF, 0xE1]);
+        var length = new byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(length, (ushort)(2 + 6 + tiff.Length));
+        ms.Write(length);
+        ms.Write("Exif\0\0"u8);
+        ms.Write(tiff);
+        ms.Write([0xFF, 0xD9]);
+        return ms.ToArray();
+    }
+
+    /// <summary>A TIFF block: IFD0 → Exif IFD → UserComment (prefix + text).</summary>
+    public static byte[] TiffWithUserComment(bool bigEndianTiff, byte[] prefix, byte[] text)
     {
         var comment = prefix.Concat(text).ToArray();
         var tiff = new byte[44 + comment.Length];
@@ -67,17 +90,6 @@ internal static class RecipeTestFiles
         U16(28, 0x9286); U16(30, 7); U32(32, comment.Length); U32(36, 44);
         U32(40, 0);
         comment.CopyTo(tiff, 44);
-
-        if (truncateAfter is int cut) tiff = tiff[..cut];
-
-        using var ms = new MemoryStream();
-        ms.Write([0xFF, 0xD8, 0xFF, 0xE1]);
-        var length = new byte[2];
-        BinaryPrimitives.WriteUInt16BigEndian(length, (ushort)(2 + 6 + tiff.Length));
-        ms.Write(length);
-        ms.Write("Exif\0\0"u8);
-        ms.Write(tiff);
-        ms.Write([0xFF, 0xD9]);
-        return ms.ToArray();
+        return tiff;
     }
 }

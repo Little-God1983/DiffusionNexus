@@ -14,6 +14,7 @@ using DiffusionNexus.Infrastructure.Services;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.CivitaiRecipe;
 using DiffusionNexus.UI.Utilities;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -296,6 +297,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         // the VMs. Otherwise rapid searches stack 50+ zombie video downloads behind
         // the global extraction gate.
         CancelAllPreviews();
+        ClearRecipe();
 
         Results.Clear();
         _lastClickedItem = null;   // anchor invalidated by clear
@@ -304,7 +306,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
         if (CivitaiLinkQuery.TryParse(SearchText, out var link))
         {
-            await LoadLinkAsync(link!, ct);
+            if (link!.IsImageLink) await LoadImageRecipeAsync(link.ImageId!.Value, ct);
+            else await LoadLinkAsync(link, ct);
             return;
         }
 
@@ -409,6 +412,120 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }
+
+    #region Image recipe (#628)
+
+    /// <summary>
+    /// The recipe view a pasted image link shows in place of the cards (issue #628); null otherwise.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsRecipeView))]
+    private CivitaiRecipeViewModel? _recipe;
+
+    public bool IsRecipeView => Recipe is not null;
+
+    private const string RecipeNoticeText =
+        "Showing the image from your link and the resources it was made with. Filters are ignored. Clear the search box to go back to your filtered search.";
+
+    private static readonly Lazy<HttpClient> s_recipeHttp = new(() => new HttpClient { Timeout = TimeSpan.FromMinutes(2) });
+
+    /// <summary>Test seam: builds the recipe service. Null uses the browser's Civitai client.</summary>
+    internal Func<CivitaiImageRecipeService>? RecipeServiceFactory { get; set; }
+
+    private void ClearRecipe()
+    {
+        if (Recipe is null) return;
+        foreach (var row in Recipe.Rows) row.Card?.Cancel();
+        Recipe = null;
+    }
+
+    /// <summary>
+    /// Loads the recipe of a pasted image link: the image with Civitai's rating, its generation data
+    /// from the original file, and its resources as rows whose "Add N to queue" goes through
+    /// <see cref="EnqueueWithPreflightPromptAsync"/> like any card selection.
+    /// </summary>
+    private async Task LoadImageRecipeAsync(long imageId, CancellationToken ct)
+    {
+        IsLinkLookup = true;
+        LinkLookupNotice = null;
+        OnPropertyChanged(nameof(HasMore));
+        ApplyClientSideFilters();
+
+        var service = RecipeServiceFactory?.Invoke()
+            ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, CivitaiImageRecipeService.DefaultCacheDirectory, _logger));
+        if (service is null)
+        {
+            IsBusy = false;
+            StatusMessage = "Civitai client is not available.";
+            _logger?.Warn(LogCategory.Network, "CivitaiRecipe", "Recipe skipped — ICivitaiClient is null in this DI scope.");
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            StatusMessage = "Loading the image recipe from Civitai...";
+            _logger?.Info(LogCategory.Network, "CivitaiRecipe", $"Image link pasted: image {imageId}");
+
+            var apiKey = await GetApiKeyAsync();
+            var result = await service.LoadAsync(imageId, apiKey, ct);
+            if (ct.IsCancellationRequested) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (ct.IsCancellationRequested || result.Recipe is null) return;
+                var recipe = new CivitaiRecipeViewModel(result.Recipe, _installed, ShowNsfw, CreateResultCard, AvaloniaClipboardService.Instance)
+                {
+                    UrlOpener = OpenUrl,
+                };
+                recipe.EnqueueHandler = pairs =>
+                {
+                    _logger?.Info(LogCategory.Download, "CivitaiRecipe",
+                        $"Recipe {imageId}: {pairs.Count} LoRA(s) sent to the queue: {string.Join(", ", pairs.Select(p => $"\"{p.Result.Name}\" {p.Pick.Name}"))}");
+                    _ = EnqueueWithPreflightPromptAsync(pairs);
+                };
+                Recipe = recipe;
+            });
+            if (ct.IsCancellationRequested) return;
+
+            LinkLookupNotice = Recipe is not null ? RecipeNoticeText : null;
+            StatusMessage = result.Message;
+            if (Recipe is { } shown)
+            {
+                _logger?.Info(LogCategory.Network, "CivitaiRecipe",
+                    $"Recipe {imageId} shown: {shown.RatingBadge}, {shown.Rows.Count} row(s), {shown.SelectedCount} ticked, " +
+                    $"{shown.Rows.Count(r => r.IsInstalled)} already installed");
+                try
+                {
+                    await shown.LoadPreviewAsync(ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger?.Warn(LogCategory.Network, "CivitaiRecipe", $"Recipe {imageId}: preview could not be decoded: {ex.Message}");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // user typed again — silently drop
+        }
+        catch (HttpRequestException ex)
+        {
+            StatusMessage = $"Civitai request failed: {ex.StatusCode} {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiRecipe", $"Recipe HTTP {ex.StatusCode} — {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Image recipe failed: {ex.Message}";
+            _logger?.Warn(LogCategory.Network, "CivitaiRecipe", $"Recipe failed: {ex.Message}", ex.ToString());
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested) IsBusy = false;
+        }
+    }
+
+    #endregion
 
     private void CancelAllPreviews()
     {
@@ -957,7 +1074,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     partial void OnShowInstalledChanged(bool value) => OnShowFilterChanged();
     partial void OnShowEarlyAccessChanged(bool value) => OnShowFilterChanged();
     partial void OnShowPaywalledChanged(bool value) => OnShowFilterChanged();
-    partial void OnShowNsfwChanged(bool value) => OnShowFilterChanged();
+    partial void OnShowNsfwChanged(bool value)
+    {
+        Recipe?.ApplyNsfwPreference(value);
+        OnShowFilterChanged();
+    }
 
     private void OnShowFilterChanged()
     {
@@ -1780,6 +1901,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
                     // fact installed; redo its pre-tick unless the user has changed it since.
                     if (r.ReapplyLinkPreselectIfUntouched()) repicked.Add($"\"{r.Name}\" → {r.SelectedVersionSummary}");
                 }
+                Recipe?.ApplyInstalledIndex(_installed);
                 if (repicked.Count > 0)
                 {
                     _logger?.Info(LogCategory.Network, "CivitaiBrowser",

@@ -7,7 +7,8 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// <param name="FileName">The file as the image wrote it (<c>Krea2\Style\AIM-KREA-V1.safetensors</c>); null for an A1111 tag.</param>
 /// <param name="Weight">Model strength; null when the file does not say (never a default).</param>
 /// <param name="Hash">The hash the settings text lists for it (AutoV2, AutoV3 or SHA256_12), or null.</param>
-public sealed record RecipeLoraUse(string Name, string? FileName, double? Weight, string? Hash);
+/// <param name="VersionId">The Civitai version id, when the file names it (Civitai's own generator does).</param>
+public sealed record RecipeLoraUse(string Name, string? FileName, double? Weight, string? Hash, int? VersionId = null);
 
 /// <summary>Where a recipe's prompt and settings came from.</summary>
 public enum RecipeDataSource

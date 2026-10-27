@@ -98,7 +98,11 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
     private bool _isSelected;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RowOpacity))]
     private bool _isInstalled;
+
+    /// <summary>Rows the queue will not take by default (installed, not a LoRA, unavailable) are dimmed, as in the mockup.</summary>
+    public double RowOpacity => CanTick && !IsInstalled ? 1.0 : 0.6;
 
     internal long SizeBytes => Pick?.SizeBytes ?? 0;
 

@@ -58,10 +58,11 @@ internal static class ImageRecipeReader
             : ImageMetadataParser.ReadA1111Settings(parameters);
         settings.TryGetValue("VAE", out var textVae);
 
+        var civitai = CivitaiResources(settings);
         var graphLoras = facts.Loras.Count > 0;
-        var loras = (graphLoras ? facts.Loras : TagLoras(parameters))
-            .Select(l => l with { Hash = HashFor(l.Name, settings) })
-            .ToList();
+        var loras = graphLoras ? facts.Loras.Select(l => l with { Hash = HashFor(l.Name, settings) }).ToList()
+            : civitai.Loras.Count > 0 ? civitai.Loras
+            : TagLoras(parameters).Select(l => l with { Hash = HashFor(l.Name, settings) }).ToList();
 
         var data = new ImageRecipeData { Format = file.Format, Loras = loras, ReadError = readError };
 
@@ -94,7 +95,7 @@ internal static class ImageRecipeReader
                     : $"{NotePrefix} (settings text)",
                 Prompt = text.PositivePrompt,
                 NegativePrompt = text.NegativePrompt,
-                Checkpoint = text.Checkpoint ?? facts.Checkpoint,
+                Checkpoint = text.Checkpoint ?? civitai.Checkpoint ?? facts.Checkpoint,
                 Vae = textVae ?? facts.Vae,
                 Sampler = text.SamplerName,
                 Scheduler = text.Scheduler,
@@ -134,6 +135,51 @@ internal static class ImageRecipeReader
             double? weight = double.TryParse(first, NumberStyles.Float, CultureInfo.InvariantCulture, out var w) ? w : null;
             yield return new RecipeLoraUse(name, null, weight, null);
         }
+    }
+
+    /// <summary>
+    /// Civitai's own generator writes no LoRA tags; its settings carry <c>Civitai resources: [{"type":"lora",
+    /// "weight":0.9,"modelVersionId":…,"modelName":…}, {"type":"checkpoint",…}]</c> — weights keyed by version id
+    /// (image 147042061, 2026-10-27). A value that is not that JSON gives nothing.
+    /// </summary>
+    private static (List<RecipeLoraUse> Loras, string? Checkpoint) CivitaiResources(IReadOnlyDictionary<string, string> settings)
+    {
+        var loras = new List<RecipeLoraUse>();
+        string? checkpoint = null;
+        if (!settings.TryGetValue("Civitai resources", out var json)) return (loras, null);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return (loras, null);
+            foreach (var entry in doc.RootElement.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object) continue;
+                var type = Text(entry, "type");
+                var name = Text(entry, "modelName");
+                int? versionId = entry.TryGetProperty("modelVersionId", out var id) && id.TryGetInt32(out var v) ? v : null;
+                if (string.Equals(type, "checkpoint", StringComparison.OrdinalIgnoreCase) && name is not null)
+                {
+                    checkpoint ??= Text(entry, "modelVersionName") is { } version ? $"{name} ({version})" : name;
+                }
+                else if (type is not null
+                         && (type.Contains("lora", StringComparison.OrdinalIgnoreCase)
+                             || type.Equals("locon", StringComparison.OrdinalIgnoreCase)
+                             || type.Equals("dora", StringComparison.OrdinalIgnoreCase)))
+                {
+                    double? weight = entry.TryGetProperty("weight", out var w) && w.ValueKind == JsonValueKind.Number ? w.GetDouble() : null;
+                    loras.Add(new RecipeLoraUse(name ?? $"Version {versionId}", null, weight, null, versionId));
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            loras.Clear();
+            checkpoint = null;
+        }
+        return (loras, checkpoint);
+
+        static string? Text(JsonElement obj, string name) =>
+            obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     }
 
     /// <summary><c>Lora hashes: "name: hash, name: hash"</c> first, then the <c>Hashes</c> JSON's <c>lora:name</c>.</summary>

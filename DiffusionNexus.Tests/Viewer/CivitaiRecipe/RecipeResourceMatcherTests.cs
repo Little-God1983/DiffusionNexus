@@ -53,6 +53,18 @@ public sealed class RecipeResourceMatcherTests
     }
 
     [Fact]
+    public void VersionIdMatch_ComesFirst()
+    {
+        var a = Version(450026, "musctonk.safetensors");
+        var b = Version(1523317, "slider.safetensors", new CivitaiFileHashes { AutoV2 = "ABCDEF0123" });
+        var use = new RecipeLoraUse("Musctonk style", null, 0.9, "abcdef0123", 450026);
+
+        var result = RecipeResourceMatcher.Match([a, b], [use]);
+
+        result.ByVersionId.Should().ContainKey(450026).And.NotContainKey(1523317);
+    }
+
+    [Fact]
     public void HashBeatsName()
     {
         var a = Version(1, "foo.safetensors");

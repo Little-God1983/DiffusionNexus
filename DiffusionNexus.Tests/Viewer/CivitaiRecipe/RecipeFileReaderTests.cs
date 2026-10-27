@@ -50,6 +50,20 @@ public sealed class RecipeFileReaderTests : IDisposable
     }
 
     [Fact]
+    public void Png_WithExifChunk_PutsUserCommentUnderParameters()
+    {
+        // Civitai image 147042061 (2026-10-27): a PNG with no text chunk; its parameters sit in an
+        // eXIf chunk holding the same UNICODE UserComment the JPEGs carry.
+        var path = Write("x.png", RecipeTestFiles.PngWithExif(RecipeTestFiles.TiffWithUserComment(false, "UNICODE\0"u8.ToArray(),
+            Encoding.BigEndianUnicode.GetBytes("a fox\nSteps: 30"))));
+
+        var result = RecipeFileReader.Read(path);
+
+        result.Format.Should().Be(RecipeFileFormat.Png);
+        result.Texts["parameters"].Should().Be("a fox\nSteps: 30");
+    }
+
+    [Fact]
     public void Jpeg_WithoutComment_HasNoTexts()
     {
         var result = RecipeFileReader.Read(Write("x.jpg", [0xFF, 0xD8, 0xFF, 0xD9]));

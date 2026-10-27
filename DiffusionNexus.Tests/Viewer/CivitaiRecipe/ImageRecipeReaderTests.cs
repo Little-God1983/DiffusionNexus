@@ -47,6 +47,35 @@ public sealed class ImageRecipeReaderTests
     }
 
     [Fact]
+    public void CivitaiResources_GiveWeightsByVersionId_AndTheCheckpoint()
+    {
+        // Civitai's own generator (image 147042061, 2026-10-27): no <lora:> tags, weights in a JSON list.
+        var data = Read(("parameters",
+            "a cat\nSteps: 16, Sampler: Euler a, CFG scale: 5, Seed: 105873465, Civitai resources: " +
+            "[{\"type\":\"checkpoint\",\"modelVersionId\":1714314,\"modelName\":\"Plant Milk - Model Suite\",\"modelVersionName\":\"Hemp II\"}," +
+            "{\"type\":\"lora\",\"weight\":0.9,\"modelVersionId\":1529516,\"modelName\":\"not HL\\u0027s styles\",\"modelVersionName\":\"Style 001\"}," +
+            "{\"type\":\"lora\",\"weight\":-1.9,\"modelVersionId\":1523317,\"modelName\":\"Body Weight Slider\",\"modelVersionName\":\"ILXL\"}," +
+            "{\"type\":\"lora\",\"modelVersionId\":42,\"modelName\":\"No weight\"}], Civitai metadata: {\"workflow\":\"txt2img\"}"));
+
+        data.Loras.Should().BeEquivalentTo(new[]
+        {
+            new RecipeLoraUse("not HL's styles", null, 0.9, null, 1529516),
+            new RecipeLoraUse("Body Weight Slider", null, -1.9, null, 1523317),
+            new RecipeLoraUse("No weight", null, null, null, 42),
+        });
+        data.Checkpoint.Should().Be("Plant Milk - Model Suite (Hemp II)");
+        data.Steps.Should().Be(16);
+    }
+
+    [Fact]
+    public void BrokenCivitaiResources_FallBackToTags()
+    {
+        var data = Read(("parameters", "a cat <lora:foo:0.7>\nSteps: 20, Civitai resources: [not json"));
+
+        data.Loras.Should().ContainSingle().Which.Name.Should().Be("foo");
+    }
+
+    [Fact]
     public void HashesJson_IsTheFallbackHashSource()
     {
         var data = Read(("parameters", "a cat <lora:foo:0.7>\nSteps: 20, Seed: 5, Hashes: {\"model\": \"aa\", \"lora:foo\": \"ff00ff00ff\"}"));

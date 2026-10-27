@@ -20,6 +20,7 @@ internal sealed record RecipeFileText(RecipeFileFormat Format, IReadOnlyDictiona
 /// <summary>
 /// Reads the generation texts of a downloaded Civitai original (#628). The format comes from the
 /// magic bytes, never the name: Civitai serves the example image's PNG under a <c>….jpeg</c> URL.
+/// A PNG is read from its text chunks, else from its <c>eXIf</c> chunk; a JPEG from its EXIF.
 /// WebP and video files are recognised but not read (none of the sampled WebPs carried data).
 /// </summary>
 internal static class RecipeFileReader
@@ -46,11 +47,47 @@ internal static class RecipeFileReader
         var format = DetectFormat(head[..read]);
         IReadOnlyDictionary<string, string> texts = format switch
         {
-            RecipeFileFormat.Png => PngChunkReader.ReadTextChunks(filePath),
+            RecipeFileFormat.Png => ReadPng(filePath),
             RecipeFileFormat.Jpeg when JpegExifReader.ReadUserComment(filePath) is { } comment
                 => new Dictionary<string, string> { ["parameters"] = comment },
             _ => new Dictionary<string, string>(),
         };
         return new RecipeFileText(format, texts);
+    }
+
+    /// <summary>
+    /// The PNG's text chunks; without a <c>parameters</c> chunk, the UserComment of its <c>eXIf</c>
+    /// chunk takes that place — Civitai image 147042061 (2026-10-27) carries its parameters only there.
+    /// </summary>
+    private static Dictionary<string, string> ReadPng(string filePath)
+    {
+        var texts = PngChunkReader.ReadTextChunks(filePath);
+        if (!texts.ContainsKey("parameters")
+            && ReadPngExifChunk(filePath) is { } tiff
+            && JpegExifReader.ReadUserCommentFromTiff(tiff) is { } comment)
+        {
+            texts["parameters"] = comment;
+        }
+        return texts;
+    }
+
+    /// <summary>The data of the first <c>eXIf</c> chunk, or null. Image data chunks are skipped, not read.</summary>
+    private static byte[]? ReadPngExifChunk(string filePath)
+    {
+        using var stream = File.OpenRead(filePath);
+        using var reader = new BinaryReader(stream);
+        stream.Seek(8, SeekOrigin.Begin);
+        Span<byte> header = stackalloc byte[8];
+        while (stream.Position + 8 <= stream.Length)
+        {
+            stream.ReadExactly(header);
+            var length = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(header);
+            var type = header[4..8];
+            if (length < 0 || stream.Position + length > stream.Length) return null;
+            if (type.SequenceEqual("eXIf"u8)) return reader.ReadBytes(length);
+            if (type.SequenceEqual("IEND"u8)) return null;
+            stream.Seek(length + 4, SeekOrigin.Current); // data + CRC
+        }
+        return null;
     }
 }
