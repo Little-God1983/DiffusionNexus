@@ -178,6 +178,54 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UnknownFormat_IsNotCached_AndIsSaidPlainly()
+    {
+        HasImage(15, 1, "image", 100);
+        HasLora(100, 10, "a.safetensors");
+        _http.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html>challenge</html>") };
+
+        var recipe = (await Service().LoadAsync(15, null, default)).Recipe!;
+        await Service().LoadAsync(15, null, default);
+
+        recipe.Data.ReadError.Should().Be("The file Civitai served for this image is not a PNG, JPEG or WebP image.");
+        recipe.OriginalFilePath.Should().BeNull();
+        recipe.Resources.Should().ContainSingle();
+        Directory.GetFiles(_cache).Should().BeEmpty();
+        _http.Calls.Should().Be(2, "nothing was cached, so the next paste tries again");
+    }
+
+    [Fact]
+    public async Task TwoLoadsOfTheSameImageAtOnce_BothRead()
+    {
+        // Paste + Enter starts the debounced search and the command: two loads of one image.
+        HasImage(16);
+        var release = new TaskCompletionSource();
+        var slow = new GatedHandler(release.Task, () => Png(("parameters", "a cat\nSteps: 20")));
+        var service = new CivitaiImageRecipeService(_client.Object, new HttpClient(slow), _cache, null);
+
+        var first = service.LoadAsync(16, null, default);
+        var second = service.LoadAsync(16, null, default);
+        await slow.BothStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        release.SetResult();
+        var results = await Task.WhenAll(first, second);
+
+        results.Should().AllSatisfy(r => r.Recipe!.Data.Prompt.Should().Be("a cat"));
+    }
+
+    private sealed class GatedHandler(Task gate, Func<HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        private int _started;
+        public TaskCompletionSource BothStarted { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _started) == 2) BothStarted.SetResult();
+            await gate;
+            return respond();
+        }
+    }
+
+    [Fact]
     public async Task WeightsAreMatchedOntoResources()
     {
         HasImage(14, 1, "image", 100);

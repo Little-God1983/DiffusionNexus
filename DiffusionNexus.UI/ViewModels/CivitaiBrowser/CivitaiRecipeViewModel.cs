@@ -62,8 +62,11 @@ public partial class CivitaiRecipeViewModel : ObservableObject
         HasGenerationData = data.Source != RecipeDataSource.None;
         SourceNote = data.SourceNote;
         ReadError = data.ReadError;
-        PromptText = data.Prompt ?? "none given";
-        NegativePromptText = data.NegativePrompt ?? "none given";
+        // A parameters text without a prompt line has none; a graph whose prompt could not be traced
+        // has one nobody could read.
+        var missing = data.Source == RecipeDataSource.SettingsText ? "none given" : Unknown;
+        PromptText = data.Prompt ?? missing;
+        NegativePromptText = data.NegativePrompt ?? missing;
         CheckpointText = data.Checkpoint ?? Unknown;
         VaeText = data.Vae ?? Unknown;
         SamplerLine = (data.Sampler, data.Scheduler) switch

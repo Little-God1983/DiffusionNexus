@@ -68,6 +68,36 @@ public sealed class ImageRecipeReaderTests
     }
 
     [Fact]
+    public void OddJsonShapes_NeverThrow()
+    {
+        // Third-party writers: a version id that is not a number, a Hashes value that is not an object.
+        var act = () => Read(("parameters",
+            "a cat <lora:foo:0.7>\nSteps: 20, Hashes: [1, 2], Civitai resources: [{\"type\":\"lora\",\"weight\":0.5,\"modelVersionId\":\"123\",\"modelName\":\"bar\"}]"));
+
+        var data = act.Should().NotThrow().Subject;
+        data.Loras.Should().ContainSingle().Which.Should().Be(new RecipeLoraUse("bar", null, 0.5, null, null));
+        data.Steps.Should().Be(20);
+    }
+
+    [Fact]
+    public void TracedGraph_TakesWhatItLacksFromTheText()
+    {
+        // The tracer knows the KSampler but its positive input leads nowhere.
+        var data = Read(
+            ("prompt", """
+                {"4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"sdxl.safetensors"}},
+                 "3":{"class_type":"KSampler","inputs":{"seed":42,"steps":25,"cfg":6.5,"sampler_name":"euler","scheduler":"karras","denoise":1,
+                      "model":["4",0],"positive":["99",0],"negative":["98",0],"latent_image":["5",0]}}}
+                """),
+            ("parameters", "a red fox\nNegative prompt: blurry\nSteps: 25, Seed: 42"));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.Prompt.Should().Be("a red fox");
+        data.NegativePrompt.Should().Be("blurry");
+        data.Sampler.Should().Be("euler");
+    }
+
+    [Fact]
     public void BrokenCivitaiResources_FallBackToTags()
     {
         var data = Read(("parameters", "a cat <lora:foo:0.7>\nSteps: 20, Civitai resources: [not json"));

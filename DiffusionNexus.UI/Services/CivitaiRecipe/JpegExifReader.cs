@@ -122,8 +122,7 @@ internal static class JpegExifReader
         {
             if (text.Length >= 2 && text[0] == 0xFE && text[1] == 0xFF) decoded = Encoding.BigEndianUnicode.GetString(text[2..]);
             else if (text.Length >= 2 && text[0] == 0xFF && text[1] == 0xFE) decoded = Encoding.Unicode.GetString(text[2..]);
-            else if (text.Length >= 2 && text[0] == 0 && text[1] != 0) decoded = Encoding.BigEndianUnicode.GetString(text);
-            else decoded = Encoding.Unicode.GetString(text);
+            else decoded = IsLittleEndian(text) ? Encoding.Unicode.GetString(text) : Encoding.BigEndianUnicode.GetString(text);
         }
         else
         {
@@ -132,6 +131,23 @@ internal static class JpegExifReader
 
         decoded = decoded.TrimEnd('\0');
         return decoded.Length == 0 ? null : decoded;
+    }
+
+    /// <summary>
+    /// UTF-16 without a BOM: the parameters text is mostly ASCII (at least its settings line), whose
+    /// zero high bytes sit at even offsets in big-endian and odd offsets in little-endian. Counting them
+    /// over the whole text survives a prompt that starts with CJK or an emoji; a tie goes to big-endian,
+    /// which is what piexif — the usual writer — produces.
+    /// </summary>
+    private static bool IsLittleEndian(ReadOnlySpan<byte> text)
+    {
+        int even = 0, odd = 0;
+        for (var i = 0; i + 1 < text.Length; i += 2)
+        {
+            if (text[i] == 0) even++;
+            if (text[i + 1] == 0) odd++;
+        }
+        return odd > even;
     }
 
     private static ushort U16(ReadOnlySpan<byte> s, int at, bool bigEndian) =>

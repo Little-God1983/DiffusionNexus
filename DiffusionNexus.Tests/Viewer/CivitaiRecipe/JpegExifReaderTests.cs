@@ -35,6 +35,25 @@ public sealed class JpegExifReaderTests : IDisposable
     }
 
     [Fact]
+    public void UserComment_Utf16BigEndian_StartingWithCjk_IsRead()
+    {
+        // The first character's high byte is not zero, so it alone cannot tell the byte order.
+        const string cjk = "一个女孩, 赛博朋克\nSteps: 20, Sampler: Euler a, Seed: 1";
+        var path = Write(RecipeTestFiles.JpegWithUserComment(false, "UNICODE\0"u8.ToArray(), Encoding.BigEndianUnicode.GetBytes(cjk)));
+
+        JpegExifReader.ReadUserComment(path).Should().Be(cjk);
+    }
+
+    [Fact]
+    public void UserComment_Utf16LittleEndian_StartingWithCjk_IsRead()
+    {
+        const string cjk = "一个女孩\nSteps: 20, Seed: 1";
+        var path = Write(RecipeTestFiles.JpegWithUserComment(false, "UNICODE\0"u8.ToArray(), Encoding.Unicode.GetBytes(cjk)));
+
+        JpegExifReader.ReadUserComment(path).Should().Be(cjk);
+    }
+
+    [Fact]
     public void UserComment_Utf16LittleEndian_IsRead()
     {
         var path = Write(RecipeTestFiles.JpegWithUserComment(false, "UNICODE\0"u8.ToArray(), Encoding.Unicode.GetBytes(Text)));

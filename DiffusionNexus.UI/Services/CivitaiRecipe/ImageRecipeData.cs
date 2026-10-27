@@ -8,7 +8,12 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// <param name="Weight">Model strength; null when the file does not say (never a default).</param>
 /// <param name="Hash">The hash the settings text lists for it (AutoV2, AutoV3 or SHA256_12), or null.</param>
 /// <param name="VersionId">The Civitai version id, when the file names it (Civitai's own generator does).</param>
-public sealed record RecipeLoraUse(string Name, string? FileName, double? Weight, string? Hash, int? VersionId = null);
+/// <param name="AllWeights">
+/// Every weight, in load order, when the graph loads the same LoRA more than once with different
+/// weights (Wan 2.2 high- and low-noise chains); null otherwise. <paramref name="Weight"/> is the first.
+/// </param>
+public sealed record RecipeLoraUse(
+    string Name, string? FileName, double? Weight, string? Hash, int? VersionId = null, IReadOnlyList<double?>? AllWeights = null);
 
 /// <summary>Where a recipe's prompt and settings came from.</summary>
 public enum RecipeDataSource

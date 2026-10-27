@@ -176,6 +176,42 @@ public sealed class CivitaiRecipeViewModelTests
     }
 
     [Fact]
+    public void LaterSnapshot_ReachesTheCardPicks()
+    {
+        // The preflight's "already installed" warning reads Pick.IsInstalled; a snapshot that lands after
+        // the recipe was built must reach it, or a ticked installed LoRA is queued without a word.
+        var vm = Vm(ExampleShape());
+        vm.Rows.Single(r => r.Name == "Purple Grainy").IsSelected = false; // the user touched the ticks
+
+        vm.ApplyInstalledIndex(new CivitaiInstalledIndex([3072964], []));
+
+        var row = vm.Rows.Single(r => r.Name == "Ass and Thighs");
+        row.IsSelected.Should().BeTrue();
+        row.Pick!.IsInstalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public void LoraUsedTwiceWithTwoWeights_ShowsBoth()
+    {
+        var model = Model(2, 20, "Lightx2v");
+        var use = new RecipeLoraUse("Lightx2v", null, 1, null, null, [1, 0.8]);
+        var vm = Vm(Recipe([new CivitaiRecipeResource(20, model.ModelVersions[0], model, use, null)]));
+
+        vm.Rows.Single().WeightDisplay.Should().Be("1 / 0.8");
+    }
+
+    [Fact]
+    public void PromptMissingFromATrace_IsUnknown_NotNoneGiven()
+    {
+        var graphOnly = Vm(Recipe([], data: new ImageRecipeData { Source = RecipeDataSource.ComfyUiWorkflow, SourceNote = "x" }));
+        graphOnly.PromptText.Should().Be("unknown");
+        graphOnly.NegativePromptText.Should().Be("unknown");
+
+        var text = Vm(Recipe([], data: new ImageRecipeData { Source = RecipeDataSource.SettingsText, SourceNote = "x", Prompt = "a cat" }));
+        text.NegativePromptText.Should().Be("none given", "a parameters text without a Negative prompt line has none");
+    }
+
+    [Fact]
     public void FooterCountsAndSize()
     {
         var vm = Vm(Recipe([Resource(Model(2, 20, "A", sizeKb: 1024)), Resource(Model(3, 30, "B", sizeKb: 2048))]));

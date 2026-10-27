@@ -44,6 +44,33 @@ public sealed class ComfyLoraScanTests
     }
 
     [Fact]
+    public void SameLoraTwice_IsOneUse_WithBothWeights()
+    {
+        // Wan 2.2 graphs load the same LoRA on the high- and low-noise chains.
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"LoraLoaderModelOnly","inputs":{"lora_name":"wan\\lightx2v.safetensors","strength_model":1}},
+             "2":{"class_type":"LoraLoaderModelOnly","inputs":{"lora_name":"wan/lightx2v.safetensors","strength_model":0.8}}}
+            """));
+
+        var use = facts.Loras.Should().ContainSingle().Subject;
+        use.Weight.Should().Be(1);
+        use.AllWeights.Should().Equal(1, 0.8);
+    }
+
+    [Fact]
+    public void SameLoraTwiceSameWeight_IsOnePlainUse()
+    {
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"LoraLoader","inputs":{"lora_name":"a.safetensors","strength_model":0.7}},
+             "2":{"class_type":"LoraLoader","inputs":{"lora_name":"A.safetensors","strength_model":0.7}}}
+            """));
+
+        var use = facts.Loras.Should().ContainSingle().Subject;
+        use.Weight.Should().Be(0.7);
+        use.AllWeights.Should().BeNull();
+    }
+
+    [Fact]
     public void GraphStrengthAsLink_IsUnknown()
     {
         var facts = ComfyLoraScan.Scan(Graph("""

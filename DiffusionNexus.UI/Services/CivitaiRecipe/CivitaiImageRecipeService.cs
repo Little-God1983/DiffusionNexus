@@ -20,6 +20,11 @@ public sealed class CivitaiImageRecipeService
 {
     private const string LogSource = "CivitaiRecipe";
 
+    internal const string NotAnImageText = "The file Civitai served for this image is not a PNG, JPEG or WebP image.";
+
+    /// <summary>Only files the recipe can read are cached, so a cache hit is always one of these.</summary>
+    private static readonly string[] CachedExtensions = [".png", ".jpg", ".webp"];
+
     private readonly ICivitaiClient _client;
     private readonly HttpClient _http;
     private readonly string _cacheDirectory;
@@ -115,15 +120,17 @@ public sealed class CivitaiImageRecipeService
         }
 
         Directory.CreateDirectory(_cacheDirectory);
-        var cached = Directory.EnumerateFiles(_cacheDirectory, $"{imageId}.*")
-            .FirstOrDefault(f => !f.EndsWith(".download", StringComparison.OrdinalIgnoreCase) && new FileInfo(f).Length > 0);
+        var cached = CachedExtensions
+            .Select(ext => Path.Combine(_cacheDirectory, imageId + ext))
+            .FirstOrDefault(f => File.Exists(f) && new FileInfo(f).Length > 0);
         if (cached is not null)
         {
             _logger?.Info(LogCategory.Network, LogSource, $"Recipe {imageId}: original file from the cache ({Path.GetFileName(cached)}).");
             return (cached, ImageRecipeReader.Read(cached));
         }
 
-        var temp = Path.Combine(_cacheDirectory, $"{imageId}.download");
+        // A name of its own: paste + Enter starts two loads of the same image at once.
+        var temp = Path.Combine(_cacheDirectory, $"{imageId}.{Guid.NewGuid():N}.download");
         var sw = Stopwatch.StartNew();
         try
         {
@@ -135,14 +142,33 @@ public sealed class CivitaiImageRecipeService
             }
 
             var format = ReadFormat(temp);
-            var path = Path.Combine(_cacheDirectory, imageId + format switch
+            var extension = format switch
             {
                 RecipeFileFormat.Png => ".png",
                 RecipeFileFormat.Jpeg => ".jpg",
                 RecipeFileFormat.WebP => ".webp",
-                _ => ".bin",
-            });
-            File.Move(temp, path, overwrite: true);
+                _ => null,
+            };
+            if (extension is null)
+            {
+                // An HTML challenge page or an image type nothing here reads: cached, it would answer every
+                // later paste of this image with the same nothing.
+                TryDelete(temp);
+                _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: the original file is {format}, not an image the recipe can read — not cached.", image.Url);
+                return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, NotAnImageText));
+            }
+
+            var path = Path.Combine(_cacheDirectory, imageId + extension);
+            try
+            {
+                // No overwrite: replacing a file another load is reading fails with "access denied".
+                File.Move(temp, path, overwrite: false);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                // Another load of the same image got there first; theirs is the same file.
+                TryDelete(temp);
+            }
             _logger?.Info(LogCategory.Network, LogSource,
                 $"Recipe {imageId}: original file downloaded — {format}, {new FileInfo(path).Length / 1024} KB ({sw.ElapsedMilliseconds} ms)");
             return (path, ImageRecipeReader.Read(path));

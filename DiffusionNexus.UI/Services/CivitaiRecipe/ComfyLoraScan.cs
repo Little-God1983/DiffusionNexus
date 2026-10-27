@@ -72,10 +72,24 @@ internal static class ComfyLoraScan
 
         // With several loaders the file alone does not say which one made the image.
         return new ComfyGraphFacts(
-            loras,
+            Merge(loras),
             models.Count == 1 ? models[0] : null,
             vaes.Count == 1 ? vaes[0] : null);
     }
+
+    /// <summary>
+    /// One use per LoRA file. Wan 2.2 graphs load the same LoRA on the high- and low-noise chains; two
+    /// uses of one file would leave the second unmatched and read as "not linked on Civitai". Different
+    /// weights are all kept in <see cref="RecipeLoraUse.AllWeights"/>.
+    /// </summary>
+    private static List<RecipeLoraUse> Merge(List<RecipeLoraUse> loras) => loras
+        .GroupBy(l => l.Name, StringComparer.OrdinalIgnoreCase)
+        .Select(group =>
+        {
+            var weights = group.Select(l => l.Weight).ToList();
+            return weights.Distinct().Count() > 1 ? group.First() with { AllWeights = weights } : group.First();
+        })
+        .ToList();
 
     internal static string StemOf(string file) =>
         Path.GetFileNameWithoutExtension(file.Replace('\\', '/').Split('/')[^1]);

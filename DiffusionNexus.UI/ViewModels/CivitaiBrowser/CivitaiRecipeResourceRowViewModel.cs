@@ -34,7 +34,7 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
         TypeBadge = model is null || isLora ? null : typeLabel!.ToUpperInvariant();
         BaseModel = version?.BaseModel ?? string.Empty;
         SizeDisplay = Pick?.SizeDisplay ?? string.Empty;
-        WeightDisplay = FormatWeight(resource.Use?.Weight, isLora);
+        WeightDisplay = FormatWeight(resource.Use, isLora);
         CanTick = isLora && Pick is not null;
         ShowEarlyAccessBadge = Pick?.ShowEarlyAccessBadge ?? false;
         IsPermanentlyPaid = Pick?.IsPermanentlyPaid ?? false;
@@ -56,7 +56,7 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
         VersionLabel = unlinked.FileName ?? string.Empty;
         BaseModel = string.Empty;
         SizeDisplay = string.Empty;
-        WeightDisplay = FormatWeight(unlinked.Weight, isLora: true);
+        WeightDisplay = FormatWeight(unlinked, isLora: true);
         Note = UnlinkedNote;
     }
 
@@ -106,7 +106,15 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
 
     internal long SizeBytes => Pick?.SizeBytes ?? 0;
 
-    internal void ApplyInstalledIndex(CivitaiInstalledIndex index) => IsInstalled = Pick is not null && index.IsInstalled(Pick.Version);
+    /// <summary>
+    /// The card too: the queue's pre-download dialog reads <see cref="CivitaiVersionPickItemViewModel.IsInstalled"/>
+    /// to warn before downloading a version that is already in the library.
+    /// </summary>
+    internal void ApplyInstalledIndex(CivitaiInstalledIndex index)
+    {
+        Card?.ApplyInstalledIndex(index);
+        IsInstalled = Pick is not null && index.IsInstalled(Pick.Version);
+    }
 
     private static string TypeLabel(CivitaiModelType type) => type switch
     {
@@ -115,7 +123,12 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
         _ => type.ToString(),
     };
 
-    private static string FormatWeight(double? weight, bool isLora) => weight is double w
-        ? w.ToString("0.###", CultureInfo.InvariantCulture)
-        : isLora ? "weight unknown" : "—";
+    /// <summary>A LoRA the graph loads twice with different weights shows both ("1 / 0.8").</summary>
+    private static string FormatWeight(RecipeLoraUse? use, bool isLora)
+    {
+        if (use?.AllWeights is { Count: > 1 } all) return string.Join(" / ", all.Select(w => Number(w) ?? "unknown"));
+        return Number(use?.Weight) ?? (isLora ? "weight unknown" : "—");
+
+        static string? Number(double? weight) => weight?.ToString("0.###", CultureInfo.InvariantCulture);
+    }
 }

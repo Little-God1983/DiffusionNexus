@@ -31,7 +31,24 @@ internal static class ImageRecipeReader
         }
     }
 
+    /// <summary>
+    /// Never throws: a third-party writer's odd JSON (or a graph the shared tracer chokes on) costs the
+    /// generation data, never the recipe — and the file stays cached, so a throw here would fail that
+    /// image on every later paste.
+    /// </summary>
     public static ImageRecipeData FromTexts(RecipeFileText file)
+    {
+        try
+        {
+            return FromTextsCore(file);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return ImageRecipeData.Empty(file.Format, $"The generation data in the file could not be read ({ex.Message}).");
+        }
+    }
+
+    private static ImageRecipeData FromTextsCore(RecipeFileText file)
     {
         string? readError = null;
         Dictionary<string, JsonElement>? graph = null;
@@ -72,16 +89,17 @@ internal static class ImageRecipeReader
             {
                 Source = RecipeDataSource.ComfyUiWorkflow,
                 SourceNote = $"{NotePrefix} (ComfyUI workflow embedded)",
-                Prompt = trace.PositivePrompt,
-                NegativePrompt = trace.NegativePrompt,
+                // The graph wins; what its trace could not resolve comes from the text the same file carries.
+                Prompt = trace.PositivePrompt ?? text?.PositivePrompt,
+                NegativePrompt = trace.NegativePrompt ?? text?.NegativePrompt,
                 // The tracer gives the Distiller's bare stem; the file as the graph wrote it reads better.
-                Checkpoint = facts.Checkpoint ?? trace.Checkpoint,
+                Checkpoint = facts.Checkpoint ?? trace.Checkpoint ?? text?.Checkpoint ?? civitai.Checkpoint,
                 Vae = facts.Vae ?? textVae,
-                Sampler = trace.SamplerName,
-                Scheduler = trace.Scheduler,
-                Steps = trace.Steps,
-                Cfg = trace.Cfg,
-                Seed = trace.Seed,
+                Sampler = trace.SamplerName ?? text?.SamplerName,
+                Scheduler = trace.Scheduler ?? text?.Scheduler,
+                Steps = trace.Steps ?? text?.Steps,
+                Cfg = trace.Cfg ?? text?.Cfg,
+                Seed = trace.Seed ?? text?.Seed,
             };
         }
 
@@ -156,7 +174,7 @@ internal static class ImageRecipeReader
                 if (entry.ValueKind != JsonValueKind.Object) continue;
                 var type = Text(entry, "type");
                 var name = Text(entry, "modelName");
-                int? versionId = entry.TryGetProperty("modelVersionId", out var id) && id.TryGetInt32(out var v) ? v : null;
+                int? versionId = entry.TryGetProperty("modelVersionId", out var id) && id.ValueKind == JsonValueKind.Number && id.TryGetInt32(out var v) ? v : null;
                 if (string.Equals(type, "checkpoint", StringComparison.OrdinalIgnoreCase) && name is not null)
                 {
                     checkpoint ??= Text(entry, "modelVersionName") is { } version ? $"{name} ({version})" : name;
@@ -204,6 +222,7 @@ internal static class ImageRecipeReader
             try
             {
                 using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
                 foreach (var property in doc.RootElement.EnumerateObject())
                 {
                     if (property.Name.Equals($"lora:{name}", StringComparison.OrdinalIgnoreCase)
