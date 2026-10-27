@@ -18,6 +18,9 @@ namespace DiffusionNexus.Tests.Viewer;
 /// viewer-side rebuild. Also covers the saved filter carrying the Installed-tab
 /// sort (field + direction).
 /// </summary>
+// The browser posts its base-model mirror rebuild to the shared headless dispatcher; a class that
+// pumps RunJobs in parallel could run that rebuild mid-enumeration here ("Collection was modified").
+[Collection(DispatcherDrainCollection.Name)]
 public sealed class LoraViewerFilterPersistenceTests
 {
     private static BaseModelFilterItem ItemOf(LoraViewerViewModel vm, string raw)
