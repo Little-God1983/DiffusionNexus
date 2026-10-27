@@ -89,7 +89,8 @@ with `"on": false` must be ignored.
   The recipe view instead:
   1. takes prompt and settings from the graph trace when it succeeds, otherwise from the
      `parameters` text (the example's text has prompt, steps, sampler `exponential/ddim_beta57`,
-     CFG, seed, size, model, VAE and `Lora hashes`, but **no weights**);
+     CFG, seed, size, model, VAE and `Lora hashes`; its `<lora:name:w>` tags carry the same weights
+     as the graph, but other tools' text often has none);
   2. collects LoRA weights with a separate scan of **every** LoRA loader node in the `prompt` chunk
      (the executed graph, so muted and bypassed nodes are already absent), wherever it sits: core
      `LoraLoader` / `LoraLoaderModelOnly` (`strength_model`) and rgthree *Power Lora Loader* entries
@@ -122,6 +123,14 @@ with `"on": false` must be ignored.
 - **Download:** the ticked versions go into `CivitaiDownloadQueue` with the usual destination options.
   Joining a running batch follows #604. One failed or gated LoRA does not stop the rest.
 - **NSFW:** the image preview follows the same NSFW display rule as the browser's cards.
+- **SFW / NSFW recipe (owner, 2026-10-27):** a recipe is told apart as SFW or NSFW, and the rating
+  comes from Civitai: the images call's numeric `browsingLevel` (1 = PG, 2 = PG-13, 4 = R, 8 = X,
+  16 = XXX), judged by the app's existing `NsfwPolicy` (PG / PG-13 is SFW; R and up, and unrated,
+  is NSFW). The recipe view shows it as a badge ("SFW · PG-13", "NSFW · X") and the recipe keeps
+  it, so the Recipes tab (piece 2) can filter on it. *Open on Civitai* uses `civitai.red` for an
+  NSFW image, `civitai.com` otherwise. Researched 2026-10-27: the images call returns an NSFW image
+  only with `nsfw=X` (without it, or with `nsfw=true`, the item list is empty), and on this endpoint
+  `nsfwLevel` is a word (`"None"`, `"X"`), not the number the model endpoints send.
 - **Video posts:** the resource list works the same; generation data is usually absent, so the
   no-metadata state applies.
 - **Logging:** every step (link kind, API calls, file format found, how many weights matched, what
