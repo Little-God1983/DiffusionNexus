@@ -180,8 +180,8 @@ public sealed class CivitaiApiGateway : ICivitaiClient, ICivitaiApiCache
         return page ?? new CivitaiPagedResponse<CivitaiModel>();
     }
 
-    // Not cached: unused in production, and an images/tags/creators listing is a browse of a
-    // moving target rather than a record we would want to hold on to.
+    // Not cached: an images/tags/creators listing is a browse of a moving target rather than a
+    // record we would want to hold on to. The recipe view (#628) asks for one image per paste.
 
     /// <inheritdoc />
     public async Task<CivitaiPagedResponse<CivitaiModelImage>> GetImagesAsync(

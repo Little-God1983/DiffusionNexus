@@ -697,6 +697,36 @@ public class CivitaiClientTests
         http.Dispose();
     }
 
+    [Fact]
+    public async Task GetImagesAsync_SingleImagePayload_ReadsRatingAndResources()
+    {
+        // Copied from the live images?imageId=143992601&nsfw=X answer (2026-10-27): on this
+        // endpoint nsfwLevel is a word and the numeric rating is browsingLevel (#628).
+        const string payload = """
+            {"items":[{"id":143992601,"url":"https://image.civitai.com/x/original=true/a.jpeg","hash":"UHD7","width":1256,"height":1672,
+              "nsfwLevel":"None","type":"image","nsfw":false,"browsingLevel":1,"createdAt":"2026-09-27T15:09:52.341Z","postId":31277568,
+              "stats":{"likeCount":1},"meta":null,"username":"purplelady","baseModel":"Krea 2 Turbo",
+              "modelVersionIds":[3064297,3072964,3110766,3113770,3343424,3357558]}],"metadata":{}}
+            """;
+        var (client, handler) = CreateClient(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        });
+
+        using (client)
+        {
+            var page = await client.GetImagesAsync(new CivitaiImagesQuery { ImageId = 143992601, NsfwLevel = "X" });
+
+            var image = page.Items.Should().ContainSingle().Subject;
+            image.NsfwLevel.Should().BeNull("this endpoint sends a word, the rating is browsingLevel");
+            image.BrowsingLevel.Should().Be(1);
+            image.BaseModel.Should().Be("Krea 2 Turbo");
+            image.ModelVersionIds.Should().Equal(3064297, 3072964, 3110766, 3113770, 3343424, 3357558);
+        }
+
+        handler.Requests[0].RequestUri!.Query.Should().Be("?imageId=143992601&nsfw=X");
+    }
+
     private sealed class FakeHttpHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;

@@ -90,4 +90,20 @@ public sealed record CivitaiFileHashes
 
     [JsonPropertyName("BLAKE3")]
     public string? BLAKE3 { get; init; }
+
+    [JsonPropertyName("AutoV3")]
+    public string? AutoV3 { get; init; }
+
+    [JsonPropertyName("SHA256_12")]
+    public string? SHA256_12 { get; init; }
+
+    /// <summary>
+    /// Every hash value present, of every kind. Image tools write different kinds into their
+    /// metadata (A1111 AutoV2, others AutoV3 or SHA256_12), so a match tries them all (#628).
+    /// </summary>
+    public IEnumerable<string> AllValues()
+    {
+        string?[] values = [AutoV1, AutoV2, SHA256, CRC32, BLAKE3, AutoV3, SHA256_12];
+        return values.Where(v => !string.IsNullOrEmpty(v)).Select(v => v!);
+    }
 }

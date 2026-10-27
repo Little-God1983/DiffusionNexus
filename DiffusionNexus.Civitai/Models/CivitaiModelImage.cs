@@ -23,10 +23,21 @@ public sealed record CivitaiModelImage
     /// The API used to send the legacy string levels (None/Soft/Mature/X) but has
     /// returned this numeric scheme for a long time — the old
     /// <c>CivitaiNsfwLevel</c> enum typing silently swallowed every value.
-    /// Null when the API omitted the field.
+    /// Null when the API omitted the field — or sent a word: the <c>/images</c> endpoint still sends
+    /// <c>"None"</c>/<c>"X"</c> here and carries the bitmask in <see cref="BrowsingLevel"/> instead,
+    /// and a word must not fail the whole page (#628).
     /// </summary>
     [JsonPropertyName("nsfwLevel")]
+    [JsonConverter(typeof(TolerantNullableInt32JsonConverter))]
     public int? NsfwLevel { get; init; }
+
+    /// <summary>
+    /// Browsing-level bitmask (same scheme as <see cref="NsfwLevel"/>). Sent by the <c>/images</c>
+    /// endpoint, where it is the image's rating. Null elsewhere.
+    /// </summary>
+    [JsonPropertyName("browsingLevel")]
+    [JsonConverter(typeof(TolerantNullableInt32JsonConverter))]
+    public int? BrowsingLevel { get; init; }
 
     /// <summary>
     /// Image width in pixels. Nullable because Civitai sends <c>null</c> for some
@@ -71,6 +82,17 @@ public sealed record CivitaiModelImage
     /// <summary>Media type: "image" or "video".</summary>
     [JsonPropertyName("type")]
     public string? Type { get; init; }
+
+    /// <summary>Base model of the image (<c>/images</c> endpoint only).</summary>
+    [JsonPropertyName("baseModel")]
+    public string? BaseModel { get; init; }
+
+    /// <summary>
+    /// The model versions the image was made with — Civitai's "Resources used" (<c>/images</c>
+    /// endpoint only). Present even when <see cref="Meta"/> is null.
+    /// </summary>
+    [JsonPropertyName("modelVersionIds")]
+    public IReadOnlyList<int>? ModelVersionIds { get; init; }
 }
 
 /// <summary>

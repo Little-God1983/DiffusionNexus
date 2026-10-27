@@ -115,8 +115,18 @@ public sealed record CivitaiImagesQuery
     /// <summary>Filter by username.</summary>
     public string? Username { get; init; }
 
+    /// <summary>A single image by its id.</summary>
+    public long? ImageId { get; init; }
+
     /// <summary>NSFW filter.</summary>
     public bool? Nsfw { get; init; }
+
+    /// <summary>
+    /// NSFW filter by level word (None, Soft, Mature, X). Sent instead of <see cref="Nsfw"/> when set:
+    /// <c>nsfw=X</c> is the only value that returns an image of every rating — with <c>nsfw=true</c>
+    /// or no filter, Civitai answers an NSFW image's id with an empty list (#628).
+    /// </summary>
+    public string? NsfwLevel { get; init; }
 
     /// <summary>Sort order.</summary>
     public string? Sort { get; init; }
@@ -133,8 +143,10 @@ public sealed record CivitaiImagesQuery
         if (PostId.HasValue) parts.Add($"postId={PostId.Value}");
         if (ModelId.HasValue) parts.Add($"modelId={ModelId.Value}");
         if (ModelVersionId.HasValue) parts.Add($"modelVersionId={ModelVersionId.Value}");
+        if (ImageId.HasValue) parts.Add($"imageId={ImageId.Value}");
         if (!string.IsNullOrWhiteSpace(Username)) parts.Add($"username={Uri.EscapeDataString(Username)}");
-        if (Nsfw.HasValue) parts.Add($"nsfw={Nsfw.Value.ToString().ToLowerInvariant()}");
+        if (!string.IsNullOrWhiteSpace(NsfwLevel)) parts.Add($"nsfw={Uri.EscapeDataString(NsfwLevel)}");
+        else if (Nsfw.HasValue) parts.Add($"nsfw={Nsfw.Value.ToString().ToLowerInvariant()}");
         if (!string.IsNullOrWhiteSpace(Sort)) parts.Add($"sort={Uri.EscapeDataString(Sort)}");
         if (Period.HasValue) parts.Add($"period={Period.Value}");
 
