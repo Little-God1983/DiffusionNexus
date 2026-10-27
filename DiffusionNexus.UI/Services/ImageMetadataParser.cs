@@ -76,7 +76,7 @@ internal sealed partial class ImageMetadataParser
     /// Regex for LoRA references in A1111 prompt text: &lt;lora:name:strength&gt;
     /// </summary>
     [GeneratedRegex(@"<lora:([^:>]+):([^>]+)>", RegexOptions.IgnoreCase)]
-    private static partial Regex LoraTagRegex();
+    internal static partial Regex LoraTagRegex();
 
     /// <summary>
     /// Parses the plain-text "parameters" format used by Automatic1111 and Forge UI.
@@ -86,10 +86,11 @@ internal sealed partial class ImageMetadataParser
     /// Negative prompt: negative prompt text
     /// Steps: 28, Sampler: Euler a, Schedule type: Automatic, CFG scale: 7, Seed: 12345, Size: 512x768, Model: name, ...
     /// </code>
+    /// Internal so the Civitai recipe view (#628) reads the text exactly as the Distiller does.
     /// </summary>
-    private static ImageGenerationData ParseA1111Parameters(
+    internal static ImageGenerationData ParseA1111Parameters(
         string parameters,
-        string fileName,
+        string? fileName,
         int width,
         int height)
     {
@@ -99,33 +100,7 @@ internal sealed partial class ImageMetadataParser
         string? positivePrompt = null;
         string? negativePrompt = null;
 
-        // Find the last line (settings line) — it always starts with "Steps:"
-        var lastNewline = parameters.LastIndexOf('\n');
-        string settingsLine;
-        string promptBlock;
-
-        if (lastNewline >= 0 && parameters.AsSpan(lastNewline + 1).TrimStart().StartsWith("Steps:", StringComparison.OrdinalIgnoreCase))
-        {
-            settingsLine = parameters[(lastNewline + 1)..].Trim();
-            promptBlock = parameters[..lastNewline].Trim();
-        }
-        else
-        {
-            // Some images have no settings line — try to find "Steps:" anywhere
-            var stepsIdx = parameters.IndexOf("Steps:", StringComparison.OrdinalIgnoreCase);
-            if (stepsIdx >= 0)
-            {
-                // Walk back to the start of that line
-                var lineStart = parameters.LastIndexOf('\n', stepsIdx);
-                settingsLine = parameters[(lineStart >= 0 ? lineStart + 1 : stepsIdx)..].Trim();
-                promptBlock = lineStart >= 0 ? parameters[..lineStart].Trim() : "";
-            }
-            else
-            {
-                settingsLine = "";
-                promptBlock = parameters.Trim();
-            }
-        }
+        var (promptBlock, settingsLine) = SplitA1111(parameters);
 
         // Split prompt block into positive / negative
         var negIdx = promptBlock.IndexOf("Negative prompt:", StringComparison.OrdinalIgnoreCase);
@@ -199,6 +174,41 @@ internal sealed partial class ImageMetadataParser
             Denoise = denoise,
             HasData = hasData
         };
+    }
+
+    /// <summary>
+    /// The "Key: Value" settings of an A1111/Forge parameters text (Steps, Sampler, VAE, Lora hashes,
+    /// Hashes, …), keys case-insensitive. The recipe view (#628) reads the keys
+    /// <see cref="ImageGenerationData"/> has no field for.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> ReadA1111Settings(string parameters)
+        => ParseA1111SettingsLine(SplitA1111(parameters).SettingsLine);
+
+    /// <summary>
+    /// Splits a parameters text into the prompt block (positive + "Negative prompt:") and the
+    /// settings line, which starts with "Steps:".
+    /// </summary>
+    private static (string PromptBlock, string SettingsLine) SplitA1111(string parameters)
+    {
+        // Find the last line (settings line) — it always starts with "Steps:"
+        var lastNewline = parameters.LastIndexOf('\n');
+
+        if (lastNewline >= 0 && parameters.AsSpan(lastNewline + 1).TrimStart().StartsWith("Steps:", StringComparison.OrdinalIgnoreCase))
+        {
+            return (parameters[..lastNewline].Trim(), parameters[(lastNewline + 1)..].Trim());
+        }
+
+        // Some images have no settings line — try to find "Steps:" anywhere
+        var stepsIdx = parameters.IndexOf("Steps:", StringComparison.OrdinalIgnoreCase);
+        if (stepsIdx >= 0)
+        {
+            // Walk back to the start of that line
+            var lineStart = parameters.LastIndexOf('\n', stepsIdx);
+            return (lineStart >= 0 ? parameters[..lineStart].Trim() : "",
+                parameters[(lineStart >= 0 ? lineStart + 1 : stepsIdx)..].Trim());
+        }
+
+        return (parameters.Trim(), "");
     }
 
     /// <summary>
