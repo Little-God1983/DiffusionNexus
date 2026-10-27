@@ -26,6 +26,9 @@ public enum RecipeDataSource
 
     /// <summary>The A1111/Forge "parameters" text.</summary>
     SettingsText,
+
+    /// <summary>Civitai's own data for the image (read with the user's API key) — only when the file carries none.</summary>
+    CivitaiSite,
 }
 
 /// <summary>

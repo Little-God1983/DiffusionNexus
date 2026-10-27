@@ -45,6 +45,10 @@ public sealed class CivitaiImageRecipeService
     public async Task<CivitaiImageRecipeLoadResult> LoadAsync(long imageId, string? apiKey, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
+        var hasApiKey = !string.IsNullOrWhiteSpace(apiKey);
+        // Asked alongside the public call: it needs only the image id.
+        var siteTask = hasApiKey ? GetSiteDataAsync(imageId, apiKey!, ct) : Task.FromResult<CivitaiSiteData?>(null);
+
         var page = await _client.GetImagesAsync(new CivitaiImagesQuery { ImageId = imageId, NsfwLevel = "X" }, apiKey, ct);
         var image = page?.Items.FirstOrDefault(i => i.Id == imageId);
         if (image is null)
@@ -54,10 +58,14 @@ public sealed class CivitaiImageRecipeService
         }
 
         var rating = image.BrowsingLevel ?? image.NsfwLevel;
-        var versionIds = image.ModelVersionIds ?? [];
+        var publicIds = image.ModelVersionIds ?? [];
         _logger?.Info(LogCategory.Network, LogSource,
             $"Recipe: GET images?imageId={imageId} → {image.Type ?? "image"} by {image.Username ?? "unknown"}, rating {rating?.ToString() ?? "none"}, " +
-            $"{versionIds.Count} resource(s) ({sw.ElapsedMilliseconds} ms)");
+            $"{publicIds.Count} resource(s) ({sw.ElapsedMilliseconds} ms)");
+
+        var site = await siteTask;
+        // The public list first; the page's list adds what the public API left out (image 146878246: all six).
+        var versionIds = publicIds.Concat(site?.Resources.Select(r => r.VersionId) ?? []).Distinct().ToList();
 
         var resourcesTask = Task.WhenAll(versionIds.Select(id => LoadResourceAsync(id, apiKey, ct)));
         var originalTask = GetOriginalAsync(image, imageId, ct);
@@ -69,14 +77,52 @@ public sealed class CivitaiImageRecipeService
         var match = RecipeResourceMatcher.Match(versions, data.Loras);
         var withUses = resources
             .Select(r => match.ByVersionId.TryGetValue(r.VersionId, out var use) ? r with { Use = use } : r)
+            .Select(r => WithSiteWeight(r, site))
             .ToList();
+
+        // The file wins; Civitai's data only stands in when the file carries none.
+        if (data.Source == RecipeDataSource.None && site?.Meta is { } meta)
+        {
+            data = meta with { Format = data.Format, Loras = data.Loras, SavedBy = data.SavedBy };
+        }
 
         _logger?.Info(LogCategory.Network, LogSource,
             $"Recipe {imageId}: {data.Source} data, {data.Loras.Count} LoRA(s) in the file, {match.ByVersionId.Count} matched to a resource, " +
-            $"{match.Unlinked.Count} not linked on Civitai, {withUses.Count(r => r.LoadError is not null)} resource(s) not loaded ({sw.ElapsedMilliseconds} ms total)",
+            $"{match.Unlinked.Count} not linked on Civitai, {withUses.Count(r => r.LoadError is not null)} resource(s) not loaded, " +
+            $"{withUses.Count(r => r.Use?.Weight is not null)} weight(s) known ({sw.ElapsedMilliseconds} ms total)",
             data.ReadError);
 
-        return new(new CivitaiImageRecipe(imageId, image, rating, originalPath, data, withUses, match.Unlinked), null);
+        return new(new CivitaiImageRecipe(imageId, image, rating, originalPath, data, withUses, match.Unlinked, hasApiKey), null);
+    }
+
+    /// <summary>A weight Civitai's page knows, for a resource the file gave none.</summary>
+    private static CivitaiRecipeResource WithSiteWeight(CivitaiRecipeResource resource, CivitaiSiteData? site)
+    {
+        if (resource.Use?.Weight is not null) return resource;
+        var strength = site?.Resources.FirstOrDefault(s => s.VersionId == resource.VersionId)?.Strength;
+        if (strength is null) return resource;
+        var use = resource.Use ?? new RecipeLoraUse(resource.Model?.Name ?? $"Version {resource.VersionId}", null, null, null, resource.VersionId);
+        return resource with { Use = use with { Weight = strength } };
+    }
+
+    /// <summary>Never fails the recipe: the endpoint is Civitai's website's, not a public API.</summary>
+    private async Task<CivitaiSiteData?> GetSiteDataAsync(long imageId, string apiKey, CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            var site = await CivitaiSiteDataReader.GetAsync(_http, imageId, apiKey, ct);
+            _logger?.Info(LogCategory.Network, LogSource, site is null
+                ? $"Recipe {imageId}: Civitai's site data unavailable (refused or changed shape) ({sw.ElapsedMilliseconds} ms)"
+                : $"Recipe {imageId}: Civitai's site data — {site.Resources.Count} resource(s), {site.Resources.Count(r => r.Strength is not null)} weight(s), " +
+                  $"generation data {(site.Meta is null ? "none" : "yes")} ({sw.ElapsedMilliseconds} ms)");
+            return site;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: Civitai's site data failed: {ex.Message}");
+            return null;
+        }
     }
 
     private async Task<CivitaiRecipeResource> LoadResourceAsync(int versionId, string? apiKey, CancellationToken ct)

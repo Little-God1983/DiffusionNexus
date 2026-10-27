@@ -151,13 +151,34 @@ public sealed class CivitaiRecipeViewModelTests
     {
         // Image 146878246 (2026-10-28): the public API gives modelVersionIds = [] although the web page
         // lists six resources — Civitai serves that list only to its own site (image.getResources is 401).
-        var vm = Vm(Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png)));
+        var vm = Vm(Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png)) with { HasApiKey = true });
 
         vm.HasResources.Should().BeFalse();
-        vm.NoResourcesText.Should().Be("Civitai's public API lists no resources for this image. The image page on Civitai may still " +
-            "show some: Civitai gives that list only to its own website. Open the image on Civitai to see it.");
+        vm.NoResourcesText.Should().Be("Civitai lists no resources for this image.", "the recipe was loaded with an API key");
         vm.NoDataWarning.Should().Be("This image's file carries no generation data, and Civitai does not publish it either. " +
             "The prompt, settings and LoRA weights are unknown.");
+    }
+
+    [Fact]
+    public void NoResources_WithoutApiKey_PointsToTheKey()
+    {
+        var vm = Vm(Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png)) with { HasApiKey = false });
+
+        vm.NoResourcesText.Should().Be("Civitai's public API lists no resources for this image. With your Civitai API key " +
+            "(Settings) the app can read the list the image page shows. Until then, open the image on Civitai to see it.");
+    }
+
+    [Fact]
+    public void SiteData_HasItsSourceNote_AndMissingValuesAreUnknown()
+    {
+        var vm = Vm(Recipe([], data: new ImageRecipeData
+        {
+            Source = RecipeDataSource.CivitaiSite, SourceNote = "Read from Civitai's data for this image (the file itself carries none)",
+            Prompt = "a fox",
+        }));
+
+        vm.HasGenerationData.Should().BeTrue();
+        vm.NegativePromptText.Should().Be("unknown");
     }
 
     [Fact]

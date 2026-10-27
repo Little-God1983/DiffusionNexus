@@ -58,7 +58,8 @@ and the resource list still works:
 |---|---|---|
 | Which resources were used | `GET /api/v1/images?imageId=<id>` → `modelVersionIds` | For the example image: 6 ids, matching the page's "Resources used". **Not always filled:** image 146878246 (checked 2026-10-28) returns `[]` while its page lists 6 resources; the page reads them from `image.getResources`, which answers 401 without a login. The recipe view then says so instead of showing an empty list. |
 | Name, type, base model, size, files and hashes per resource | `GET /api/v1/model-versions/<id>` (existing `GetModelVersionAsync`) | One call per id, through the API gateway (rate limiting, 429). |
-| Prompt, settings, LoRA weights | **The original image file** (`url` from the images call, which carries `original=true`) | The public API returned `meta = null` for **all 79 images sampled** (newest, all-time top, and images made with one of the example LoRAs). The web page's own endpoint (`/api/trpc/image.getGenerationData`) answers `401 – please use the public API`. So the file is the only usable source. |
+| Prompt, settings, LoRA weights | **The original image file** (`url` from the images call, which carries `original=true`) | The public API returned `meta = null` for **all 79 images sampled** (newest, all-time top, and images made with one of the example LoRAs). The web page's own endpoint (`/api/trpc/image.getGenerationData`) answers `401 – please use the public API`. Anonymously, the file is the only usable source. |
+| With the user's Civitai API key: the page's resource list, each LoRA's weight, and the generation data Civitai holds | `/api/trpc/image.getGenerationData` with `Authorization: Bearer <key>` (**owner's decision, 2026-10-28**) | Answers 200 with the key (checked on 143992601, 146878246, 147042061). Gives `resources[]` (`modelVersionId`, `strength`) and `meta` (prompt, steps, CFG, sampler, seed). Used only when a key is stored, one call per paste: its resources fill what the public list leaves out (146878246: public `[]`, page 6), its strengths fill weights the file lacks, its `meta` stands in only when the file carries none. Not a public API: any refusal or change of shape leaves the recipe as the public API made it. |
 
 What the 79 original files carried:
 
@@ -143,7 +144,7 @@ LoRAs; the weights are visible wherever the file has them.
 
 Non-goals for #628: saving recipes (piece 2), building or opening a ComfyUI workflow (piece 3, #665;
 only its disabled button is in #628),
-scraping the Civitai web page or its internal endpoints, `/posts/<id>` links, downloading
+scraping the Civitai web page or its internal endpoints (except `image.getGenerationData` with the user's API key, see above), `/posts/<id>` links, downloading
 checkpoints.
 
 Anti-goal: a recipe view that **guesses**. When a value is not known it says so ("weight unknown",

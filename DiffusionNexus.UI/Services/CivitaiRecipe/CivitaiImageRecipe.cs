@@ -23,6 +23,7 @@ public sealed record CivitaiRecipeResource(
 /// <param name="Rating">Civitai's bitmask (1 PG, 2 PG-13, 4 R, 8 X, 16 XXX); null when unrated.</param>
 /// <param name="OriginalFilePath">The cached original file; null for a video or a failed download.</param>
 /// <param name="UnlinkedLoras">LoRAs the file names that match no listed resource (private or deleted).</param>
+/// <param name="HasApiKey">Whether Civitai's site data was asked for (it needs the user's API key).</param>
 public sealed record CivitaiImageRecipe(
     long ImageId,
     CivitaiModelImage Image,
@@ -30,7 +31,8 @@ public sealed record CivitaiImageRecipe(
     string? OriginalFilePath,
     ImageRecipeData Data,
     IReadOnlyList<CivitaiRecipeResource> Resources,
-    IReadOnlyList<RecipeLoraUse> UnlinkedLoras)
+    IReadOnlyList<RecipeLoraUse> UnlinkedLoras,
+    bool HasApiKey = false)
 {
     /// <summary>PG / PG-13. Unrated counts as NSFW, as everywhere in the app.</summary>
     public bool IsSafe => NsfwPolicy.IsSafe(Rating);

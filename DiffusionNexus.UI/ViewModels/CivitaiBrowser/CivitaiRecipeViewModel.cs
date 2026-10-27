@@ -27,11 +27,13 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
     /// <summary>
     /// The public API's <c>modelVersionIds</c> can be empty while the web page lists resources (image
-    /// 146878246, 2026-10-28): the page reads them from an endpoint that answers 401 without a login.
+    /// 146878246, 2026-10-28): the page reads them from an endpoint that needs the user's API key.
     /// </summary>
-    internal const string NoResourcesCopy =
-        "Civitai's public API lists no resources for this image. The image page on Civitai may still " +
-        "show some: Civitai gives that list only to its own website. Open the image on Civitai to see it.";
+    internal const string NoResourcesWithoutKeyCopy =
+        "Civitai's public API lists no resources for this image. With your Civitai API key (Settings) the app " +
+        "can read the list the image page shows. Until then, open the image on Civitai to see it.";
+
+    internal const string NoResourcesCopy = "Civitai lists no resources for this image.";
 
     private const string Unknown = "unknown";
 
@@ -137,7 +139,7 @@ public partial class CivitaiRecipeViewModel : ObservableObject
     /// <summary>False when Civitai's public API listed no resources and the file named no LoRA.</summary>
     public bool HasResources => Rows.Count > 0;
 
-    public string NoResourcesText => NoResourcesCopy;
+    public string NoResourcesText => Recipe.HasApiKey ? NoResourcesCopy : NoResourcesWithoutKeyCopy;
 
     /// <summary>A part of the file that was there but could not be read (shown under the warning).</summary>
     public string? ReadError { get; }

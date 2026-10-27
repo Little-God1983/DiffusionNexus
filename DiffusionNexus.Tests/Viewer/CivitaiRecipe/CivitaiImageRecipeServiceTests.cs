@@ -238,6 +238,108 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         recipe.UnlinkedLoras.Should().ContainSingle().Which.Name.Should().Be("private");
     }
 
+    #region Civitai site data (API key)
+
+    // Shape of image.getGenerationData as Civitai answered it on 2026-10-28 (trimmed).
+    private const string SiteData = """
+        {"result":{"data":{"json":{"type":"image","onSite":false,
+          "meta":{"prompt":"a fox in snow","negativePrompt":"blurry","cfgScale":5,"steps":20,"sampler":"Euler a","seed":7,"Model":"sdxl"},
+          "resources":[
+            {"imageId":20,"modelVersionId":100,"strength":0.7,"modelId":10,"modelName":"Foo","modelType":"LORA","versionName":"v1"},
+            {"imageId":20,"modelVersionId":900,"strength":null,"modelId":90,"modelName":"Ckpt","modelType":"Checkpoint","versionName":"v1"}]}}}}
+        """;
+
+    private static bool IsSiteCall(HttpRequestMessage r) => r.RequestUri!.AbsolutePath.StartsWith("/api/trpc/image.getGenerationData");
+
+    private static HttpResponseMessage Json(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
+
+    [Fact]
+    public async Task WithApiKey_SiteResourcesFillAnEmptyPublicList_WithTheirWeights()
+    {
+        // Image 146878246 (2026-10-28): public modelVersionIds = [], the page's list comes from this call.
+        HasImage(20);
+        HasLora(100, 10, "foo.safetensors");
+        HasLora(900, 90, "ckpt.safetensors");
+        _http.Respond = r => IsSiteCall(r) ? Json(SiteData) : Png();
+
+        var recipe = (await Service().LoadAsync(20, "secret-key", default)).Recipe!;
+
+        recipe.Resources.Select(r => r.VersionId).Should().Equal(100, 900);
+        recipe.Resources[0].Use!.Weight.Should().Be(0.7);
+        recipe.Resources[1].Use.Should().BeNull("a checkpoint has no strength");
+        var site = _http.Requests.Single(IsSiteCall);
+        site.Headers.Authorization!.ToString().Should().Be("Bearer secret-key");
+        Uri.UnescapeDataString(site.RequestUri!.Query).Should().Be("?input={\"json\":{\"id\":20}}");
+        recipe.HasApiKey.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task WithApiKey_SiteMetaFillsAFileWithoutData()
+    {
+        HasImage(21);
+        _http.Respond = r => IsSiteCall(r) ? Json(SiteData) : Png(("Software", "Topaz Gigapixel 1.3.0"));
+
+        var data = (await Service().LoadAsync(21, "k", default)).Recipe!.Data;
+
+        data.Source.Should().Be(RecipeDataSource.CivitaiSite);
+        data.SourceNote.Should().Be("Read from Civitai's data for this image (the file itself carries none)");
+        data.Prompt.Should().Be("a fox in snow");
+        data.NegativePrompt.Should().Be("blurry");
+        data.Steps.Should().Be(20);
+        data.Cfg.Should().Be(5);
+        data.Seed.Should().Be(7);
+        data.Sampler.Should().Be("Euler a");
+        data.Checkpoint.Should().Be("sdxl");
+    }
+
+    [Fact]
+    public async Task FileDataAndWeightsWinOverTheSite()
+    {
+        HasImage(22, 1, "image", 100);
+        HasLora(100, 10, "foo.safetensors");
+        _http.Respond = r => IsSiteCall(r) ? Json(SiteData) : Png(("parameters", "a cat <lora:foo:0.4>\nSteps: 30"));
+
+        var recipe = (await Service().LoadAsync(22, "k", default)).Recipe!;
+
+        recipe.Data.Source.Should().Be(RecipeDataSource.SettingsText);
+        recipe.Data.Prompt.Should().Be("a cat");
+        recipe.Resources.Single(r => r.VersionId == 100).Use!.Weight.Should().Be(0.4);
+    }
+
+    [Fact]
+    public async Task WithoutApiKey_TheSiteIsNotAsked()
+    {
+        HasImage(23);
+        _http.Respond = r => IsSiteCall(r) ? Json(SiteData) : Png();
+
+        var recipe = (await Service().LoadAsync(23, null, default)).Recipe!;
+
+        _http.Requests.Should().NotContain(r => IsSiteCall(r));
+        recipe.HasApiKey.Should().BeFalse();
+        recipe.Resources.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "{}")]
+    [InlineData(HttpStatusCode.OK, "<html>changed</html>")]
+    [InlineData(HttpStatusCode.OK, "{\"result\":{\"data\":{\"json\":{\"resources\":\"not a list\",\"meta\":7}}}}")]
+    public async Task SiteFailure_KeepsThePublicRecipe(HttpStatusCode status, string body)
+    {
+        HasImage(24, 1, "image", 100);
+        HasLora(100, 10, "foo.safetensors");
+        _http.Respond = r => IsSiteCall(r)
+            ? new HttpResponseMessage(status) { Content = new StringContent(body) }
+            : Png(("parameters", "a cat\nSteps: 30"));
+
+        var recipe = (await Service().LoadAsync(24, "k", default)).Recipe!;
+
+        recipe.Resources.Select(r => r.VersionId).Should().Equal(100);
+        recipe.Data.Prompt.Should().Be("a cat");
+    }
+
+    #endregion
+
     private static HttpResponseMessage Png(params (string Key, string Value)[] texts) =>
         new(HttpStatusCode.OK) { Content = new ByteArrayContent(RecipeTestFiles.PngWithText(texts)) };
 
@@ -248,9 +350,12 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
 
         public int Calls { get; private set; }
 
+        public List<HttpRequestMessage> Requests { get; } = [];
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
+            lock (Requests) Requests.Add(request);
             return Task.FromResult(Respond(request));
         }
     }
