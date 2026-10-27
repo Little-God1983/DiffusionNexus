@@ -137,13 +137,36 @@ public sealed class CivitaiRecipeViewModelTests
     [Fact]
     public void NoData_ShowsWarningAndUnknownLines()
     {
-        var vm = Vm(Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png)));
+        var vm = Vm(Recipe([Resource(Model(2, 20, "Foo"))], data: ImageRecipeData.Empty(RecipeFileFormat.Png)));
 
         vm.HasGenerationData.Should().BeFalse();
         vm.NoDataWarning.Should().Be("This image's file carries no generation data, and Civitai does not publish it either. " +
             "The prompt, settings and LoRA weights are unknown. The list of resources below still comes from Civitai, so the LoRAs can be downloaded.");
         vm.StepsCfgSeedLine.Should().Be("unknown · unknown · unknown");
         vm.SamplerLine.Should().Be("unknown");
+    }
+
+    [Fact]
+    public void NoResources_SaysCivitaiListsNone_AndTheWarningDoesNotPromiseAList()
+    {
+        // Image 146878246 (2026-10-28): the public API gives modelVersionIds = [] although the web page
+        // lists six resources — Civitai serves that list only to its own site (image.getResources is 401).
+        var vm = Vm(Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png)));
+
+        vm.HasResources.Should().BeFalse();
+        vm.NoResourcesText.Should().Be("Civitai's public API lists no resources for this image. The image page on Civitai may still " +
+            "show some: Civitai gives that list only to its own website. Open the image on Civitai to see it.");
+        vm.NoDataWarning.Should().Be("This image's file carries no generation data, and Civitai does not publish it either. " +
+            "The prompt, settings and LoRA weights are unknown.");
+    }
+
+    [Fact]
+    public void NoData_NamesTheProgramThatLastSavedTheFile()
+    {
+        var vm = Vm(Recipe([Resource(Model(2, 20, "Foo"))],
+            data: ImageRecipeData.Empty(RecipeFileFormat.Png) with { SavedBy = "Topaz Gigapixel 1.3.0 (Macintosh)" }));
+
+        vm.NoDataWarning.Should().Contain("The file was last saved by Topaz Gigapixel 1.3.0 (Macintosh), which may have removed it.");
     }
 
     [Fact]

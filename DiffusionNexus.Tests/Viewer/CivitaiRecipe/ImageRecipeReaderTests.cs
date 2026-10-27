@@ -155,6 +155,16 @@ public sealed class ImageRecipeReaderTests
     }
 
     [Fact]
+    public void NoData_KeepsTheSoftwareThatSavedTheFile()
+    {
+        // Image 146878246: a Topaz Gigapixel upscale; generation data gone, its Software chunk left.
+        var data = Read(("Software", "Topaz Gigapixel 1.3.0 (Macintosh)"));
+
+        data.Source.Should().Be(RecipeDataSource.None);
+        data.SavedBy.Should().Be("Topaz Gigapixel 1.3.0 (Macintosh)");
+    }
+
+    [Fact]
     public void NoTexts_GivesNone()
     {
         var data = Read();

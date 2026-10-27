@@ -54,6 +54,12 @@ public sealed record ImageRecipeData
     /// <summary>Set when something was there but could not be read (bad JSON, failed download).</summary>
     public string? ReadError { get; init; }
 
+    /// <summary>
+    /// The program that last saved the file, from its PNG <c>Software</c> text — says why a file has no
+    /// generation data (image 146878246: a Topaz Gigapixel upscale). Null when the file does not say.
+    /// </summary>
+    public string? SavedBy { get; init; }
+
     public static ImageRecipeData Empty(RecipeFileFormat format, string? readError = null) =>
         new() { Format = format, Source = RecipeDataSource.None, ReadError = readError };
 }

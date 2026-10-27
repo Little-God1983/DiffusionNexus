@@ -81,7 +81,12 @@ internal static class ImageRecipeReader
             : civitai.Loras.Count > 0 ? civitai.Loras
             : TagLoras(parameters).Select(l => l with { Hash = HashFor(l.Name, settings) }).ToList();
 
-        var data = new ImageRecipeData { Format = file.Format, Loras = loras, ReadError = readError };
+        file.Texts.TryGetValue("Software", out var savedBy);
+        var data = new ImageRecipeData
+        {
+            Format = file.Format, Loras = loras, ReadError = readError,
+            SavedBy = string.IsNullOrWhiteSpace(savedBy) ? null : savedBy.Trim(),
+        };
 
         if (trace is { HasData: true })
         {

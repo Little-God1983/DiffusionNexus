@@ -56,7 +56,7 @@ and the resource list still works:
 
 | Data | Source | Notes |
 |---|---|---|
-| Which resources were used | `GET /api/v1/images?imageId=<id>` → `modelVersionIds` | Always present. For the example image: 6 ids, matching the page's "Resources used". |
+| Which resources were used | `GET /api/v1/images?imageId=<id>` → `modelVersionIds` | For the example image: 6 ids, matching the page's "Resources used". **Not always filled:** image 146878246 (checked 2026-10-28) returns `[]` while its page lists 6 resources; the page reads them from `image.getResources`, which answers 401 without a login. The recipe view then says so instead of showing an empty list. |
 | Name, type, base model, size, files and hashes per resource | `GET /api/v1/model-versions/<id>` (existing `GetModelVersionAsync`) | One call per id, through the API gateway (rate limiting, 429). |
 | Prompt, settings, LoRA weights | **The original image file** (`url` from the images call, which carries `original=true`) | The public API returned `meta = null` for **all 79 images sampled** (newest, all-time top, and images made with one of the example LoRAs). The web page's own endpoint (`/api/trpc/image.getGenerationData`) answers `401 – please use the public API`. So the file is the only usable source. |
 

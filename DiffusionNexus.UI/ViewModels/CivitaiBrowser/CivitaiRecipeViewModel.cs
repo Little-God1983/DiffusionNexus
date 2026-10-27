@@ -20,7 +20,18 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 {
     internal const string NoDataText =
         "This image's file carries no generation data, and Civitai does not publish it either. " +
-        "The prompt, settings and LoRA weights are unknown. The list of resources below still comes from Civitai, so the LoRAs can be downloaded.";
+        "The prompt, settings and LoRA weights are unknown.";
+
+    private const string ResourcesStillListedText =
+        "The list of resources below still comes from Civitai, so the LoRAs can be downloaded.";
+
+    /// <summary>
+    /// The public API's <c>modelVersionIds</c> can be empty while the web page lists resources (image
+    /// 146878246, 2026-10-28): the page reads them from an endpoint that answers 401 without a login.
+    /// </summary>
+    internal const string NoResourcesCopy =
+        "Civitai's public API lists no resources for this image. The image page on Civitai may still " +
+        "show some: Civitai gives that list only to its own website. Open the image on Civitai to see it.";
 
     private const string Unknown = "unknown";
 
@@ -60,6 +71,12 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
         var data = recipe.Data;
         HasGenerationData = data.Source != RecipeDataSource.None;
+        NoDataWarning = string.Join(" ", new[]
+        {
+            NoDataText,
+            data.SavedBy is { } program ? $"The file was last saved by {program}, which may have removed it." : null,
+            Rows.Count > 0 ? ResourcesStillListedText : null,
+        }.Where(part => part is not null));
         SourceNote = data.SourceNote;
         ReadError = data.ReadError;
         // A parameters text without a prompt line has none; a graph whose prompt could not be traced
@@ -111,7 +128,16 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
     public bool HasGenerationData { get; }
     public string? SourceNote { get; }
-    public string NoDataWarning => NoDataText;
+    /// <summary>
+    /// What the file lacks, the program that last saved it when the file says, and — only when there is
+    /// one — that the resource list below still works.
+    /// </summary>
+    public string NoDataWarning { get; }
+
+    /// <summary>False when Civitai's public API listed no resources and the file named no LoRA.</summary>
+    public bool HasResources => Rows.Count > 0;
+
+    public string NoResourcesText => NoResourcesCopy;
 
     /// <summary>A part of the file that was there but could not be read (shown under the warning).</summary>
     public string? ReadError { get; }

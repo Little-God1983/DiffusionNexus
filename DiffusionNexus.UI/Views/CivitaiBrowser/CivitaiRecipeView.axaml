@@ -120,7 +120,11 @@
       </Grid>
 
       <TextBlock Text="Resources used" FontWeight="SemiBold" FontSize="14" Margin="0,8,0,0"/>
-      <Grid ColumnDefinitions="32,48,*,130,120,80" Opacity="0.6" Margin="0,0,0,2">
+      <TextBlock IsVisible="{Binding !HasResources}"
+                 Text="{Binding NoResourcesText}"
+                 TextWrapping="Wrap"
+                 Opacity="0.7"/>
+      <Grid ColumnDefinitions="32,48,*,130,120,80" Opacity="0.6" Margin="0,0,0,2" IsVisible="{Binding HasResources}">
         <TextBlock Grid.Column="2" Text="Name / version" FontSize="11"/>
         <TextBlock Grid.Column="3" Text="Base model" FontSize="11"/>
         <TextBlock Grid.Column="4" Text="Weight" FontSize="11"/>
