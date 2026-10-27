@@ -4,17 +4,18 @@ namespace DiffusionNexus.UI.Services.CivitaiBrowser;
 
 /// <summary>
 /// What the Browse Civitai search box holds when it is not a name search: a Civitai
-/// link or a bare number (issue #630). A link names a model and/or a version; a bare
-/// number is ambiguous — model ids and version ids are separate number ranges — so it
-/// is looked up as both.
+/// link or a bare number (issue #630). A link names a model and/or a version, or an image
+/// (<c>/images/N</c>, issue #628 — the recipe view); a bare number is ambiguous — model ids and
+/// version ids are separate number ranges — so it is looked up as both, and never as an image.
 /// </summary>
 public sealed record CivitaiLinkQuery
 {
-    private CivitaiLinkQuery(int? modelId, int? versionId, bool isBareId)
+    private CivitaiLinkQuery(int? modelId, int? versionId, bool isBareId, long? imageId = null)
     {
         ModelId = modelId;
         VersionId = versionId;
         IsBareId = isBareId;
+        ImageId = imageId;
     }
 
     /// <summary>Model id from <c>/models/N</c>, or the bare number.</summary>
@@ -26,8 +27,14 @@ public sealed record CivitaiLinkQuery
     /// <summary>True for a plain number: <see cref="ModelId"/> and <see cref="VersionId"/> are the same candidate.</summary>
     public bool IsBareId { get; }
 
-    /// <summary>A Civitai link that names neither a model nor a version (an image or user page).</summary>
-    public bool IsLinkWithoutIds => !IsBareId && ModelId is null && VersionId is null;
+    /// <summary>Image id from an <c>/images/N</c> link; never set for a bare number.</summary>
+    public long? ImageId { get; }
+
+    /// <summary>A link to one Civitai image: the browser shows its recipe instead of cards.</summary>
+    public bool IsImageLink => ImageId is not null;
+
+    /// <summary>A Civitai link that names no model, no version and no image (a user page, a post).</summary>
+    public bool IsLinkWithoutIds => !IsBareId && ModelId is null && VersionId is null && ImageId is null;
 
     /// <summary>
     /// Recognises a bare number or a link to any Civitai host (civitai.com, civitai.red, …),
@@ -52,6 +59,13 @@ public sealed record CivitaiLinkQuery
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)) return false;
         if (!IsCivitaiHost(uri.Host)) return false;
 
+        var image = Regex.Match(uri.AbsolutePath, @"^/images/(\d+)/?$", RegexOptions.IgnoreCase);
+        if (image.Success && long.TryParse(image.Groups[1].Value, out var imageId) && imageId > 0)
+        {
+            query = new CivitaiLinkQuery(null, null, isBareId: false, imageId);
+            return true;
+        }
+
         CivitaiUrlParser.TryResolveIds(trimmed, out var modelId, out var versionId, out _);
         query = new CivitaiLinkQuery(modelId, versionId, isBareId: false);
         return true;
@@ -70,5 +84,6 @@ public sealed record CivitaiLinkQuery
 
     public override string ToString() =>
         IsBareId ? $"ID {ModelId}"
+        : IsImageLink ? $"image link (image {ImageId})"
         : $"link (model {ModelId?.ToString() ?? "-"}, version {VersionId?.ToString() ?? "-"})";
 }

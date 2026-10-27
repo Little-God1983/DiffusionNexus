@@ -60,9 +60,46 @@ public sealed class CivitaiLinkQueryTests
     [Fact]
     public void CivitaiLinkWithoutIds_IsALinkThatNamesNoModel()
     {
-        CivitaiLinkQuery.TryParse("https://civitai.com/images/123456", out var q).Should().BeTrue();
+        // An image link used to be one of these; since #628 it is its own kind (below).
+        CivitaiLinkQuery.TryParse("https://civitai.com/user/purplelady", out var q).Should().BeTrue();
 
         q!.IsLinkWithoutIds.Should().BeTrue();
+        q.IsImageLink.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("https://civitai.red/images/143992601")]
+    [InlineData("civitai.com/images/143992601")]
+    [InlineData("https://www.civitai.com/images/143992601?postId=31277568")]
+    [InlineData("https://civitai.com/images/143992601/")]
+    public void ImageLink_YieldsTheImageId(string text)
+    {
+        CivitaiLinkQuery.TryParse(text, out var q).Should().BeTrue();
+
+        q!.ImageId.Should().Be(143992601);
+        q.IsImageLink.Should().BeTrue();
+        q.IsLinkWithoutIds.Should().BeFalse();
+        q.ModelId.Should().BeNull();
+        q.VersionId.Should().BeNull();
+        q.ToString().Should().Be("image link (image 143992601)");
+    }
+
+    [Fact]
+    public void BareNumber_IsNeverAnImage()
+    {
+        CivitaiLinkQuery.TryParse("143992601", out var q).Should().BeTrue();
+
+        q!.IsImageLink.Should().BeFalse();
+        q.ImageId.Should().BeNull();
+    }
+
+    [Fact]
+    public void ImageLinkWithZeroId_IsALinkWithoutIds()
+    {
+        CivitaiLinkQuery.TryParse("https://civitai.com/images/0", out var q).Should().BeTrue();
+
+        q!.IsImageLink.Should().BeFalse();
+        q.IsLinkWithoutIds.Should().BeTrue();
     }
 
     [Theory]

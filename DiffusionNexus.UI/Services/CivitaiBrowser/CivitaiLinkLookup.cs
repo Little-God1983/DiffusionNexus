@@ -48,7 +48,9 @@ public sealed class CivitaiLinkLookup
     {
         _logger?.Info(LogCategory.Network, LogSource, $"Link lookup: {query}");
 
-        if (query.IsLinkWithoutIds)
+        // An image link is the recipe view's (#628); the browser never sends one here, but answer
+        // it as a link without a model rather than reading a version id that is not there.
+        if (query.IsLinkWithoutIds || query.IsImageLink)
         {
             return new([], "That Civitai link does not point at a model. Paste a model page link (…/models/123).");
         }
