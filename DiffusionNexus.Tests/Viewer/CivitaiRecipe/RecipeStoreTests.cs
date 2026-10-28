@@ -79,6 +79,26 @@ public sealed class RecipeStoreTests : IDisposable
     }
 
     [Fact]
+    public void Save_Existing_MergesAndUpdatesPastedAt()
+    {
+        _store.Save(Recipe(5), PastedAt);
+        _store.SetKept([5], true);
+        var first = _store.TryLoad(5)!.Saved!.Recipe;
+        var transient = first with
+        {
+            Resources = [new CivitaiRecipeResource(100, null, null, null, "429 Too Many Requests"), first.Resources[1]],
+        };
+
+        _store.Save(transient, PastedAt.AddHours(1));
+
+        var saved = _store.TryLoad(5)!.Saved!;
+        saved.Recipe.Resources[0].Model.Should().NotBeNull();
+        saved.Recipe.Resources[0].LoadError.Should().BeNull();
+        saved.PastedAt.Should().Be(PastedAt.AddHours(1));
+        saved.Kept.Should().BeTrue();
+    }
+
+    [Fact]
     public void Update_KeepsPastedAtAndKept()
     {
         _store.Save(Recipe(5), PastedAt);

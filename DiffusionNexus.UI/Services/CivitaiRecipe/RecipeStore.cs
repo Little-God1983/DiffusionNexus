@@ -55,14 +55,15 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         return Directory.Exists(folder) ? Read(imageId, folder) : null;
     }
 
-    /// <summary>Writes the recipe; an existing entry for the image keeps its Kept flag.</summary>
+    /// <summary>Writes the recipe; an existing entry for the image keeps its Kept flag and is merged by <see cref="RecipeMerge"/>.</summary>
     public StoredRecipe Save(CivitaiImageRecipe recipe, DateTimeOffset pastedAt)
     {
         StoredRecipe stored;
         lock (_gate)
         {
-            var kept = TryLoad(recipe.ImageId)?.Saved?.Kept ?? false;
-            stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, pastedAt, kept, recipe));
+            var existing = TryLoad(recipe.ImageId)?.Saved;
+            if (existing is not null) recipe = RecipeMerge.Refresh(existing.Recipe, recipe);
+            stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, pastedAt, existing?.Kept ?? false, recipe));
         }
         logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} saved ({stored.SizeBytes / 1024} KB).");
         Changed?.Invoke(this, EventArgs.Empty);
