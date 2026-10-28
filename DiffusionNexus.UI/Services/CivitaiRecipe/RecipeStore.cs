@@ -12,7 +12,9 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
 {
     private const string LogSource = "CivitaiRecipe";
     private const string JsonName = "recipe.json";
-    private const string OriginalStem = "original";
+
+    /// <summary>The only names an original is stored under; an in-flight temp download never matches.</summary>
+    internal static readonly string[] OriginalNames = ["original.png", "original.jpg", "original.webp"];
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -84,18 +86,24 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
     public void SetKept(IEnumerable<long> imageIds, bool kept)
     {
         var changed = 0;
-        lock (_gate)
+        try
         {
-            foreach (var id in imageIds)
+            lock (_gate)
             {
-                var saved = TryLoad(id)?.Saved;
-                if (saved is null || saved.Kept == kept) continue;
-                Write(saved with { Kept = kept });
-                changed++;
+                foreach (var id in imageIds)
+                {
+                    var saved = TryLoad(id)?.Saved;
+                    if (saved is null || saved.Kept == kept) continue;
+                    Write(saved with { Kept = kept });
+                    changed++;
+                }
             }
         }
-        logger?.Info(LogCategory.FileSystem, LogSource, $"{changed} recipe(s) {(kept ? "kept" : "moved back to History")}.");
-        Changed?.Invoke(this, EventArgs.Empty);
+        finally
+        {
+            logger?.Info(LogCategory.FileSystem, LogSource, $"{changed} recipe(s) {(kept ? "kept" : "moved back to History")}.");
+            if (changed > 0) Changed?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>Deletes the folders; returns the bytes freed (0 for a folder that is not there).</summary>
@@ -130,11 +138,20 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
     private StoredRecipe Write(SavedRecipe saved)
     {
         var folder = FolderFor(saved.Recipe.ImageId);
-        Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, JsonName);
         var temp = path + ".tmp";
-        File.WriteAllText(temp, JsonSerializer.Serialize(saved, JsonOptions));
-        File.Move(temp, path, overwrite: true);
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(temp, JsonSerializer.Serialize(saved, JsonOptions));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            try { File.Delete(temp); } catch { /* best-effort */ }
+            logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {saved.Recipe.ImageId} could not be written: {ex.Message}", path);
+            throw;
+        }
         return Read(saved.Recipe.ImageId, folder);
     }
 
@@ -148,7 +165,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
             var saved = JsonSerializer.Deserialize<SavedRecipe>(File.ReadAllText(path), JsonOptions);
             if (saved?.Recipe is null) return new(imageId, folder, null, size, $"{JsonName} holds no recipe.");
             // The folder is the truth: a moved profile must still find its original.
-            var original = Directory.EnumerateFiles(folder, OriginalStem + ".*").FirstOrDefault();
+            var original = OriginalNames.Select(n => Path.Combine(folder, n)).FirstOrDefault(File.Exists);
             return new(imageId, folder, saved with { Recipe = saved.Recipe with { OriginalFilePath = original } }, size, null);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
@@ -160,7 +177,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
 
     private static long SizeOf(string folder)
     {
-        try { return new DirectoryInfo(folder).EnumerateFiles().Sum(f => f.Length); }
+        try { return new DirectoryInfo(folder).EnumerateFiles().Where(f => f.Extension != ".download").Sum(f => f.Length); }
         catch (IOException) { return 0; }
     }
 }

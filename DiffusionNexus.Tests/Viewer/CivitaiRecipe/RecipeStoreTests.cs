@@ -1,6 +1,8 @@
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.UI.Services.CivitaiRecipe;
+using DiffusionNexus.Domain.Services.UnifiedLogging;
 using FluentAssertions;
+using Moq;
 
 namespace DiffusionNexus.Tests.Viewer.CivitaiRecipe;
 
@@ -199,6 +201,64 @@ public sealed class RecipeStoreTests : IDisposable
         _store.Delete([8]);
 
         raised.Should().Be(3);
+    }
+
+    [Fact]
+    public void InFlightDownload_IsNotTheOriginal_NorCounted()
+    {
+        var original = WriteFile(6, "original.png", length: 100);
+        WriteFile(6, "original.0123abcd.download", length: 5000);
+        _store.Save(Recipe(6), PastedAt);
+
+        var stored = _store.TryLoad(6)!;
+
+        stored.Saved!.Recipe.OriginalFilePath.Should().Be(original);
+        stored.SizeBytes.Should().Be(100 + new FileInfo(Path.Combine(_store.FolderFor(6), "recipe.json")).Length);
+    }
+
+    [Fact]
+    public void InFlightDownloadOnly_MeansNoOriginal()
+    {
+        WriteFile(6, "original.0123abcd.download");
+        _store.Save(Recipe(6), PastedAt);
+
+        _store.TryLoad(6)!.Saved!.Recipe.OriginalFilePath.Should().BeNull();
+    }
+
+    [Fact]
+    public void Save_WhenTheJsonIsLocked_LogsAndThrows_AndLeavesNoTempFile()
+    {
+        var logger = new Mock<IUnifiedLogger>();
+        var store = new RecipeStore(_root, logger.Object);
+        store.Save(Recipe(9), PastedAt);
+        var json = Path.Combine(store.FolderFor(9), "recipe.json");
+
+        using (new FileStream(json, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var act = () => store.Save(Recipe(9), PastedAt);
+            act.Should().Throw<Exception>().Which.Should().Match<Exception>(e => e is IOException || e is UnauthorizedAccessException);
+        }
+
+        logger.Verify(l => l.Warn(LogCategory.FileSystem, "CivitaiRecipe", It.Is<string>(m => m.Contains("Recipe 9 could not be written")), It.IsAny<string?>()), Times.Once);
+        Directory.GetFiles(store.FolderFor(9)).Should().NotContain(f => f.EndsWith(".tmp"));
+    }
+
+    [Fact]
+    public void SetKept_WhenALaterOneFails_StillRaisesChanged_ForTheOnesWritten()
+    {
+        _store.Save(Recipe(1), PastedAt);
+        _store.Save(Recipe(2), PastedAt);
+        var raised = 0;
+        _store.Changed += (_, _) => raised++;
+
+        using (new FileStream(Path.Combine(_store.FolderFor(2), "recipe.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var act = () => _store.SetKept([1, 2], true);
+            act.Should().Throw<Exception>().Which.Should().Match<Exception>(e => e is IOException || e is UnauthorizedAccessException);
+        }
+
+        raised.Should().Be(1);
+        _store.TryLoad(1)!.Saved!.Kept.Should().BeTrue();
     }
 
     [Fact]

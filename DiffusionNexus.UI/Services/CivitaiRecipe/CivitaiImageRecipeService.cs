@@ -24,9 +24,6 @@ public sealed class CivitaiImageRecipeService
     internal const string NoLongerAvailableText = "model no longer available on Civitai";
     internal const string NotAnImageText = "The file Civitai served for this image is not a PNG, JPEG or WebP image.";
 
-    /// <summary>Only files the recipe can read are cached, so a cache hit is always one of these.</summary>
-    private static readonly string[] CachedExtensions = [".png", ".jpg", ".webp"];
-
     private readonly ICivitaiClient _client;
     private readonly HttpClient _http;
     private readonly string _cacheDirectory;
@@ -164,9 +161,8 @@ public sealed class CivitaiImageRecipeService
         }
 
         var folder = RecipeStore.FolderPath(_cacheDirectory, imageId);
-        Directory.CreateDirectory(folder);
-        var cached = CachedExtensions
-            .Select(ext => Path.Combine(folder, "original" + ext))
+        var cached = RecipeStore.OriginalNames
+            .Select(name => Path.Combine(folder, name))
             .FirstOrDefault(f => File.Exists(f) && new FileInfo(f).Length > 0);
         if (cached is not null)
         {
@@ -182,6 +178,7 @@ public sealed class CivitaiImageRecipeService
             using (var response = await _http.GetAsync(image.Url, HttpCompletionOption.ResponseHeadersRead, ct))
             {
                 response.EnsureSuccessStatusCode();
+                Directory.CreateDirectory(folder);
                 await using var file = File.Create(temp);
                 await response.Content.CopyToAsync(file, ct);
             }
@@ -199,6 +196,7 @@ public sealed class CivitaiImageRecipeService
                 // An HTML challenge page or an image type nothing here reads: cached, it would answer every
                 // later paste of this image with the same nothing.
                 TryDelete(temp);
+                TryRemoveIfEmpty(folder);
                 _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: the original file is {format}, not an image the recipe can read — not cached.", image.Url);
                 return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, NotAnImageText));
             }
@@ -221,12 +219,14 @@ public sealed class CivitaiImageRecipeService
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             TryDelete(temp);
+            TryRemoveIfEmpty(folder);
             _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: original file download failed: {ex.Message}", image.Url);
             return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, $"Could not download the original image file ({ex.Message})."));
         }
         catch
         {
             TryDelete(temp);
+            TryRemoveIfEmpty(folder);
             throw;
         }
     }
@@ -237,6 +237,12 @@ public sealed class CivitaiImageRecipeService
         using var stream = File.OpenRead(path);
         var read = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
         return RecipeFileReader.DetectFormat(head[..read]);
+    }
+
+    /// <summary>A folder without a file would be listed as a broken recipe; a non-empty one is left alone.</summary>
+    private static void TryRemoveIfEmpty(string folder)
+    {
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: false); } catch { /* not empty, or in use */ }
     }
 
     private static void TryDelete(string path)

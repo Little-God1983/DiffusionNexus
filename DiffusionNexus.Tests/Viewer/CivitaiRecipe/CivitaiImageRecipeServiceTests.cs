@@ -178,6 +178,45 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(30);
+        _http.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError);
+
+        await Service().LoadAsync(30, null, default);
+
+        Directory.Exists(Path.Combine(_cache, "30")).Should().BeFalse("an empty folder would be listed as a broken recipe");
+    }
+
+    [Fact]
+    public async Task NonImageDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(31);
+        _http.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html>challenge</html>") };
+
+        await Service().LoadAsync(31, null, default);
+
+        Directory.Exists(Path.Combine(_cache, "31")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CancelledDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(32);
+        using var cts = new CancellationTokenSource();
+        _http.Respond = _ =>
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        };
+
+        var act = () => Service().LoadAsync(32, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        Directory.Exists(Path.Combine(_cache, "32")).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task UnknownFormat_IsNotCached_AndIsSaidPlainly()
     {
         HasImage(15, 1, "image", 100);
