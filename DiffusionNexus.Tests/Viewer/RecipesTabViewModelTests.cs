@@ -746,4 +746,30 @@ public sealed class RecipesTabViewModelTests : IDisposable
         _dialogs.Verify(d => d.ShowConfirmAsync("Clear history", It.Is<string>(m =>
             m.EndsWith(". Kept recipes and 1 unreadable recipe are not touched."))), Times.Once);
     }
+
+    [Fact]
+    public void EmptyText_NamesWhyTheListIsEmpty()
+    {
+        var vm = Create();
+        vm.EmptyText.Should().Be("No recipes yet. Paste a Civitai image link into the search box in Browse Civitai and it lands here.");
+
+        vm.ShowKeptCommand.Execute(null);
+        vm.EmptyText.Should().Be("Nothing kept yet. Use ★ on a recipe to keep it.");
+    }
+
+    [Fact]
+    public void EmptyText_WhenFiltersHideEverything_NamesTheHiddenOnes()
+    {
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")]), Today);
+        Save(Recipe(2, rating: 8), Today);
+        _installed = new CivitaiInstalledIndex([100], []);
+        var vm = Create();
+        vm.EmptyText.Should().BeNull();
+
+        vm.StatusFilter = RecipeStatusFilter.Missing;
+
+        vm.EmptyText.Should().Be("No recipe matches. 2 recipes hidden by filters in History");
+        vm.StatusFilter = RecipeStatusFilter.All;
+        vm.EmptyText.Should().BeNull();
+    }
 }

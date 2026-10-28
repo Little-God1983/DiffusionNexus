@@ -92,7 +92,7 @@
                   </ItemsControl.ItemsPanel>
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:RecipeCardViewModel">
-                      <Border Margin="0,0,8,8" Width="128" Background="#1E1E1E" CornerRadius="6"
+                      <Border Margin="0,0,8,8" Width="168" Background="#1E1E1E" CornerRadius="6"
                               BorderThickness="2" ClipToBounds="True"
                               BorderBrush="{Binding IsSelected, Converter={x:Static cb:RecipesTabView.SelectionBorder}}"
                               Cursor="Hand"
@@ -128,12 +128,13 @@
                           </Grid>
                           <StackPanel Margin="8,6,8,8" Spacing="1">
                             <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
-                                       TextTrimming="CharacterEllipsis"/>
+                                       TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}"/>
                             <TextBlock Text="{Binding Byline}" FontSize="11" Opacity="0.6"
-                                       TextTrimming="CharacterEllipsis"/>
+                                       TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Byline}"/>
                             <TextBlock Classes="status" Classes.ready="{Binding IsReady}" Classes.missing="{Binding IsMissing}"
                                        Text="{Binding StatusText, StringFormat='● {0}'}"
-                                       IsVisible="{Binding !IsBroken}" TextTrimming="CharacterEllipsis"/>
+                                       IsVisible="{Binding !IsBroken}" TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding StatusText}"/>
                           </StackPanel>
                         </StackPanel>
                       </Border>
@@ -145,6 +146,16 @@
           </ItemsControl.ItemTemplate>
         </ItemsControl>
       </ScrollViewer>
+
+      <TextBlock Text="{Binding EmptyText}" Opacity="0.6" TextWrapping="Wrap" MaxWidth="480"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center">
+        <TextBlock.IsVisible>
+          <MultiBinding Converter="{x:Static BoolConverters.And}">
+            <Binding Path="!IsRecipeOpen"/>
+            <Binding Path="EmptyText" Converter="{x:Static StringConverters.IsNotNullOrEmpty}"/>
+          </MultiBinding>
+        </TextBlock.IsVisible>
+      </TextBlock>
 
       <!-- An opened recipe: DataContext and IsVisible sit on different elements, as in the browser. -->
       <Panel IsVisible="{Binding IsRecipeOpen}">

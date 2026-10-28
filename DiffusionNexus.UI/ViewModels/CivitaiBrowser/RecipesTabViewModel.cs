@@ -43,6 +43,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _counterText = "";
     [ObservableProperty] private string? _hiddenText;
+    [ObservableProperty] private string? _emptyText;
     [ObservableProperty] private int _selectedCount;
     [ObservableProperty] private string _queueButtonText = "Queue missing LoRAs (0)";
     [ObservableProperty] private string _queueTooltip = QueueTooltipDefault;
@@ -162,6 +163,13 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
             : hiddenByOthers == 0
                 ? $"{(hidden == 1 ? "1 NSFW recipe" : $"{hidden} NSFW recipes")} hidden in {where}"
                 : $"{Recipes(hidden)} hidden by filters in {where}";
+
+        EmptyText = _visible.Count > 0 ? null
+            : list.Count == 0
+                ? (IsKeptView
+                    ? "Nothing kept yet. Use ★ on a recipe to keep it."
+                    : "No recipes yet. Paste a Civitai image link into the search box in Browse Civitai and it lands here.")
+                : $"No recipe matches. {HiddenText}";
 
         _quiet = true;
         foreach (var card in _cards.Where(c => c.IsSelected && !_visible.Contains(c))) card.IsSelected = false;
