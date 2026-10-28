@@ -154,7 +154,7 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         var first = (await Service().LoadAsync(12, null, default)).Recipe!;
         var second = (await Service().LoadAsync(12, null, default)).Recipe!;
 
-        first.OriginalFilePath.Should().Be(Path.Combine(_cache, "12.png"));
+        first.OriginalFilePath.Should().Be(Path.Combine(_cache, "12", "original.png"));
         second.OriginalFilePath.Should().Be(first.OriginalFilePath);
         second.Data.Prompt.Should().Be("a cat");
         _http.Calls.Should().Be(1);
@@ -174,7 +174,7 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         recipe.Data.Source.Should().Be(RecipeDataSource.None);
         recipe.OriginalFilePath.Should().BeNull();
         recipe.Resources.Should().HaveCount(2);
-        Directory.GetFiles(_cache).Should().BeEmpty("a failed download leaves nothing half-written in the cache");
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty("a failed download leaves nothing half-written in the cache");
     }
 
     [Fact]
@@ -190,7 +190,7 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         recipe.Data.ReadError.Should().Be("The file Civitai served for this image is not a PNG, JPEG or WebP image.");
         recipe.OriginalFilePath.Should().BeNull();
         recipe.Resources.Should().ContainSingle();
-        Directory.GetFiles(_cache).Should().BeEmpty();
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty();
         _http.Calls.Should().Be(2, "nothing was cached, so the next paste tries again");
     }
 

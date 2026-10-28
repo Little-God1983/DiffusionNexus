@@ -452,7 +452,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         ApplyClientSideFilters();
 
         var service = RecipeServiceFactory?.Invoke()
-            ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, CivitaiImageRecipeService.DefaultCacheDirectory, _logger));
+            ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, RecipeStore.DefaultRoot, _logger));
         if (service is null)
         {
             IsBusy = false;

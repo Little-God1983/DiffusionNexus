@@ -20,6 +20,8 @@ public sealed class CivitaiImageRecipeService
 {
     private const string LogSource = "CivitaiRecipe";
 
+    internal const string NotFoundText = "not found on Civitai";
+    internal const string NoLongerAvailableText = "model no longer available on Civitai";
     internal const string NotAnImageText = "The file Civitai served for this image is not a PNG, JPEG or WebP image.";
 
     /// <summary>Only files the recipe can read are cached, so a cache hit is always one of these.</summary>
@@ -37,10 +39,6 @@ public sealed class CivitaiImageRecipeService
         _cacheDirectory = cacheDirectory;
         _logger = logger;
     }
-
-    public static string DefaultCacheDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiffusionNexus", "Cache", "civitai-recipes");
 
     public async Task<CivitaiImageRecipeLoadResult> LoadAsync(long imageId, string? apiKey, CancellationToken ct)
     {
@@ -134,7 +132,7 @@ public sealed class CivitaiImageRecipeService
             if (version is null)
             {
                 _logger?.Info(LogCategory.Network, LogSource, $"Recipe: GET model-versions/{versionId} → not found ({sw.ElapsedMilliseconds} ms)");
-                return new(versionId, null, null, null, "not found on Civitai");
+                return new(versionId, null, null, null, NotFoundText);
             }
 
             var model = await _client.GetModelAsync(version.ModelId, apiKey, ct);
@@ -142,7 +140,7 @@ public sealed class CivitaiImageRecipeService
             {
                 _logger?.Info(LogCategory.Network, LogSource,
                     $"Recipe: version {versionId} → model {version.ModelId} not available (mode {model?.Mode?.ToString() ?? "missing"}, {sw.ElapsedMilliseconds} ms)");
-                return new(versionId, version, null, null, "model no longer available on Civitai");
+                return new(versionId, version, null, null, NoLongerAvailableText);
             }
 
             _logger?.Info(LogCategory.Network, LogSource,
@@ -165,9 +163,10 @@ public sealed class CivitaiImageRecipeService
             return (null, ImageRecipeData.Empty(RecipeFileFormat.Video));
         }
 
-        Directory.CreateDirectory(_cacheDirectory);
+        var folder = RecipeStore.FolderPath(_cacheDirectory, imageId);
+        Directory.CreateDirectory(folder);
         var cached = CachedExtensions
-            .Select(ext => Path.Combine(_cacheDirectory, imageId + ext))
+            .Select(ext => Path.Combine(folder, "original" + ext))
             .FirstOrDefault(f => File.Exists(f) && new FileInfo(f).Length > 0);
         if (cached is not null)
         {
@@ -176,7 +175,7 @@ public sealed class CivitaiImageRecipeService
         }
 
         // A name of its own: paste + Enter starts two loads of the same image at once.
-        var temp = Path.Combine(_cacheDirectory, $"{imageId}.{Guid.NewGuid():N}.download");
+        var temp = Path.Combine(folder, $"original.{Guid.NewGuid():N}.download");
         var sw = Stopwatch.StartNew();
         try
         {
@@ -204,7 +203,7 @@ public sealed class CivitaiImageRecipeService
                 return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, NotAnImageText));
             }
 
-            var path = Path.Combine(_cacheDirectory, imageId + extension);
+            var path = Path.Combine(folder, "original" + extension);
             try
             {
                 // No overwrite: replacing a file another load is reading fails with "access denied".
