@@ -153,6 +153,102 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         card.PreviewUrl.Should().Contain("nsfw-preview", "flipping Show NSFW does not reach the recipe");
     }
 
+    private RecipeStore Store => _store ??= new RecipeStore(Path.Combine(_dir, "recipes"), null);
+    private RecipeStore? _store;
+
+    private CivitaiBrowserViewModel CreateWithStore(RecipeStore? store = null)
+    {
+        var (vm, _) = Create();
+        vm.RecipeStore = store ?? Store;
+        return vm;
+    }
+
+    [Fact]
+    public async Task Paste_SavesTheRecipe()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        var saved = Store.LoadAll().Should().ContainSingle().Which;
+        saved.ImageId.Should().Be(7);
+        saved.Saved!.Recipe.Resources.Should().ContainSingle().Which.VersionId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task PasteTwice_OneSavedRecipe()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+        await Search(vm, "https://civitai.com/images/7");
+
+        Store.LoadAll().Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task RefreshFails_ShowsSavedCopy_NotMoved()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        await Search(CreateWithStore(), "https://civitai.com/images/7");
+        var pastedAt = Store.TryLoad(7)!.Saved!.PastedAt;
+
+        _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModelImage>());
+        var vm = CreateWithStore();
+        await Search(vm, "https://civitai.com/images/7");
+
+        vm.Recipe.Should().NotBeNull();
+        vm.LinkLookupNotice.Should().StartWith("Could not refresh this recipe from Civitai (").And.EndWith("). Showing the saved copy.");
+        Store.TryLoad(7)!.Saved!.PastedAt.Should().Be(pastedAt);
+    }
+
+    [Fact]
+    public async Task NoStore_NoSavedCopyToShow()
+    {
+        _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModelImage>());
+        var (vm, _) = Create();
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        vm.Recipe.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SaveFails_StillShowsTheRecipe_AndSaysSo()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var blocker = Path.Combine(_dir, "not-a-folder");
+        File.WriteAllText(blocker, "x");
+        var vm = CreateWithStore(new RecipeStore(blocker, null));
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        vm.Recipe.Should().NotBeNull();
+        vm.StatusMessage.Should().StartWith("The recipe could not be saved: ");
+    }
+
+    [Fact]
+    public void InstalledIndexChanged_Raised_WhenTheIndexIsReplaced()
+    {
+        var (vm, _) = Create();
+        var raised = 0;
+        ((IRecipeHost)vm).InstalledIndexChanged += (_, _) => raised++;
+        var index = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+
+        vm.ApplyInstalledSnapshot(index);
+
+        raised.Should().Be(1);
+        ((IRecipeHost)vm).Installed.Should().BeSameAs(index);
+    }
+
     private sealed class PngHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
