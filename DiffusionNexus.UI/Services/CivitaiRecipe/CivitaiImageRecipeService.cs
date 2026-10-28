@@ -90,6 +90,38 @@ public sealed class CivitaiImageRecipeService
         return new(new CivitaiImageRecipe(imageId, image, rating, originalPath, data, withUses, match.Unlinked, hasApiKey), null);
     }
 
+    /// <summary>
+    /// Loads again the resources of a saved recipe that failed for a reason that may pass (429, timeout).
+    /// "Not found" answers are final and are not asked twice. Returns <paramref name="recipe"/> itself when
+    /// nothing needed a retry.
+    /// </summary>
+    public async Task<CivitaiImageRecipe> RetryFailedResourcesAsync(CivitaiImageRecipe recipe, string? apiKey, CancellationToken ct)
+    {
+        var failed = recipe.Resources.Where(r => r.LoadError is not null && !r.IsDefiniteFailure).Select(r => r.VersionId).ToList();
+        if (failed.Count == 0) return recipe;
+
+        var reloaded = (await Task.WhenAll(failed.Select(id => LoadResourceAsync(id, apiKey, ct)))).ToDictionary(r => r.VersionId);
+
+        // Only the entries no resource holds yet can be claimed by a newly loaded version.
+        var taken = recipe.Resources.Where(r => r.Use is not null && !reloaded.ContainsKey(r.VersionId)).Select(r => r.Use!).ToList();
+        var free = recipe.Data.Loras.Where(u => !taken.Contains(u)).ToList();
+        var loaded = reloaded.Values.Where(r => r.Version is not null).Select(r => r.Version!).ToList();
+        var match = RecipeResourceMatcher.Match(loaded, free);
+
+        var resources = recipe.Resources.Select(old =>
+        {
+            if (!reloaded.TryGetValue(old.VersionId, out var now)) return old;
+            if (now.LoadError is not null) return old with { LoadError = now.LoadError, Version = now.Version ?? old.Version };
+            return match.ByVersionId.TryGetValue(old.VersionId, out var use) ? now with { Use = use } : now with { Use = old.Use };
+        }).ToList();
+        var claimed = match.ByVersionId.Values.ToList();
+        var unlinked = recipe.UnlinkedLoras.Where(u => !claimed.Contains(u)).ToList();
+
+        _logger?.Info(LogCategory.Network, LogSource,
+            $"Recipe {recipe.ImageId}: retried {failed.Count} resource(s), {resources.Count(r => failed.Contains(r.VersionId) && r.LoadError is null)} loaded now.");
+        return recipe with { Resources = resources, UnlinkedLoras = unlinked };
+    }
+
     /// <summary>A weight Civitai's page knows, for a resource the file gave none.</summary>
     private static CivitaiRecipeResource WithSiteWeight(CivitaiRecipeResource resource, CivitaiSiteData? site)
     {

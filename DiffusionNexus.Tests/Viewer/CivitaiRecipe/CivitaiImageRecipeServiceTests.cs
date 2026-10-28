@@ -62,6 +62,36 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RetryFailedResources_SkipsDefiniteFailures()
+    {
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            ImageRecipeData.Empty(RecipeFileFormat.Png),
+            [new CivitaiRecipeResource(100, null, null, null, CivitaiImageRecipeService.NotFoundText)], []);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        result.Should().BeSameAs(recipe);
+        _client.Verify(c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RetryFailedResources_ReloadsTransientOnes_AndLinksTheUnlinkedLora()
+    {
+        HasLora(100, 1, "style.safetensors");
+        var use = new RecipeLoraUse("style", null, 0.8, null);
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            new ImageRecipeData { Format = RecipeFileFormat.Png, Source = RecipeDataSource.SettingsText, Loras = [use] },
+            [new CivitaiRecipeResource(100, null, null, null, "429")], [use]);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        result.Resources.Single().LoadError.Should().BeNull();
+        result.Resources.Single().Model.Should().NotBeNull();
+        result.Resources.Single().Use.Should().Be(use);
+        result.UnlinkedLoras.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task UnknownImage_GivesMessageAndNoRecipe()
     {
         _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

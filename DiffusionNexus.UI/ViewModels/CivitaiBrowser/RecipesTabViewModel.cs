@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
 using DiffusionNexus.Domain.Services.UnifiedLogging;
+using DiffusionNexus.Installer.SDK.Shared.Services;
 using DiffusionNexus.UI.Helpers;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiRecipe;
@@ -48,14 +49,23 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     private const string QueueTooltipDefault = "Queues the LoRAs these recipes are missing, each once.";
 
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsRecipeOpen))] private CivitaiRecipeViewModel? _openRecipe;
+
+    private readonly IClipboardService? _clipboard;
+    private readonly Func<CivitaiImageRecipeService>? _retryService;
+    private readonly HashSet<long> _retried = [];
+    private CancellationTokenSource? _openCts;
+
     public RecipesTabViewModel(RecipeStore store, IRecipeHost host, IDialogService? dialogs, IUnifiedLogger? logger,
-        Func<DateTime>? nowLocal = null)
+        Func<DateTime>? nowLocal = null, IClipboardService? clipboard = null, Func<CivitaiImageRecipeService>? retryService = null)
     {
         _store = store;
         _host = host;
         _dialogs = dialogs;
         _logger = logger;
         _nowLocal = nowLocal ?? (() => DateTime.Now);
+        _clipboard = clipboard;
+        _retryService = retryService;
 
         Reload();
         _store.Changed += OnStoreChanged;
@@ -69,6 +79,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _openCts?.Cancel();
         _store.Changed -= OnStoreChanged;
         _host.InstalledIndexChanged -= OnInstalledChanged;
     }
@@ -84,10 +95,10 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     {
         var installed = _host.Installed;
         foreach (var card in _cards) card.ApplyStatus(installed);
+        OpenRecipe?.ApplyInstalledIndex(installed);
         Rebuild();
     }
 
-    partial void OnIsKeptViewChanged(bool value) => Rebuild();
     partial void OnStatusFilterChanged(RecipeStatusFilter value) => Rebuild();
     partial void OnSearchTextChanged(string value) => Rebuild();
 
@@ -242,6 +253,101 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
             result.TryAdd(versionId, resource.Model);
         }
         return result;
+    }
+
+    #endregion
+
+    #region Opening a recipe
+
+    public bool IsRecipeOpen => OpenRecipe is not null;
+
+    public string BackText => IsKeptView ? "← Back to Kept" : "← Back to History";
+
+    partial void OnIsKeptViewChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BackText));
+        Rebuild();
+    }
+
+    /// <summary>The background retry of the last opened recipe; tests await it.</summary>
+    internal Task? RetryTask { get; private set; }
+
+    private CivitaiRecipeViewModel BuildRecipeView(CivitaiImageRecipe recipe) =>
+        new(recipe, _host.Installed, _host.CreateRecipeCard, _clipboard)
+        {
+            UrlOpener = _host.OpenUrl,
+            EnqueueHandler = pairs =>
+            {
+                _logger?.Info(LogCategory.Download, LogSource,
+                    $"Recipe {recipe.ImageId}: {pairs.Count} LoRA(s) sent to the queue: {string.Join(", ", pairs.Select(p => $"\"{p.Result.Name}\" {p.Pick.Name}"))}");
+                _ = _host.EnqueueRecipeAsync(pairs);
+            },
+        };
+
+    [RelayCommand]
+    private void Open(RecipeCardViewModel? card)
+    {
+        if (card is null || card.IsBroken || card.Stored.Saved is not { } saved) return;
+
+        _openCts?.Cancel();
+        _openCts = new CancellationTokenSource();
+        var ct = _openCts.Token;
+        var view = BuildRecipeView(saved.Recipe);
+        OpenRecipe = view;
+        _logger?.Info(LogCategory.General, LogSource, $"Recipe {card.ImageId} opened in the Recipes tab.");
+        _ = ShowPreviewAsync(view, ct);
+
+        var transient = saved.Recipe.Resources.Any(r => r.LoadError is not null && !r.IsDefiniteFailure);
+        RetryTask = transient && _retryService is not null && _retried.Add(card.ImageId)
+            ? RetryAsync(saved.Recipe, ct)
+            : null;
+    }
+
+    private async Task ShowPreviewAsync(CivitaiRecipeViewModel view, CancellationToken ct)
+    {
+        try { await view.LoadPreviewAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.Warn(LogCategory.General, LogSource, $"Recipe {view.Recipe.ImageId}: the preview could not be loaded: {ex.Message}");
+        }
+        catch (OperationCanceledException) { /* the user went Back */ }
+    }
+
+    [RelayCommand]
+    private void Back()
+    {
+        if (OpenRecipe is not { } open) return;
+        _openCts?.Cancel();
+        OpenRecipe = null;
+        _logger?.Info(LogCategory.General, LogSource, $"Recipe {open.Recipe.ImageId}: back to {(IsKeptView ? "Kept" : "History")}.");
+    }
+
+    /// <summary>Loads the transiently failed resources again, once per recipe per session, and saves what loads.</summary>
+    private async Task RetryAsync(CivitaiImageRecipe recipe, CancellationToken ct)
+    {
+        try
+        {
+            var apiKey = await _host.GetApiKeyAsync();
+            // The save may finish after the user left; only the rebuild of the view depends on ct.
+            var result = await _retryService!().RetryFailedResourcesAsync(recipe, apiKey, CancellationToken.None);
+            if (ReferenceEquals(result, recipe)) return;
+
+            await Task.Run(() => _store.Update(result));
+            var loaded = recipe.Resources.Count(r => r.LoadError is not null) - result.Resources.Count(r => r.LoadError is not null);
+            _logger?.Info(LogCategory.Network, LogSource, $"Recipe {recipe.ImageId}: retry saved, {loaded} resource(s) loaded now.");
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ct.IsCancellationRequested || OpenRecipe?.Recipe.ImageId != recipe.ImageId) return;
+                var view = BuildRecipeView(result);
+                OpenRecipe = view;
+                _ = ShowPreviewAsync(view, ct);
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {recipe.ImageId}: retrying the failed resources failed: {ex.Message}", ex.ToString());
+        }
     }
 
     #endregion

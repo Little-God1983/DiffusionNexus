@@ -533,6 +533,105 @@ public sealed class RecipesTabViewModelTests : IDisposable
     }
 
     [Fact]
+    public void Open_ShowsRecipeInsideTheTab_BackRestoresListAndSelection()
+    {
+        Save(Recipe(1), Today);
+        Save(Recipe(2), Today);
+        Save(Recipe(3), Today, kept: true);
+        var vm = Create();
+        vm.SearchText = "cat";
+        vm.Select(Card(vm, 2), false, false);
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+
+        vm.IsRecipeOpen.Should().BeTrue();
+        vm.OpenRecipe!.Recipe.ImageId.Should().Be(1);
+        vm.BackText.Should().Be("← Back to History");
+
+        vm.BackCommand.Execute(null);
+
+        vm.IsRecipeOpen.Should().BeFalse();
+        vm.OpenRecipe.Should().BeNull();
+        vm.SearchText.Should().Be("cat");
+        vm.IsKeptView.Should().BeFalse();
+        Card(vm, 2).IsSelected.Should().BeTrue();
+        vm.SelectedCount.Should().Be(1);
+
+        vm.ShowKeptCommand.Execute(null);
+        vm.OpenCommand.Execute(Card(vm, 3));
+        vm.BackText.Should().Be("← Back to Kept");
+        _logger.Verify(l => l.Info(It.IsAny<LogCategory>(), "CivitaiRecipe", It.Is<string>(m => m.Contains("opened")), It.IsAny<string?>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void Open_BrokenCard_DoesNothing()
+    {
+        Broken(9);
+        var vm = Create();
+
+        vm.OpenCommand.Execute(Card(vm, 9));
+
+        vm.IsRecipeOpen.Should().BeFalse();
+        vm.OpenRecipe.Should().BeNull();
+    }
+
+    [Fact]
+    public void Open_InstalledIndexChanged_ReachesTheOpenRecipe()
+    {
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")]), Today);
+        var vm = Create();
+        vm.OpenCommand.Execute(Card(vm, 1));
+        var row = vm.OpenRecipe!.Rows.Single();
+
+        _installed = new CivitaiInstalledIndex([100], []);
+        _host.Raise(h => h.InstalledIndexChanged += null, EventArgs.Empty);
+
+        row.IsInstalled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Open_RetriesFailedResourceOnce_AndSaves()
+    {
+        var client = new Mock<DiffusionNexus.Civitai.ICivitaiClient>();
+        var version = new CivitaiModelVersion { Id = 100, ModelId = 10, Name = "v1", BaseModel = "Krea 2" };
+        client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(version);
+        client.Setup(c => c.GetModelAsync(10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel { Id = 10, Name = "Foo", Type = CivitaiModelType.LORA, ModelVersions = [version] });
+        _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
+        Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429 Too Many Requests")]), Today);
+        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null));
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        await vm.RetryTask!;
+        Pump();
+
+        _store.TryLoad(1)!.Saved!.Recipe.Resources.Single().LoadError.Should().BeNull();
+        vm.OpenRecipe!.Recipe.Resources.Single().Model.Should().NotBeNull();
+
+        vm.BackCommand.Execute(null);
+        vm.OpenCommand.Execute(Card(vm, 1));
+        if (vm.RetryTask is { } again) await again;
+
+        client.Verify(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Open_RetryThatThrows_IsLoggedNotRaised()
+    {
+        _host.Setup(h => h.GetApiKeyAsync()).ThrowsAsync(new InvalidOperationException("boom"));
+        Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429")]), Today);
+        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(new Mock<DiffusionNexus.Civitai.ICivitaiClient>().Object, new HttpClient(), _root, null));
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        await vm.RetryTask!;
+
+        vm.IsRecipeOpen.Should().BeTrue();
+        _logger.Verify(l => l.Warn(It.IsAny<LogCategory>(), "CivitaiRecipe", It.Is<string>(m => m.Contains("boom")), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ClearHistory_OneBroken_UsesSingular()
     {
         Save(Recipe(1), Today);
