@@ -14,16 +14,7 @@
         <Grid>
           <Image Source="{Binding PreviewImage}"
                  Stretch="Uniform"
-                 MaxHeight="420"
-                 IsVisible="{Binding !IsPreviewHidden}"/>
-          <TextBlock IsVisible="{Binding IsPreviewHidden}"
-                     Text="NSFW image hidden. Turn on Show NSFW content to see it."
-                     TextWrapping="Wrap"
-                     TextAlignment="Center"
-                     Opacity="0.6"
-                     Margin="16"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"/>
+                 MaxHeight="420"/>
           <StackPanel IsVisible="{Binding IsVideo}"
                       HorizontalAlignment="Center"
                       VerticalAlignment="Center"

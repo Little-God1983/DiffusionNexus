@@ -45,11 +45,11 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
                 Items = [new CivitaiModelImage { Id = id, Url = "https://image.civitai.com/x/a.jpeg", Type = "image", BrowsingLevel = rating, ModelVersionIds = versionIds }],
             });
 
-    private void HasLora(int versionId, int modelId)
+    private void HasLora(int versionId, int modelId, params CivitaiModelImage[] images)
     {
         var version = new CivitaiModelVersion
         {
-            Id = versionId, ModelId = modelId, Name = "v1", BaseModel = "SDXL 1.0",
+            Id = versionId, ModelId = modelId, Name = "v1", BaseModel = "SDXL 1.0", Images = images,
             DownloadUrl = $"https://civitai.com/api/download/models/{versionId}",
             Files = [new CivitaiModelFile { Name = $"lora{versionId}.safetensors", Primary = true, SizeKB = 100, DownloadUrl = $"https://civitai.com/api/download/models/{versionId}" }],
         };
@@ -132,17 +132,25 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         queue.Jobs.Select(j => j.VersionId).Should().BeEquivalentTo([100, 200]);
     }
 
+    /// <summary>A pasted link ignores every filter, Show NSFW included (owner, 2026-10-28): nothing is hidden or swapped.</summary>
     [Fact]
-    public async Task ShowNsfwToggle_ReachesTheRecipe()
+    public async Task ShowNsfwOff_HidesNothingInTheRecipe()
     {
-        HasImage(7, 8);
+        HasImage(7, 8, 100);
+        HasLora(100, 10, new CivitaiModelImage { Url = "https://image.civitai.com/x/nsfw-preview.jpeg", NsfwLevel = 8, Type = "image" },
+            new CivitaiModelImage { Url = "https://image.civitai.com/x/sfw-preview.jpeg", NsfwLevel = 1, Type = "image" });
         var (vm, _) = Create();
-        await Search(vm, "https://civitai.red/images/7");
-        vm.Recipe!.IsPreviewHidden.Should().BeFalse("Show NSFW is on by default");
-
         vm.ShowNsfw = false;
 
-        vm.Recipe.IsPreviewHidden.Should().BeTrue();
+        await Search(vm, "https://civitai.red/images/7");
+
+        var card = vm.Recipe!.Rows.Single().Card!;
+        card.PreviewUrl.Should().Contain("nsfw-preview", "the resource keeps its own first preview");
+
+        vm.ShowNsfw = true;
+        vm.ShowNsfw = false;
+
+        card.PreviewUrl.Should().Contain("nsfw-preview", "flipping Show NSFW does not reach the recipe");
     }
 
     private sealed class PngHandler : HttpMessageHandler

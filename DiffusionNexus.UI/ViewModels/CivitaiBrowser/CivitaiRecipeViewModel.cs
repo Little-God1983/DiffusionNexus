@@ -14,7 +14,8 @@ namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 /// <summary>
 /// The recipe view the Browse Civitai tab shows for a pasted image link (#628): the image with
 /// Civitai's SFW/NSFW rating, its generation data, and the resources it was made with — the LoRAs
-/// that are not installed ticked, ready for one "Add N to queue".
+/// that are not installed ticked, ready for one "Add N to queue". A pasted link ignores every
+/// browser filter, Show NSFW included (owner, 2026-10-28): nothing in the recipe is hidden.
 /// </summary>
 public partial class CivitaiRecipeViewModel : ObservableObject
 {
@@ -38,7 +39,6 @@ public partial class CivitaiRecipeViewModel : ObservableObject
     private const string Unknown = "unknown";
 
     private readonly IClipboardService? _clipboard;
-    private bool _showNsfw;
 
     /// <summary>The ticks the last default pass set; while the user has not changed them, a newer installed snapshot redoes them.</summary>
     private HashSet<CivitaiRecipeResourceRowViewModel> _defaultTicks = [];
@@ -46,13 +46,11 @@ public partial class CivitaiRecipeViewModel : ObservableObject
     public CivitaiRecipeViewModel(
         CivitaiImageRecipe recipe,
         CivitaiInstalledIndex installed,
-        bool showNsfw,
         Func<CivitaiModel, CivitaiResultViewModel> cardFactory,
         IClipboardService? clipboard = null)
     {
         Recipe = recipe;
         _clipboard = clipboard;
-        _showNsfw = showNsfw;
 
         foreach (var resource in recipe.Resources)
         {
@@ -106,7 +104,6 @@ public partial class CivitaiRecipeViewModel : ObservableObject
             row.PropertyChanged += OnRowPropertyChanged;
         }
         ApplyDefaultTicks();
-        UpdatePreviewVisibility();
     }
 
     public CivitaiImageRecipe Recipe { get; }
@@ -121,9 +118,6 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
     public bool IsSafe { get; }
     public bool IsVideo { get; }
-
-    [ObservableProperty]
-    private bool _isPreviewHidden;
 
     [ObservableProperty]
     private Bitmap? _previewImage;
@@ -189,13 +183,6 @@ public partial class CivitaiRecipeViewModel : ObservableObject
         if (untouched) ApplyDefaultTicks();
     }
 
-    public void ApplyNsfwPreference(bool showNsfw)
-    {
-        _showNsfw = showNsfw;
-        UpdatePreviewVisibility();
-        foreach (var row in Rows) row.Card?.ApplyNsfwPreference(showNsfw);
-    }
-
     /// <summary>Decodes the cached original as the preview. Nothing to do for a video or a failed download.</summary>
     public async Task LoadPreviewAsync(CancellationToken ct)
     {
@@ -251,8 +238,6 @@ public partial class CivitaiRecipeViewModel : ObservableObject
         foreach (var row in Rows) row.IsSelected = row.CanTick && !row.IsInstalled;
         _defaultTicks = Rows.Where(r => r.IsSelected).ToHashSet();
     }
-
-    private void UpdatePreviewVisibility() => IsPreviewHidden = !_showNsfw && !IsSafe;
 
     private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

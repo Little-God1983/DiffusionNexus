@@ -474,7 +474,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (ct.IsCancellationRequested || result.Recipe is null) return;
-                var recipe = new CivitaiRecipeViewModel(result.Recipe, _installed, ShowNsfw, CreateResultCard, AvaloniaClipboardService.Instance)
+                var recipe = new CivitaiRecipeViewModel(result.Recipe, _installed, CreateRecipeCard, AvaloniaClipboardService.Instance)
                 {
                     UrlOpener = OpenUrl,
                 };
@@ -1074,11 +1074,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     partial void OnShowInstalledChanged(bool value) => OnShowFilterChanged();
     partial void OnShowEarlyAccessChanged(bool value) => OnShowFilterChanged();
     partial void OnShowPaywalledChanged(bool value) => OnShowFilterChanged();
-    partial void OnShowNsfwChanged(bool value)
-    {
-        Recipe?.ApplyNsfwPreference(value);
-        OnShowFilterChanged();
-    }
+    partial void OnShowNsfwChanged(bool value) => OnShowFilterChanged();
 
     private void OnShowFilterChanged()
     {
@@ -1281,9 +1277,14 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// results are a small minority (spec RC5). Sharing this factory between both loops means
     /// they can no longer drift apart the same way again.
     /// </summary>
-    private CivitaiResultViewModel CreateResultCard(CivitaiModel model)
+    private CivitaiResultViewModel CreateResultCard(CivitaiModel model) => CreateCard(model, ShowNsfw);
+
+    /// <summary>A recipe's resource card: a pasted link hides nothing, so its preview ignores Show NSFW (#628).</summary>
+    private CivitaiResultViewModel CreateRecipeCard(CivitaiModel model) => CreateCard(model, showNsfwPreviews: true);
+
+    private CivitaiResultViewModel CreateCard(CivitaiModel model, bool showNsfwPreviews)
     {
-        var vm = new CivitaiResultViewModel(model, ShowNsfw)
+        var vm = new CivitaiResultViewModel(model, showNsfwPreviews)
         {
             EnqueueAllVersionsHandler = EnqueueAllVersionsForCard,
             EnqueueSelectedVersionsHandler = EnqueueSelectedVersionsForCard

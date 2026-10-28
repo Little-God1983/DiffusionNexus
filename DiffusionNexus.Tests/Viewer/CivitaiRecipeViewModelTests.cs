@@ -39,8 +39,8 @@ public sealed class CivitaiRecipeViewModelTests
         data ?? new ImageRecipeData { Source = RecipeDataSource.SettingsText, SourceNote = "Read from the original image file (settings text)", Steps = 8, Cfg = 1, Seed = 832350830334358, Sampler = "exponential/ddim_beta57" },
         resources, unlinked ?? []);
 
-    private static CivitaiRecipeViewModel Vm(CivitaiImageRecipe recipe, CivitaiInstalledIndex? installed = null, bool showNsfw = true) =>
-        new(recipe, installed ?? CivitaiInstalledIndex.Empty, showNsfw, m => new CivitaiResultViewModel(m, true));
+    private static CivitaiRecipeViewModel Vm(CivitaiImageRecipe recipe, CivitaiInstalledIndex? installed = null) =>
+        new(recipe, installed ?? CivitaiInstalledIndex.Empty, m => new CivitaiResultViewModel(m, true));
 
     private static CivitaiImageRecipe ExampleShape() => Recipe(
     [
@@ -105,27 +105,21 @@ public sealed class CivitaiRecipeViewModelTests
     }
 
     [Fact]
-    public void NsfwRecipe_HidesPreviewUntilShowNsfw()
+    public void NsfwRecipe_Badge()
     {
-        var vm = Vm(Recipe([], rating: 8), showNsfw: false);
+        var vm = Vm(Recipe([], rating: 8));
 
         vm.IsSafe.Should().BeFalse();
         vm.RatingBadge.Should().Be("NSFW · X");
-        vm.IsPreviewHidden.Should().BeTrue();
-
-        vm.ApplyNsfwPreference(true);
-
-        vm.IsPreviewHidden.Should().BeFalse();
     }
 
     [Fact]
-    public void SfwRecipe_BadgeAndPreviewShown()
+    public void SfwRecipe_Badge()
     {
-        var vm = Vm(Recipe([], rating: 1), showNsfw: false);
+        var vm = Vm(Recipe([], rating: 1));
 
         vm.IsSafe.Should().BeTrue();
         vm.RatingBadge.Should().Be("SFW · PG");
-        vm.IsPreviewHidden.Should().BeFalse();
     }
 
     [Fact]

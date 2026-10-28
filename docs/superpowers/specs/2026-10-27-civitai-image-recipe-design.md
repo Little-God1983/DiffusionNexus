@@ -12,7 +12,7 @@ settings, LoRA weights) shown in one place.
 ![The three pieces](assets/2026-10-27-civitai-image-recipe/0-overview.png)
 
 The idea grew into three pieces during the design session. **This issue delivers piece 1 only.**
-Pieces 2 and 3 are separate issues so that each is delivered by one PR.
+Pieces 2 (#667) and 3 (#665) are separate issues so that each is delivered by one PR.
 
 ## Piece 1 (this issue): image link → recipe view
 
@@ -123,12 +123,13 @@ with `"on": false` must be ignored.
 - **Early access / paywalled:** same badges and the same queue/waitlist behaviour as a card.
 - **Download:** the ticked versions go into `CivitaiDownloadQueue` with the usual destination options.
   Joining a running batch follows #604. One failed or gated LoRA does not stop the rest.
-- **NSFW:** the image preview follows the same NSFW display rule as the browser's cards.
+- **NSFW (owner, 2026-10-28):** a pasted link ignores every browser filter, Show NSFW included, so
+  the recipe view hides nothing: the image and the resources' previews are shown whatever the toggle says.
 - **SFW / NSFW recipe (owner, 2026-10-27):** a recipe is told apart as SFW or NSFW, and the rating
   comes from Civitai: the images call's numeric `browsingLevel` (1 = PG, 2 = PG-13, 4 = R, 8 = X,
   16 = XXX), judged by the app's existing `NsfwPolicy` (PG / PG-13 is SFW; R and up, and unrated,
   is NSFW). The recipe view shows it as a badge ("SFW · PG-13", "NSFW · X") and the recipe keeps
-  it, so the Recipes tab (piece 2) can filter on it. *Open on Civitai* uses `civitai.red` for an
+  it, so the Recipes tab (piece 2, #667) can filter on it. *Open on Civitai* uses `civitai.red` for an
   NSFW image, `civitai.com` otherwise. Researched 2026-10-27: the images call returns an NSFW image
   only with `nsfw=X` (without it, or with `nsfw=true`, the item list is empty), and on this endpoint
   `nsfwLevel` is a word (`"None"`, `"X"`), not the number the model endpoints send.
@@ -142,7 +143,7 @@ with `"on": false` must be ignored.
 Goals: one paste shows the image, its generation data and its LoRAs; one click queues the missing
 LoRAs; the weights are visible wherever the file has them.
 
-Non-goals for #628: saving recipes (piece 2), building or opening a ComfyUI workflow (piece 3, #665;
+Non-goals for #628: saving recipes (piece 2, #667), building or opening a ComfyUI workflow (piece 3, #665;
 only its disabled button is in #628),
 scraping the Civitai web page or its internal endpoints (except `image.getGenerationData` with the user's API key, see above), `/posts/<id>` links, downloading
 checkpoints.
@@ -154,11 +155,12 @@ Anti-goal: a recipe view that **guesses**. When a value is not known it says so 
 
 Exact control layout and sizes in Avalonia, how the recipe view swaps with the card grid, caching
 of the downloaded original (it is also the preview), test seams, and where the new parsing code
-sits (UI vs Service project).
+sits (UI vs Service project). The cache of originals is never pruned (owner, 2026-10-28: they are
+images of a few MB at most); #667 shows its size instead.
 
 ## Follow-ups (separate issues)
 
-### Piece 2: Recipes tab
+### Piece 2: Recipes tab (#667)
 
 ![Recipes tab](assets/2026-10-27-civitai-image-recipe/3-recipes-tab.png)
 
@@ -167,7 +169,8 @@ LoRA Sorter), not the Generation Gallery. Every pasted image lands in **History*
 moves it to **Kept** (this is what "mark which images to archive" means). Each card shows whether
 the recipe's LoRAs are all on disk (*Ready*) or how many are missing. Clicking a card opens the
 recipe view. My call: a recipe is a folder on disk (image file + JSON with everything the recipe
-view showed), not database rows.
+view showed), not database rows. The tab shows a counter of how many recipes there are and how much
+disk space they take; nothing is deleted automatically (owner, 2026-10-28).
 
 ### Piece 3: Send to ComfyUI (#665)
 
