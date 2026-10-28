@@ -44,12 +44,12 @@ public static class RecipeMerge
             }
         }
 
-        var data = fresh.Data.Source == RecipeDataSource.None && saved.Data.Source != RecipeDataSource.None
-            ? saved.Data with { Format = fresh.Data.Format }
-            : fresh.Data;
+        var keepData = fresh.Data.Source == RecipeDataSource.None && saved.Data.Source != RecipeDataSource.None;
+        var data = keepData ? saved.Data with { Format = fresh.Data.Format } : fresh.Data;
 
         var keptNames = kept.Select(r => r.Use?.Name).Where(n => n is not null).ToHashSet();
-        var unlinked = fresh.UnlinkedLoras.Where(l => !keptNames.Contains(l.Name)).ToList();
+        // The unlinked LoRAs are derived from the file data, so they follow whichever data won.
+        var unlinked = (keepData ? saved.UnlinkedLoras : fresh.UnlinkedLoras).Where(l => !keptNames.Contains(l.Name)).ToList();
 
         return fresh with { Resources = resources, Data = data, UnlinkedLoras = unlinked };
     }

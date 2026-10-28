@@ -101,6 +101,28 @@ public sealed class RecipeMergeTests
     }
 
     [Fact]
+    public void FreshWithoutData_KeepsSavedUnlinkedLoras()
+    {
+        var saved = Recipe([], unlinked: [new RecipeLoraUse("private", null, 0.3, null)]);
+        var fresh = Recipe([], data: ImageRecipeData.Empty(RecipeFileFormat.Png), unlinked: []);
+
+        RecipeMerge.Refresh(saved, fresh).UnlinkedLoras.Select(l => l.Name).Should().Equal("private");
+    }
+
+    [Fact]
+    public void NoKeyKeptResource_PrunesUnlinkedLoraItNowMatches()
+    {
+        var saved = Recipe([Loaded(100, 0.7, "foo")], hasApiKey: true);
+        var fresh = Recipe([], hasApiKey: false,
+            unlinked: [new RecipeLoraUse("foo", null, 0.7, null), new RecipeLoraUse("private", null, 0.3, null)]);
+
+        var merged = RecipeMerge.Refresh(saved, fresh);
+
+        merged.Resources.Should().ContainSingle();
+        merged.UnlinkedLoras.Select(l => l.Name).Should().Equal("private");
+    }
+
+    [Fact]
     public void FreshBetter_WinsEverywhere()
     {
         var saved = Recipe([Loaded(100, 0.5)], data: new ImageRecipeData { Format = RecipeFileFormat.Png, Source = RecipeDataSource.SettingsText, Prompt = "old" });
