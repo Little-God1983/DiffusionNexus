@@ -435,6 +435,11 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
     /// <summary>Test seam: builds the recipe service. Null uses the browser's Civitai client.</summary>
     internal Func<CivitaiImageRecipeService>? RecipeServiceFactory { get; set; }
 
+    /// <summary>The service that loads a recipe (also the Recipes tab's retry); null while there is no Civitai client.</summary>
+    internal CivitaiImageRecipeService? BuildRecipeService() =>
+        RecipeServiceFactory?.Invoke()
+        ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, RecipeStore?.Root ?? Services.CivitaiRecipe.RecipeStore.DefaultRoot, _logger));
+
     private void ClearRecipe()
     {
         if (Recipe is null) return;
@@ -454,8 +459,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
         OnPropertyChanged(nameof(HasMore));
         ApplyClientSideFilters();
 
-        var service = RecipeServiceFactory?.Invoke()
-            ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, RecipeStore?.Root ?? Services.CivitaiRecipe.RecipeStore.DefaultRoot, _logger));
+        var service = BuildRecipeService();
         if (service is null)
         {
             IsBusy = false;
