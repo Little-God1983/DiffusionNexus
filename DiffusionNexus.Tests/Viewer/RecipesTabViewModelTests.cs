@@ -616,6 +616,109 @@ public sealed class RecipesTabViewModelTests : IDisposable
         client.Verify(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    private static bool IsCancelled(CivitaiResultViewModel card) =>
+        ((CancellationTokenSource)typeof(CivitaiResultViewModel)
+            .GetField("_cts", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(card)!)
+        .IsCancellationRequested;
+
+    private RecipesTabViewModel CreateWithRetry(Mock<DiffusionNexus.Civitai.ICivitaiClient> client)
+    {
+        _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
+        return new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null));
+    }
+
+    /// <summary>A client whose version 100 loads once <paramref name="gate"/> is released.</summary>
+    private static Mock<DiffusionNexus.Civitai.ICivitaiClient> GatedClient(TaskCompletionSource gate)
+    {
+        var client = new Mock<DiffusionNexus.Civitai.ICivitaiClient>();
+        var version = new CivitaiModelVersion { Id = 100, ModelId = 10, Name = "v1", BaseModel = "Krea 2" };
+        client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () => { await gate.Task; return version; });
+        client.Setup(c => c.GetModelAsync(10, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiModel { Id = 10, Name = "Foo", Type = CivitaiModelType.LORA, ModelVersions = [version] });
+        return client;
+    }
+
+    private static CivitaiRecipeResource Failed429() => new(100, null, null, null, "429 Too Many Requests");
+
+    [Fact]
+    public void Back_CancelsTheCardsOfTheClosedRecipe()
+    {
+        var cards = new List<CivitaiResultViewModel>();
+        _host.Setup(h => h.CreateRecipeCard(It.IsAny<CivitaiModel>()))
+            .Returns<CivitaiModel>(m => { var c = new CivitaiResultViewModel(m, true); cards.Add(c); return c; });
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")]), Today);
+        var vm = Create();
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        cards.Should().ContainSingle();
+        IsCancelled(cards[0]).Should().BeFalse();
+
+        vm.BackCommand.Execute(null);
+
+        IsCancelled(cards[0]).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Reopen_DuringTheRetry_ShowsTheRetriedResource()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Save(Recipe(1, resources: [Failed429()]), Today);
+        var vm = CreateWithRetry(GatedClient(gate));
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        var retry = vm.RetryTask!;
+        vm.BackCommand.Execute(null);
+        vm.OpenCommand.Execute(Card(vm, 1));
+        vm.OpenRecipe!.Recipe.Resources.Single().LoadError.Should().NotBeNull();
+
+        gate.SetResult();
+        await retry;
+        Pump();
+
+        vm.OpenRecipe!.Recipe.Resources.Single().LoadError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RetryEndingAfterDelete_DoesNotBringTheRecipeBack()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Save(Recipe(1, resources: [Failed429()]), Today);
+        var vm = CreateWithRetry(GatedClient(gate));
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        var retry = vm.RetryTask!;
+        vm.BackCommand.Execute(null);
+        _store.Delete([1]);
+
+        gate.SetResult();
+        await retry;
+        Pump();
+
+        Directory.Exists(_store.FolderFor(1)).Should().BeFalse();
+        Ids(vm).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Open_RetryThatFailsAgain_IsNotRetriedOnReopen()
+    {
+        var client = new Mock<DiffusionNexus.Civitai.ICivitaiClient>();
+        client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("429 Too Many Requests"));
+        Save(Recipe(1, resources: [Failed429()]), Today);
+        var vm = CreateWithRetry(client);
+
+        vm.OpenCommand.Execute(Card(vm, 1));
+        await vm.RetryTask!;
+        Pump();
+        vm.BackCommand.Execute(null);
+        vm.OpenCommand.Execute(Card(vm, 1));
+        if (vm.RetryTask is { } again) await again;
+
+        client.Verify(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task Open_RetryThatThrows_IsLoggedNotRaised()
     {

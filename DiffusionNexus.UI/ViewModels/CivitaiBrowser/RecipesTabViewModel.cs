@@ -55,6 +55,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     private readonly Func<CivitaiImageRecipeService>? _retryService;
     private readonly HashSet<long> _retried = [];
     private CancellationTokenSource? _openCts;
+    private bool _disposed;
 
     public RecipesTabViewModel(RecipeStore store, IRecipeHost host, IDialogService? dialogs, IUnifiedLogger? logger,
         Func<DateTime>? nowLocal = null, IClipboardService? clipboard = null, Func<CivitaiImageRecipeService>? retryService = null)
@@ -79,7 +80,9 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _openCts?.Cancel();
+        ReleaseCards(OpenRecipe);
         _store.Changed -= OnStoreChanged;
         _host.InstalledIndexChanged -= OnInstalledChanged;
     }
@@ -292,8 +295,10 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         _openCts?.Cancel();
         _openCts = new CancellationTokenSource();
         var ct = _openCts.Token;
+        var previous = OpenRecipe;
         var view = BuildRecipeView(saved.Recipe);
         OpenRecipe = view;
+        ReleaseCards(previous);
         _logger?.Info(LogCategory.General, LogSource, $"Recipe {card.ImageId} opened in the Recipes tab.");
         _ = ShowPreviewAsync(view, ct);
 
@@ -301,6 +306,13 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         RetryTask = transient && _retryService is not null && _retried.Add(card.ImageId)
             ? RetryAsync(saved.Recipe, ct)
             : null;
+    }
+
+    /// <summary>Stops the in-flight preview work of the cards of a recipe view that is being dropped, as the browser does.</summary>
+    private static void ReleaseCards(CivitaiRecipeViewModel? view)
+    {
+        if (view is null) return;
+        foreach (var row in view.Rows) row.Card?.Cancel();
     }
 
     private async Task ShowPreviewAsync(CivitaiRecipeViewModel view, CancellationToken ct)
@@ -319,6 +331,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         if (OpenRecipe is not { } open) return;
         _openCts?.Cancel();
         OpenRecipe = null;
+        ReleaseCards(open);
         _logger?.Info(LogCategory.General, LogSource, $"Recipe {open.Recipe.ImageId}: back to {(IsKeptView ? "Kept" : "History")}.");
     }
 
@@ -332,16 +345,25 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
             var result = await _retryService!().RetryFailedResourcesAsync(recipe, apiKey, CancellationToken.None);
             if (ReferenceEquals(result, recipe)) return;
 
-            await Task.Run(() => _store.Update(result));
+            var stored = await Task.Run(() => _store.Update(result));
+            if (stored is null)
+            {
+                _logger?.Info(LogCategory.Network, LogSource, $"Recipe {recipe.ImageId}: deleted while its retry ran, nothing saved.");
+                return;
+            }
             var loaded = recipe.Resources.Count(r => r.LoadError is not null) - result.Resources.Count(r => r.LoadError is not null);
             _logger?.Info(LogCategory.Network, LogSource, $"Recipe {recipe.ImageId}: retry saved, {loaded} resource(s) loaded now.");
 
+            // Judged by what is open now, not by the token of the open that started the retry: a reopen of
+            // the same image during the retry was built from the old snapshot and needs this result.
             Dispatcher.UIThread.Post(() =>
             {
-                if (ct.IsCancellationRequested || OpenRecipe?.Recipe.ImageId != recipe.ImageId) return;
+                if (_disposed || OpenRecipe?.Recipe.ImageId != recipe.ImageId) return;
+                var old = OpenRecipe;
                 var view = BuildRecipeView(result);
                 OpenRecipe = view;
-                _ = ShowPreviewAsync(view, ct);
+                ReleaseCards(old);
+                _ = ShowPreviewAsync(view, _openCts?.Token ?? CancellationToken.None);
             });
         }
         catch (Exception ex)

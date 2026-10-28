@@ -99,6 +99,19 @@ public sealed class RecipeStoreTests : IDisposable
     }
 
     [Fact]
+    public void Update_DeletedRecipe_WritesNothing()
+    {
+        var changed = 0;
+        _store.Changed += (_, _) => changed++;
+
+        var result = _store.Update(Recipe(5));
+
+        result.Should().BeNull();
+        Directory.Exists(_store.FolderFor(5)).Should().BeFalse();
+        changed.Should().Be(0);
+    }
+
+    [Fact]
     public void Update_KeepsPastedAtAndKept()
     {
         _store.Save(Recipe(5), PastedAt);

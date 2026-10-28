@@ -70,14 +70,18 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         return stored;
     }
 
-    /// <summary>Replaces the recipe's content and keeps its PastedAt and Kept (the retry of a failed resource).</summary>
-    public StoredRecipe Update(CivitaiImageRecipe recipe)
+    /// <summary>
+    /// Replaces the recipe's content and keeps its PastedAt and Kept (the retry of a failed resource).
+    /// Writes only a recipe that still exists: a retry that ends after the user deleted it must not bring it back (null).
+    /// </summary>
+    public StoredRecipe? Update(CivitaiImageRecipe recipe)
     {
         StoredRecipe stored;
         lock (_gate)
         {
             var existing = TryLoad(recipe.ImageId)?.Saved;
-            stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, existing?.PastedAt ?? DateTimeOffset.Now, existing?.Kept ?? false, recipe));
+            if (existing is null) return null;
+            stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, existing.PastedAt, existing.Kept, recipe));
         }
         logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} updated.");
         Changed?.Invoke(this, EventArgs.Empty);
