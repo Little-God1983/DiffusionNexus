@@ -393,7 +393,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         await vm.ClearHistoryCommand.ExecuteAsync(null);
         Pump();
 
-        _dialogs.Verify(d => d.ShowConfirmAsync("Clear history", It.Is<string>(m => m.StartsWith("Delete all 2 recipes in History? This frees ") && m.EndsWith(". Kept recipes are not touched."))), Times.Once);
+        _dialogs.Verify(d => d.ShowConfirmAsync("Clear history", It.Is<string>(m => m.StartsWith("Delete all 2 recipes in History? This frees ") && m.EndsWith(". Kept recipes and 1 unreadable recipe are not touched."))), Times.Once);
         Directory.Exists(_store.FolderFor(1)).Should().BeFalse();
         Directory.Exists(_store.FolderFor(2)).Should().BeFalse();
         Directory.Exists(_store.FolderFor(3)).Should().BeTrue();
@@ -467,5 +467,81 @@ public sealed class RecipesTabViewModelTests : IDisposable
 
         _host.Verify(h => h.OpenUrl("https://civitai.red/images/1"), Times.Once);
         _dialogs.Verify(d => d.ShowConfirmAsync("Open on Civitai", It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public void Queue_ModelThatDoesNotListTheUsedVersion_IsNeitherCountedNorQueued()
+    {
+        var version = new CivitaiModelVersion { Id = 100, ModelId = 10, Name = "v1", BaseModel = "Krea 2" };
+        var model = new CivitaiModel { Id = 10, Name = "Foo", Type = CivitaiModelType.LORA, ModelVersions = [new CivitaiModelVersion { Id = 101, ModelId = 10, Name = "v2" }] };
+        Save(Recipe(1, resources: [new CivitaiRecipeResource(100, version, model, null, null), Lora(200, 20, "Bar")]), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+        List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)>? pairs = null;
+        _host.Setup(h => h.EnqueueRecipeAsync(It.IsAny<List<(CivitaiResultViewModel, CivitaiVersionPickItemViewModel)>>()))
+            .Callback<List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)>>(p => pairs = p)
+            .Returns(Task.CompletedTask);
+
+        vm.QueueButtonText.Should().Be("Queue missing LoRAs (1)");
+        vm.QueueMissingCommand.Execute(null);
+
+        pairs!.Select(p => p.Pick.Version.Id).Should().Equal(200);
+    }
+
+    [Fact]
+    public void QueueTooltip_CountsEachUnlinkedAndFailedLoraOnce()
+    {
+        var failed = new CivitaiRecipeResource(300, null, null, null, "429 Too Many Requests");
+        var same = new RecipeLoraUse("x", "x.safetensors", 1, null);
+        Save(Recipe(1, resources: [failed], unlinked: [same]), Today);
+        Save(Recipe(2, resources: [failed], unlinked: [same]), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+        vm.Select(Card(vm, 2), true, false);
+
+        vm.QueueTooltip.Should().Be("1 not on Civitai, 1 could not be loaded");
+    }
+
+    [Fact]
+    public async Task ClearHistory_RecipeKeptWhileTheDialogIsOpen_Survives()
+    {
+        Save(Recipe(1), Today);
+        Save(Recipe(2), Today);
+        var vm = Create();
+        _dialogs.Setup(d => d.ShowConfirmAsync("Clear history", It.IsAny<string>()))
+            .Returns<string, string>((_, _) => { _store.SetKept([1], true); return Task.FromResult(true); });
+
+        await vm.ClearHistoryCommand.ExecuteAsync(null);
+        Pump();
+
+        Directory.Exists(_store.FolderFor(1)).Should().BeTrue();
+        Directory.Exists(_store.FolderFor(2)).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClearHistory_WithBrokenRecipes_SaysTheyAreNotTouched()
+    {
+        Save(Recipe(1), Today);
+        Broken(8);
+        Broken(9);
+        var vm = Create();
+
+        await vm.ClearHistoryCommand.ExecuteAsync(null);
+
+        _dialogs.Verify(d => d.ShowConfirmAsync("Clear history", It.Is<string>(m =>
+            m.StartsWith("Delete all 1 recipe in History? This frees ") && m.EndsWith(". Kept recipes and 2 unreadable recipes are not touched."))), Times.Once);
+    }
+
+    [Fact]
+    public async Task ClearHistory_OneBroken_UsesSingular()
+    {
+        Save(Recipe(1), Today);
+        Broken(8);
+        var vm = Create();
+
+        await vm.ClearHistoryCommand.ExecuteAsync(null);
+
+        _dialogs.Verify(d => d.ShowConfirmAsync("Clear history", It.Is<string>(m =>
+            m.EndsWith(". Kept recipes and 1 unreadable recipe are not touched."))), Times.Once);
     }
 }

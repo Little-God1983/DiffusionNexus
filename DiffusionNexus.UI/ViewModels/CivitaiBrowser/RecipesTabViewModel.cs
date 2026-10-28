@@ -214,8 +214,13 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         SelectedCount = selected.Count;
         QueueButtonText = $"Queue missing LoRAs ({QueueCandidates(selected).Count})";
 
-        var notOnCivitai = selected.Sum(c => c.Status?.MissingNotOnCivitai ?? 0);
-        var failed = selected.Sum(c => c.Status?.FailedToLoad ?? 0);
+        // Each LoRA once across the selection, like the button: unlinked by hash or name, failed by version id.
+        var installed = _host.Installed;
+        var recipes = selected.Where(c => c.Stored.Saved is not null).Select(c => c.Stored.Saved!.Recipe).ToList();
+        var notOnCivitai = recipes.SelectMany(r => r.UnlinkedLoras)
+            .Where(u => !installed.HasFileHashPrefix(u.Hash))
+            .Select(u => (u.Hash ?? u.Name).ToLowerInvariant()).Distinct().Count();
+        var failed = recipes.SelectMany(r => r.Resources).Where(r => r.LoadError is not null).Select(r => r.VersionId).Distinct().Count();
         var parts = new List<string>();
         if (notOnCivitai > 0) parts.Add($"{notOnCivitai} not on Civitai");
         if (failed > 0) parts.Add($"{failed} could not be loaded");
@@ -315,15 +320,27 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         var history = _cards.Where(c => !c.IsKept && !c.IsBroken).ToList();
         if (history.Count == 0) return;
         var size = FileSizeFormatter.Format(history.Sum(c => c.Stored.SizeBytes));
+        var broken = _cards.Count(c => !c.IsKept && c.IsBroken);
+        var untouched = broken == 0
+            ? "Kept recipes are not touched."
+            : $"Kept recipes and {broken} unreadable {(broken == 1 ? "recipe" : "recipes")} are not touched.";
+        // A recipe kept while the dialog was open must survive: judge each id again from the disk.
         await DeleteAfterAskingAsync(history, "Clear history",
-            $"Delete all {Recipes(history.Count)} in History? This frees {size}. Kept recipes are not touched.");
+            $"Delete all {Recipes(history.Count)} in History? This frees {size}. {untouched}",
+            id => _store.TryLoad(id)?.Saved is { Kept: false });
     }
 
-    private async Task DeleteAfterAskingAsync(List<RecipeCardViewModel> cards, string title, string message)
+    private async Task DeleteAfterAskingAsync(List<RecipeCardViewModel> cards, string title, string message,
+        Func<long, bool>? stillApplies = null)
     {
         if (_dialogs is null || !await _dialogs.ShowConfirmAsync(title, message)) return;
         var ids = cards.Select(c => c.ImageId).ToList();
-        var freed = await Task.Run(() => _store.Delete(ids));
+        long freed = 0;
+        await Task.Run(() =>
+        {
+            if (stillApplies is not null) ids = [.. ids.Where(stillApplies)];
+            freed = _store.Delete(ids);
+        });
         _logger?.Info(LogCategory.FileSystem, LogSource,
             $"{Recipes(ids.Count)} deleted from the Recipes tab ({title}), {FileSizeFormatter.Format(freed)} freed.",
             string.Join(", ", ids));
