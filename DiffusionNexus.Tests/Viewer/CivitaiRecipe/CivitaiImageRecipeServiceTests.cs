@@ -294,6 +294,28 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task WithApiKey_SiteMeta_KeepsTheGraphsZeroedNegative()
+    {
+        // #670 review: an untraced sampler and two model loaders leave the file's data empty, but the graph
+        // still proves the negative is zeroed; Civitai's negativePrompt is the save node's copy.
+        HasImage(23);
+        var graph = """
+            {"1":{"class_type":"UNETLoader","inputs":{"unet_name":"high.safetensors"}},
+             "2":{"class_type":"UNETLoader","inputs":{"unet_name":"low.safetensors"}},
+             "3":{"class_type":"CLIPTextEncode","inputs":{"text":"a fox in snow"}},
+             "4":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["3",0]}},
+             "5":{"class_type":"ClownsharKSampler_Beta","inputs":{"positive":["3",0],"negative":["4",0]}}}
+            """;
+        _http.Respond = r => IsSiteCall(r) ? Json(SiteData) : Png(("prompt", graph));
+
+        var data = (await Service().LoadAsync(23, "k", default)).Recipe!.Data;
+
+        data.Source.Should().Be(RecipeDataSource.CivitaiSite);
+        data.NegativeZeroedOut.Should().BeTrue();
+        data.NegativePrompt.Should().BeNull();
+    }
+
+    [Fact]
     public async Task FileDataAndWeightsWinOverTheSite()
     {
         HasImage(22, 1, "image", 100);

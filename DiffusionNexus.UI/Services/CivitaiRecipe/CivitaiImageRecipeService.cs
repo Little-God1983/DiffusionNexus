@@ -83,7 +83,13 @@ public sealed class CivitaiImageRecipeService
         // The file wins; Civitai's data only stands in when the file carries none.
         if (data.Source == RecipeDataSource.None && site?.Meta is { } meta)
         {
-            data = meta with { Format = data.Format, Loras = data.Loras, SavedBy = data.SavedBy };
+            // A graph that proves the negative zeroed out outranks Civitai's copy of the save node's text (#670).
+            data = meta with
+            {
+                Format = data.Format, Loras = data.Loras, SavedBy = data.SavedBy,
+                NegativeZeroedOut = data.NegativeZeroedOut,
+                NegativePrompt = data.NegativeZeroedOut ? null : meta.NegativePrompt,
+            };
         }
 
         _logger?.Info(LogCategory.Network, LogSource,

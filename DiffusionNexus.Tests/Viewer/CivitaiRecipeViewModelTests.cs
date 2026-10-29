@@ -250,6 +250,17 @@ public sealed class CivitaiRecipeViewModelTests
     }
 
     [Fact]
+    public void ZeroedNegative_SaysTheWorkflowHasNone()
+    {
+        var vm = Vm(Recipe([], data: new ImageRecipeData
+        {
+            Source = RecipeDataSource.SettingsText, SourceNote = "x", Prompt = "a cat", NegativeZeroedOut = true,
+        }));
+
+        vm.NegativePromptText.Should().Be("none (the workflow zeroes out the negative prompt)");
+    }
+
+    [Fact]
     public void FooterCountsAndSize()
     {
         var vm = Vm(Recipe([Resource(Model(2, 20, "A", sizeKb: 1024)), Resource(Model(3, 30, "B", sizeKb: 2048))]));

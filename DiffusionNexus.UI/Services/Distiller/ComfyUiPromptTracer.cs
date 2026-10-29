@@ -8,8 +8,9 @@ namespace DiffusionNexus.UI.Services.Distiller;
 
 /// <summary>
 /// Recovers generation parameters from a ComfyUI "prompt"-chunk graph (the resolved API prompt,
-/// NOT the editor "workflow" graph). Faithful C# port of
+/// NOT the editor "workflow" graph). C# port of
 /// ComfyUI-AI2Go-Utils/nodes/civitai_metadata/tracer.py; see comfyui-metadata-extraction-for-csharp.md.
+/// Differs where marked: prompt resolution stops at ConditioningZeroOut and follows pass-through nodes by name (#670).
 /// Using the API prompt is what makes rgthree Power Lora / Lora Stack detection tractable.
 /// </summary>
 internal static class ComfyUiPromptTracer
@@ -57,8 +58,8 @@ internal static class ComfyUiPromptTracer
         // (a link, not a literal) — follow it so the graph doesn't come out with an empty sampler.
         samplerName ??= FollowLinkedString(graph, s, "sampler_name", "sampler_name");
 
-        string? positive = ResolvePrompt(graph, s, "positive");
-        string? negative = ResolvePrompt(graph, s, "negative");
+        string? positive = ResolvePrompt(graph, s, "positive", out _);
+        string? negative = ResolvePrompt(graph, s, "negative", out var negativeZeroed);
 
         var loras = new List<LoraInfo>();
         string? checkpoint = WalkModelChain(graph, s, loras);
@@ -73,6 +74,7 @@ internal static class ComfyUiPromptTracer
             PositivePrompt = positive, NegativePrompt = negative, Checkpoint = checkpoint,
             Loras = loras, SamplerName = samplerName, Scheduler = scheduler,
             Steps = steps, Seed = seed, Cfg = cfg, Denoise = denoise, HasData = hasData,
+            NegativeZeroedOut = negativeZeroed,
         };
     }
 
@@ -137,12 +139,12 @@ internal static class ComfyUiPromptTracer
     }
 
     // ── prompts (§3.3) ──────────────────────────────────────────────────────────
-    private static string? ResolvePrompt(Dictionary<string, JsonElement> graph, JsonElement sampler, string key)
+    private static string? ResolvePrompt(Dictionary<string, JsonElement> graph, JsonElement sampler, string key, out bool zeroed)
     {
+        zeroed = false;
         if (!sampler.TryGetProperty(key, out var v) || !IsLink(v)) return null;
 
-        var encId = BfsBackward(graph, OriginId(v),
-            cls => cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase));
+        var encId = FindEncoder(graph, OriginId(v), key, out zeroed);
         if (encId is null || !TryNode(graph, encId, out _, out var enc)) return null;
 
         if (!enc.TryGetProperty("text", out var text)) return null;
@@ -160,6 +162,42 @@ internal static class ComfyUiPromptTracer
             foreach (var prop in src.EnumerateObject())
                 if (prop.Value.ValueKind == JsonValueKind.String)
                     return prop.Value.GetString();
+        }
+        return null;
+    }
+
+    // BFS from a sampler's positive/negative to its CLIPTextEncode (differs from tracer.py, #670). A node
+    // carrying both conditionings (WanImageToVideo, ControlNetApplyAdvanced) is followed only through the
+    // input of the same name, and a ConditioningZeroOut has no text: behind it sits the positive encode it zeroes.
+    // zeroed: no encoder was found and the walk ended at a zero-out, so the prompt is known to be empty.
+    private static string? FindEncoder(Dictionary<string, JsonElement> graph, string startId, string key, out bool zeroed)
+    {
+        zeroed = false;
+        var seen = new HashSet<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(startId);
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!seen.Add(id)) continue;
+            if (!TryNode(graph, id, out var cls, out var ins)) continue;
+            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase))
+            {
+                zeroed = false;
+                return id;
+            }
+            if (cls.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase))
+            {
+                zeroed = true;
+                continue;
+            }
+            if (ins.TryGetProperty(key, out var own) && IsLink(own))
+            {
+                queue.Enqueue(OriginId(own));
+                continue;
+            }
+            foreach (var prop in ins.EnumerateObject())
+                if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
         }
         return null;
     }

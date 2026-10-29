@@ -45,6 +45,13 @@ public sealed record ImageRecipeData
 
     public string? Prompt { get; init; }
     public string? NegativePrompt { get; init; }
+
+    /// <summary>
+    /// The ComfyUI graph feeds every sampler's negative from ConditioningZeroOut: there is no negative
+    /// prompt, whatever a save node wrote into the settings text (#670, image 143992601).
+    /// </summary>
+    public bool NegativeZeroedOut { get; init; }
+
     public string? Checkpoint { get; init; }
     public string? Vae { get; init; }
     public string? Sampler { get; init; }

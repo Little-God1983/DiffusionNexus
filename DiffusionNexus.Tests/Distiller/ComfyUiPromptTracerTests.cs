@@ -10,6 +10,69 @@ public class ComfyUiPromptTracerTests
     private static Dictionary<string, JsonElement> Graph(string json) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
 
+    /// <summary>
+    /// #670: at CFG 1 the negative is often ConditioningZeroOut of the positive encode. Walking
+    /// through it reached the positive CLIPTextEncode, so the Distiller wrote the positive prompt as
+    /// the negative. A zeroed negative has no text.
+    /// </summary>
+    [Fact]
+    public void Zeroed_out_negative_has_no_prompt()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{
+                 "model":["4",0],"positive":["6",0],"negative":["8",0],
+                 "steps":8,"cfg":1.0,"seed":5,"sampler_name":"euler","scheduler":"simple","denoise":1.0}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["6",0]}},
+          "9": {"class_type":"SaveImage","inputs":{"images":["3",0]}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    private const string WanI2V = """
+        {
+          "1": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "2": {"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+          "3": {"class_type":"WanImageToVideo","inputs":{"positive":["1",0],"negative":NEGATIVE}},
+          "4": {"class_type":"KSamplerAdvanced","inputs":{
+                 "model":["5",0],"positive":["3",0],"negative":["3",1],
+                 "steps":4,"cfg":1.0,"noise_seed":5,"sampler_name":"euler","scheduler":"simple"}},
+          "5": {"class_type":"UNETLoader","inputs":{"unet_name":"wan.safetensors"}},
+          "6": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+          "9": {"class_type":"SaveImage","inputs":{"images":["4",0]}}
+        }
+        """;
+
+    /// <summary>
+    /// #670 review: WanImageToVideo / ControlNetApplyAdvanced carry both conditionings. The walk from the
+    /// sampler's negative followed their "positive" input too and returned the positive prompt.
+    /// </summary>
+    [Fact]
+    public void Negative_through_a_node_carrying_both_conditionings_is_the_negative()
+    {
+        var r = ComfyUiPromptTracer.Trace(Graph(WanI2V.Replace("NEGATIVE", """["2",0]""")), null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+    }
+
+    [Fact]
+    public void Zeroed_negative_through_a_node_carrying_both_conditionings_has_no_prompt()
+    {
+        var r = ComfyUiPromptTracer.Trace(Graph(WanI2V.Replace("NEGATIVE", """["6",0]""")), null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().BeNull();
+    }
+
     [Fact]
     public void Plain_checkpoint_no_lora()
     {
@@ -31,6 +94,7 @@ public class ComfyUiPromptTracerTests
         r.Checkpoint.Should().Be("sd_xl");
         r.PositivePrompt.Should().Be("a cat");
         r.NegativePrompt.Should().Be("blurry");
+        r.NegativeZeroedOut.Should().BeFalse();
         r.Steps.Should().Be(20);
         r.Cfg.Should().Be(7.0);
         r.Seed.Should().Be(123);
