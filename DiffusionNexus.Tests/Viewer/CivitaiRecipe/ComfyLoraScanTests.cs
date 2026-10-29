@@ -92,4 +92,46 @@ public sealed class ComfyLoraScanTests
         facts.Checkpoint.Should().BeNull("two model loaders: which one made the image is not known");
         facts.Vae.Should().Be("v.safetensors");
     }
+
+    /// <summary>
+    /// #670: image 143992601 feeds its sampler's negative from ConditioningZeroOut of the positive
+    /// encode, and its settings text copies the positive prompt into "Negative prompt".
+    /// </summary>
+    [Fact]
+    public void ExampleGraph_NegativeIsZeroedOut()
+    {
+        ComfyLoraScan.Scan(Graph(Fixture("143992601-prompt.json"))).NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NegativeFromATextEncode_IsNotZeroedOut()
+    {
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+             "3":{"class_type":"KSampler","inputs":{"positive":["1",0],"negative":["1",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeFalse("the sampler takes the encode, not the unused zero-out");
+    }
+
+    [Fact]
+    public void OneOfTwoSamplersWithARealNegative_IsNotZeroedOut()
+    {
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+             "3":{"class_type":"KSampler","inputs":{"negative":["2",0]}},
+             "4":{"class_type":"KSampler","inputs":{"negative":["1",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeFalse("the second pass uses a real negative prompt");
+    }
+
+    [Fact]
+    public void NoSampler_IsNotZeroedOut()
+    {
+        ComfyLoraScan.Scan(Graph("""{"2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}}}"""))
+            .NegativeZeroedOut.Should().BeFalse();
+    }
 }

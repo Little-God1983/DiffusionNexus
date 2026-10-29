@@ -35,6 +35,35 @@ public sealed class ImageRecipeReaderTests
         data.Loras.Single(l => l.Name == "AIM-KREA-V1").Hash.Should().Be("acbc6d5295");
     }
 
+    /// <summary>#670: the text's "Negative prompt" is a copy of the positive; the graph zeroes the negative out.</summary>
+    [Fact]
+    public void ExampleFile_ZeroedNegative_IsNoNegativePrompt()
+    {
+        var data = Read(
+            ("prompt", ComfyLoraScanTests.Fixture("143992601-prompt.json")),
+            ("parameters", ComfyLoraScanTests.Fixture("143992601-parameters.txt")));
+
+        data.NegativePrompt.Should().BeNull();
+        data.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
+    public void TracedGraph_ZeroedNegative_IsNoNegativePrompt()
+    {
+        var data = Read(
+            ("prompt", """
+                {"1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+                 "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat","clip":["1",1]}},
+                 "3":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+                 "4":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"negative":["3",0],"seed":7,"steps":8,"cfg":1.0,"sampler_name":"euler","scheduler":"simple","denoise":1.0}}}
+                """),
+            ("parameters", "a cat\nNegative prompt: a cat\nSteps: 8, Seed: 7"));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.NegativePrompt.Should().BeNull();
+        data.NegativeZeroedOut.Should().BeTrue();
+    }
+
     [Fact]
     public void TextOnly_TakesWeightsFromLoraTags()
     {

@@ -2,8 +2,11 @@ using System.Text.Json;
 
 namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 
-/// <summary>What <see cref="ComfyLoraScan"/> found in a graph.</summary>
-internal sealed record ComfyGraphFacts(IReadOnlyList<RecipeLoraUse> Loras, string? Checkpoint, string? Vae);
+/// <summary>
+/// What <see cref="ComfyLoraScan"/> found in a graph. <paramref name="NegativeZeroedOut"/>: every
+/// sampler's negative is a ConditioningZeroOut, so the image has no negative prompt (#670).
+/// </summary>
+internal sealed record ComfyGraphFacts(IReadOnlyList<RecipeLoraUse> Loras, string? Checkpoint, string? Vae, bool NegativeZeroedOut = false);
 
 /// <summary>
 /// Collects LoRAs with their weights from every loader node of a ComfyUI "prompt"-chunk graph
@@ -31,9 +34,11 @@ internal static class ComfyLoraScan
         var loras = new List<RecipeLoraUse>();
         var models = new List<string>();
         var vaes = new List<string>();
+        var classes = new Dictionary<string, string>();
+        var negatives = new List<string>();
 
         // Node ids are numbers as strings; going in id order keeps the list in the graph's build order.
-        foreach (var (_, node) in graph.OrderBy(kv => int.TryParse(kv.Key, out var id) ? id : int.MaxValue))
+        foreach (var (nodeId, node) in graph.OrderBy(kv => int.TryParse(kv.Key, out var id) ? id : int.MaxValue))
         {
             if (node.ValueKind != JsonValueKind.Object
                 || !node.TryGetProperty("class_type", out var classElement)
@@ -45,6 +50,13 @@ internal static class ComfyLoraScan
             }
 
             var classType = classElement.GetString()!;
+            classes[nodeId] = classType;
+            // Any sampler, core or custom, names its negative conditioning input "negative".
+            if (inputs.TryGetProperty("negative", out var negative) && LinkTarget(negative) is { } source)
+            {
+                negatives.Add(source);
+            }
+
             if (CoreLoraLoaders.Contains(classType))
             {
                 if (String(inputs, "lora_name") is { } file) loras.Add(Use(file, Number(inputs, "strength_model")));
@@ -74,8 +86,16 @@ internal static class ComfyLoraScan
         return new ComfyGraphFacts(
             Merge(loras),
             models.Count == 1 ? models[0] : null,
-            vaes.Count == 1 ? vaes[0] : null);
+            vaes.Count == 1 ? vaes[0] : null,
+            negatives.Count > 0 && negatives.All(id =>
+                classes.TryGetValue(id, out var type) && type.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase)));
     }
+
+    /// <summary>The source node id of a link input (<c>["12", 0]</c>); null for a literal.</summary>
+    private static string? LinkTarget(JsonElement input) =>
+        input.ValueKind == JsonValueKind.Array && input.GetArrayLength() == 2 && input[0].ValueKind == JsonValueKind.String
+            ? input[0].GetString()
+            : null;
 
     /// <summary>
     /// One use per LoRA file. Wan 2.2 graphs load the same LoRA on the high- and low-noise chains; two

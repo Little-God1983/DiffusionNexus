@@ -37,6 +37,7 @@ public partial class CivitaiRecipeViewModel : ObservableObject
     internal const string NoResourcesCopy = "Civitai lists no resources for this image.";
 
     private const string Unknown = "unknown";
+    private const string ZeroedNegativeText = "none (the workflow zeroes out the negative prompt)";
 
     private readonly IClipboardService? _clipboard;
 
@@ -83,7 +84,7 @@ public partial class CivitaiRecipeViewModel : ObservableObject
         // has one nobody could read.
         var missing = data.Source == RecipeDataSource.SettingsText ? "none given" : Unknown;
         PromptText = data.Prompt ?? missing;
-        NegativePromptText = data.NegativePrompt ?? missing;
+        NegativePromptText = data.NegativeZeroedOut ? ZeroedNegativeText : data.NegativePrompt ?? missing;
         CheckpointText = data.Checkpoint ?? Unknown;
         VaeText = data.Vae ?? Unknown;
         SamplerLine = (data.Sampler, data.Scheduler) switch
