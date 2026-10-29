@@ -205,10 +205,15 @@ public sealed class RecipeStore
     }
 
     /// <summary>Deletes the folders; returns the bytes freed (0 for a folder that is not there).</summary>
-    public long Delete(IEnumerable<long> imageIds)
+    public long Delete(IEnumerable<long> imageIds) => Delete(imageIds, out _);
+
+    /// <summary>As <see cref="Delete(IEnumerable{long})"/>; <paramref name="failures"/> says why each folder that stayed could not be deleted.</summary>
+    public long Delete(IEnumerable<long> imageIds, out IReadOnlyList<string> failures)
     {
         long freed = 0;
         var count = 0;
+        var failed = new List<string>();
+        failures = failed;
         lock (_gate)
         {
             foreach (var id in imageIds)
@@ -226,6 +231,7 @@ public sealed class RecipeStore
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {id} could not be deleted: {ex.Message}", folder);
+                    failed.Add(ex.Message);
                 }
             }
         }

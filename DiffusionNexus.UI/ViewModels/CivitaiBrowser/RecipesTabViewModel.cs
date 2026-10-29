@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DiffusionNexus.Civitai.Models;
@@ -29,6 +28,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     private readonly IDialogService? _dialogs;
     private readonly IUnifiedLogger? _logger;
     private readonly Func<DateTime> _nowLocal;
+    private readonly IUiScheduler _ui;
 
     private List<RecipeCardViewModel> _cards = [];
     private List<RecipeCardViewModel> _visible = [];
@@ -62,7 +62,8 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     private bool _disposed;
 
     public RecipesTabViewModel(RecipeStore store, IRecipeHost host, IDialogService? dialogs, IUnifiedLogger? logger,
-        Func<DateTime>? nowLocal = null, IClipboardService? clipboard = null, Func<CivitaiImageRecipeService>? retryService = null)
+        Func<DateTime>? nowLocal = null, IClipboardService? clipboard = null, Func<CivitaiImageRecipeService>? retryService = null,
+        IUiScheduler? uiScheduler = null)
     {
         _store = store;
         _host = host;
@@ -71,6 +72,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         _nowLocal = nowLocal ?? (() => DateTime.Now);
         _clipboard = clipboard;
         _retryService = retryService;
+        _ui = uiScheduler ?? AvaloniaUiScheduler.Instance;
 
         // Built with the LoRA Viewer on the UI thread: the first read of the disk must not hold it up.
         RequestReload();
@@ -137,7 +139,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     {
         try { await Task.Delay(SearchDebounce, ct); }
         catch (OperationCanceledException) { return; }
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await _ui.InvokeAsync(() =>
         {
             if (!ct.IsCancellationRequested && !_disposed) Rebuild();
         });
@@ -186,7 +188,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
             while (true)
             {
                 var loaded = _store.LoadAll();
-                if (!_disposed) await Dispatcher.UIThread.InvokeAsync(() => { if (!_disposed) Apply(loaded); });
+                if (!_disposed) await _ui.InvokeAsync(() => { if (!_disposed) Apply(loaded); });
                 lock (_reloadGate)
                 {
                     if (!_reloadAgain || _disposed)
@@ -471,7 +473,16 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
             var result = await _retryService!().RetryFailedResourcesAsync(recipe, apiKey, CancellationToken.None);
             if (ReferenceEquals(result, recipe)) return;
 
-            var stored = await Task.Run(() => _store.Update(result));
+            StoredRecipe? stored;
+            try
+            {
+                stored = await Task.Run(() => _store.Update(result));
+            }
+            catch (Exception ex) when (IsStoreFailure(ex))
+            {
+                _ui.Post(() => ReportStoreFailure(ex, $"Recipe {recipe.ImageId}: the retried resources were not saved."));
+                return;
+            }
             if (stored is null)
             {
                 _logger?.Info(LogCategory.Network, LogSource, $"Recipe {recipe.ImageId}: deleted while its retry ran, nothing saved.");
@@ -482,7 +493,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
             // Judged by what is open now, not by the token of the open that started the retry: a reopen of
             // the same image during the retry was built from the old snapshot and needs this result.
-            Dispatcher.UIThread.Post(() =>
+            _ui.Post(() =>
             {
                 if (_disposed || OpenRecipe?.Recipe.ImageId != recipe.ImageId) return;
                 var old = OpenRecipe;
@@ -526,7 +537,24 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         if (ids.Count == 0) return;
         _logger?.Info(LogCategory.FileSystem, LogSource,
             $"{Recipes(ids.Count)} {(kept ? "kept" : "moved back to History")} from the Recipes tab.", string.Join(", ", ids));
-        _store.SetKept(ids, kept);
+        try
+        {
+            _store.SetKept(ids, kept);
+        }
+        catch (Exception ex) when (IsStoreFailure(ex))
+        {
+            ReportStoreFailure(ex, string.Join(", ", ids));
+        }
+    }
+
+    /// <summary>What a write to the store can meet: a locked file (antivirus, backup), no access, a newer version's file.</summary>
+    private static bool IsStoreFailure(Exception ex) => ex is IOException or UnauthorizedAccessException or InvalidOperationException;
+
+    /// <summary>A command that writes the store says why it could not, instead of throwing on the UI thread.</summary>
+    private void ReportStoreFailure(Exception ex, string? detail)
+    {
+        StatusMessage = $"Could not change the recipe: {ex.Message}";
+        _logger?.Warn(LogCategory.FileSystem, LogSource, StatusMessage, detail);
     }
 
     [RelayCommand(CanExecute = nameof(IsLibraryRead))]
@@ -593,14 +621,25 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         if (_dialogs is null || !await _dialogs.ShowConfirmAsync(title, message)) return;
         var ids = cards.Select(c => c.ImageId).ToList();
         long freed = 0;
-        await Task.Run(() =>
+        IReadOnlyList<string> failures = [];
+        try
         {
-            if (stillApplies is not null) ids = [.. ids.Where(stillApplies)];
-            freed = _store.Delete(ids);
-        });
+            await Task.Run(() =>
+            {
+                if (stillApplies is not null) ids = [.. ids.Where(stillApplies)];
+                freed = _store.Delete(ids, out failures);
+            });
+        }
+        catch (Exception ex) when (IsStoreFailure(ex))
+        {
+            ReportStoreFailure(ex, string.Join(", ", ids));
+            return;
+        }
         _logger?.Info(LogCategory.FileSystem, LogSource,
-            $"{Recipes(ids.Count)} deleted from the Recipes tab ({title}), {FileSizeFormatter.Format(freed)} freed.",
+            $"{Recipes(ids.Count - failures.Count)} deleted from the Recipes tab ({title}), {FileSizeFormatter.Format(freed)} freed.",
             string.Join(", ", ids));
+        // The store logged each failure; the user sees them here instead of a recipe that silently stays.
+        StatusMessage = failures.Count == 0 ? null : $"Could not delete {Recipes(failures.Count)}: {failures[0]}";
     }
 
     #endregion

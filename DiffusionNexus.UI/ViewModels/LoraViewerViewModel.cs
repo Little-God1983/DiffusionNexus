@@ -530,7 +530,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         RecipesViewModel = new RecipesTabViewModel(recipeStore, BrowserViewModel, dialogService, _logger,
             clipboard: AvaloniaClipboardService.Instance,
             retryService: () => BrowserViewModel.BuildRecipeService()
-                ?? throw new InvalidOperationException("No Civitai client is available to retry the recipe."));
+                ?? throw new InvalidOperationException("No Civitai client is available to retry the recipe."),
+            uiScheduler: _uiScheduler);
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);

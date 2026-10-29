@@ -25,6 +25,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
     private readonly Mock<IRecipeHost> _host = new();
     private readonly Mock<IDialogService> _dialogs = new();
     private readonly Mock<IUnifiedLogger> _logger = new();
+    private readonly DiffusionNexus.Tests.Helpers.ImmediateUiScheduler _ui = new();
     private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
     private bool _libraryRead = true;
 
@@ -47,7 +48,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
     private RecipesTabViewModel? _vm;
 
     private RecipesTabViewModel Create() =>
-        Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now));
+        Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, uiScheduler: _ui));
 
     /// <summary>The tab reads the disk off the UI thread; a test sees it once the first reload has landed.</summary>
     private RecipesTabViewModel Track(RecipesTabViewModel vm)
@@ -637,7 +638,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
         Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429 Too Many Requests")]), Today);
         var vm = Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null)));
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null), uiScheduler: _ui));
 
         vm.OpenCommand.Execute(Card(vm, 1));
         await vm.RetryTask!;
@@ -662,7 +663,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
     {
         _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
         return Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null)));
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null), uiScheduler: _ui));
     }
 
     /// <summary>A client whose version 100 loads once <paramref name="gate"/> is released.</summary>
@@ -762,7 +763,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         _host.Setup(h => h.GetApiKeyAsync()).ThrowsAsync(new InvalidOperationException("boom"));
         Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429")]), Today);
         var vm = Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(new Mock<DiffusionNexus.Civitai.ICivitaiClient>().Object, new HttpClient(), _root, null)));
+            () => new CivitaiImageRecipeService(new Mock<DiffusionNexus.Civitai.ICivitaiClient>().Object, new HttpClient(), _root, null), uiScheduler: _ui));
 
         vm.OpenCommand.Execute(Card(vm, 1));
         await vm.RetryTask!;
@@ -908,7 +909,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         _store.LoadingAll = () => gate.Wait(TimeSpan.FromSeconds(3));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now);
+        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, uiScheduler: _ui);
         sw.Stop();
         _vm = vm;
 
@@ -975,5 +976,79 @@ public sealed class RecipesTabViewModelTests : IDisposable
 
         rebuilds.Should().Be(1);
         Ids(vm).Should().Equal(1);
+    }
+
+    private FileStream LockJson(long id, FileShare share = FileShare.Read) =>
+        new(Path.Combine(_store.FolderFor(id), "recipe.json"), FileMode.Open, FileAccess.Read, share);
+
+    /// <summary>An antivirus or backup tool holding recipe.json must not crash the app from a sync command.</summary>
+    [Fact]
+    public void ToggleKept_WhenTheFileIsLocked_SaysSo_AndDoesNotThrow()
+    {
+        Save(Recipe(1), Today);
+        var vm = Create();
+
+        using (LockJson(1))
+        {
+            var act = () => vm.ToggleKeptCommand.Execute(Card(vm, 1));
+            act.Should().NotThrow();
+        }
+
+        vm.StatusMessage.Should().StartWith("Could not change the recipe: ");
+        _logger.Verify(l => l.Warn(It.IsAny<LogCategory>(), "CivitaiRecipe", It.Is<string>(m => m.StartsWith("Could not change the recipe: ")), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public void KeepSelected_WhenTheFileIsLocked_SaysSo_AndDoesNotThrow()
+    {
+        Save(Recipe(1), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+
+        using (LockJson(1))
+        {
+            var act = () => vm.KeepSelectedCommand.Execute(null);
+            act.Should().NotThrow();
+        }
+
+        vm.StatusMessage.Should().StartWith("Could not change the recipe: ");
+    }
+
+    [Fact]
+    public async Task DeleteSelected_WhenAFileIsLocked_SaysSo()
+    {
+        Save(Recipe(1), Today);
+        Save(Recipe(2), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+        vm.Select(Card(vm, 2), true, false);
+
+        using (LockJson(1, FileShare.None))
+        {
+            await vm.DeleteSelectedCommand.ExecuteAsync(null);
+        }
+        Pump();
+
+        Directory.Exists(_store.FolderFor(2)).Should().BeFalse();
+        vm.StatusMessage.Should().StartWith("Could not delete 1 recipe: ");
+    }
+
+    [Fact]
+    public async Task RetrySave_WhenTheFileIsLocked_SaysSo()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Save(Recipe(1, resources: [Failed429()]), Today);
+        var vm = CreateWithRetry(GatedClient(gate));
+        vm.OpenCommand.Execute(Card(vm, 1));
+        var retry = vm.RetryTask!;
+
+        using (LockJson(1))
+        {
+            gate.SetResult();
+            await retry;
+        }
+        Pump();
+
+        vm.StatusMessage.Should().StartWith("Could not change the recipe: ");
     }
 }
