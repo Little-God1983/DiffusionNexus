@@ -12,8 +12,8 @@ internal sealed record ComfyGraphFacts(IReadOnlyList<RecipeLoraUse> Loras, strin
 /// Collects LoRAs with their weights from every loader node of a ComfyUI "prompt"-chunk graph
 /// (#628). This graph is the executed one, so muted and bypassed nodes are already absent. Unlike
 /// <see cref="Distiller.ComfyUiPromptTracer"/> it does not start from a sampler: the example image
-/// samples with RES4LYF's ClownsharKSampler, which the shared tracer does not know, and the
-/// tracer stays as it is for the Distiller and Batch Upscale.
+/// samples with RES4LYF's ClownsharKSampler, which the shared tracer does not know. For the same
+/// reason it judges a zeroed negative itself (#670) instead of asking the tracer.
 /// </summary>
 internal static class ComfyLoraScan
 {
@@ -35,6 +35,7 @@ internal static class ComfyLoraScan
         var models = new List<string>();
         var vaes = new List<string>();
         var classes = new Dictionary<string, string>();
+        var inputsById = new Dictionary<string, JsonElement>();
         var negatives = new Dictionary<string, string>(); // node id -> the node its "negative" comes from
         var literalNegative = false;
 
@@ -52,6 +53,7 @@ internal static class ComfyLoraScan
 
             var classType = classElement.GetString()!;
             classes[nodeId] = classType;
+            inputsById[nodeId] = inputs;
             // Samplers, core or custom, and the conditioning nodes in front of them name it "negative".
             if (inputs.TryGetProperty("negative", out var negative))
             {
@@ -89,33 +91,48 @@ internal static class ComfyLoraScan
             Merge(loras),
             models.Count == 1 ? models[0] : null,
             vaes.Count == 1 ? vaes[0] : null,
-            !literalNegative && AllNegativesZeroedOut(negatives, classes));
+            !literalNegative && AllNegativesZeroedOut(negatives, classes, inputsById));
     }
 
     /// <summary>
-    /// True when every negative that ends in a sampler starts at a ConditioningZeroOut (#670). A node
-    /// whose negative feeds another node's negative (WanImageToVideo, ControlNetApplyAdvanced) only
-    /// passes it on, so the chain is followed through it and only its last node is judged.
+    /// True when every negative that ends in a sampler comes only from ConditioningZeroOut (#670). A node
+    /// whose negative feeds another node's negative (WanImageToVideo, ControlNetApplyAdvanced) only passes
+    /// it on, and so do nodes that take "conditioning" inputs (ConditioningSetTimestepRange, FluxGuidance,
+    /// ConditioningCombine): every source behind them must be a zero-out. Anything else is a real negative.
     /// </summary>
-    private static bool AllNegativesZeroedOut(Dictionary<string, string> negatives, Dictionary<string, string> classes)
+    private static bool AllNegativesZeroedOut(
+        Dictionary<string, string> negatives, Dictionary<string, string> classes, Dictionary<string, JsonElement> inputsById)
     {
         var passedOn = negatives.Values.ToHashSet();
         var ends = negatives.Keys.Where(id => !passedOn.Contains(id)).ToList();
         if (ends.Count == 0) return false;
-        return ends.All(end =>
+
+        var seen = new HashSet<string>();
+        var pending = new Stack<string>(ends.Select(end => negatives[end]));
+        while (pending.Count > 0)
         {
-            var seen = new HashSet<string> { end };
-            var source = negatives[end];
-            while (negatives.TryGetValue(source, out var next) && seen.Add(source)) source = next;
-            return classes.TryGetValue(source, out var type)
-                && type.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase);
-        });
+            var id = pending.Pop();
+            if (!seen.Add(id)) continue;
+            if (!classes.TryGetValue(id, out var type)) return false;
+            if (type.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase)) continue;
+            if (negatives.TryGetValue(id, out var passed))
+            {
+                pending.Push(passed);
+                continue;
+            }
+            var sources = inputsById[id].EnumerateObject()
+                .Where(input => input.Name.StartsWith("conditioning", StringComparison.OrdinalIgnoreCase))
+                .Select(input => LinkTarget(input.Value)).OfType<string>().ToList();
+            if (sources.Count == 0) return false;
+            foreach (var source in sources) pending.Push(source);
+        }
+        return true;
     }
 
-    /// <summary>The source node id of a link input (<c>["12", 0]</c>); null for a literal.</summary>
+    /// <summary>The source node id of a link input (<c>["12", 0]</c>, read as the tracer reads links); null for a literal.</summary>
     private static string? LinkTarget(JsonElement input) =>
-        input.ValueKind == JsonValueKind.Array && input.GetArrayLength() == 2 && input[0].ValueKind == JsonValueKind.String
-            ? input[0].GetString()
+        input.ValueKind == JsonValueKind.Array && input.GetArrayLength() == 2 && input[1].ValueKind == JsonValueKind.Number
+            ? input[0].ToString()
             : null;
 
     /// <summary>

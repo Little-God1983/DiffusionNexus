@@ -36,6 +36,42 @@ public class ComfyUiPromptTracerTests
         r.NegativePrompt.Should().BeNull();
     }
 
+    private const string WanI2V = """
+        {
+          "1": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "2": {"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+          "3": {"class_type":"WanImageToVideo","inputs":{"positive":["1",0],"negative":NEGATIVE}},
+          "4": {"class_type":"KSamplerAdvanced","inputs":{
+                 "model":["5",0],"positive":["3",0],"negative":["3",1],
+                 "steps":4,"cfg":1.0,"noise_seed":5,"sampler_name":"euler","scheduler":"simple"}},
+          "5": {"class_type":"UNETLoader","inputs":{"unet_name":"wan.safetensors"}},
+          "6": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+          "9": {"class_type":"SaveImage","inputs":{"images":["4",0]}}
+        }
+        """;
+
+    /// <summary>
+    /// #670 review: WanImageToVideo / ControlNetApplyAdvanced carry both conditionings. The walk from the
+    /// sampler's negative followed their "positive" input too and returned the positive prompt.
+    /// </summary>
+    [Fact]
+    public void Negative_through_a_node_carrying_both_conditionings_is_the_negative()
+    {
+        var r = ComfyUiPromptTracer.Trace(Graph(WanI2V.Replace("NEGATIVE", """["2",0]""")), null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+    }
+
+    [Fact]
+    public void Zeroed_negative_through_a_node_carrying_both_conditionings_has_no_prompt()
+    {
+        var r = ComfyUiPromptTracer.Trace(Graph(WanI2V.Replace("NEGATIVE", """["6",0]""")), null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().BeNull();
+    }
+
     [Fact]
     public void Plain_checkpoint_no_lora()
     {

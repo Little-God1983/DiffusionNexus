@@ -8,8 +8,9 @@ namespace DiffusionNexus.UI.Services.Distiller;
 
 /// <summary>
 /// Recovers generation parameters from a ComfyUI "prompt"-chunk graph (the resolved API prompt,
-/// NOT the editor "workflow" graph). Faithful C# port of
+/// NOT the editor "workflow" graph). C# port of
 /// ComfyUI-AI2Go-Utils/nodes/civitai_metadata/tracer.py; see comfyui-metadata-extraction-for-csharp.md.
+/// Differs where marked: prompt resolution stops at ConditioningZeroOut and follows pass-through nodes by name (#670).
 /// Using the API prompt is what makes rgthree Power Lora / Lora Stack detection tractable.
 /// </summary>
 internal static class ComfyUiPromptTracer
@@ -118,9 +119,8 @@ internal static class ComfyUiPromptTracer
         cls.Contains("Preview", StringComparison.OrdinalIgnoreCase) ||
         cls.Contains("Output", StringComparison.OrdinalIgnoreCase);
 
-    // BFS over input links; checks the start node itself first. A node matching stopAt is not walked through.
-    private static string? BfsBackward(Dictionary<string, JsonElement> graph, string startId, Func<string, bool> match,
-        Func<string, bool>? stopAt = null)
+    // BFS over input links; checks the start node itself first.
+    private static string? BfsBackward(Dictionary<string, JsonElement> graph, string startId, Func<string, bool> match)
     {
         var seen = new HashSet<string>();
         var queue = new Queue<string>();
@@ -131,7 +131,6 @@ internal static class ComfyUiPromptTracer
             if (!seen.Add(id)) continue;
             if (!TryNode(graph, id, out var cls, out var ins)) continue;
             if (match(cls)) return id;
-            if (stopAt?.Invoke(cls) == true) continue;
             foreach (var prop in ins.EnumerateObject())
                 if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
         }
@@ -143,10 +142,7 @@ internal static class ComfyUiPromptTracer
     {
         if (!sampler.TryGetProperty(key, out var v) || !IsLink(v)) return null;
 
-        // A ConditioningZeroOut has no text: behind it sits the positive encode it zeroes (#670).
-        var encId = BfsBackward(graph, OriginId(v),
-            cls => cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase),
-            cls => cls.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase));
+        var encId = FindEncoder(graph, OriginId(v), key);
         if (encId is null || !TryNode(graph, encId, out _, out var enc)) return null;
 
         if (!enc.TryGetProperty("text", out var text)) return null;
@@ -164,6 +160,32 @@ internal static class ComfyUiPromptTracer
             foreach (var prop in src.EnumerateObject())
                 if (prop.Value.ValueKind == JsonValueKind.String)
                     return prop.Value.GetString();
+        }
+        return null;
+    }
+
+    // BFS from a sampler's positive/negative to its CLIPTextEncode (differs from tracer.py, #670). A node
+    // carrying both conditionings (WanImageToVideo, ControlNetApplyAdvanced) is followed only through the
+    // input of the same name, and a ConditioningZeroOut has no text: behind it sits the positive encode it zeroes.
+    private static string? FindEncoder(Dictionary<string, JsonElement> graph, string startId, string key)
+    {
+        var seen = new HashSet<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(startId);
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!seen.Add(id)) continue;
+            if (!TryNode(graph, id, out var cls, out var ins)) continue;
+            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase)) return id;
+            if (cls.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase)) continue;
+            if (ins.TryGetProperty(key, out var own) && IsLink(own))
+            {
+                queue.Enqueue(OriginId(own));
+                continue;
+            }
+            foreach (var prop in ins.EnumerateObject())
+                if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
         }
         return null;
     }

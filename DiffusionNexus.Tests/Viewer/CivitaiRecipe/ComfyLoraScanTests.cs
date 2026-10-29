@@ -169,6 +169,35 @@ public sealed class ComfyLoraScanTests
     }
 
     [Fact]
+    public void ZeroOutBehindAConditioningNode_IsZeroedOut()
+    {
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+             "3":{"class_type":"ConditioningSetTimestepRange","inputs":{"conditioning":["2",0],"start":0.1,"end":1.0}},
+             "4":{"class_type":"KSampler","inputs":{"negative":["3",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ZeroOutCombinedWithARealNegative_IsNotZeroedOut()
+    {
+        // ComfyUI's SD3 template: the negative is zeroed for part of the steps and used for the rest.
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+             "3":{"class_type":"ConditioningSetTimestepRange","inputs":{"conditioning":["2",0],"start":0.1,"end":1.0}},
+             "4":{"class_type":"ConditioningSetTimestepRange","inputs":{"conditioning":["1",0],"start":0.0,"end":0.1}},
+             "5":{"class_type":"ConditioningCombine","inputs":{"conditioning_1":["3",0],"conditioning_2":["4",0]}},
+             "6":{"class_type":"KSampler","inputs":{"negative":["5",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
     public void NoSampler_IsNotZeroedOut()
     {
         ComfyLoraScan.Scan(Graph("""{"2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}}}"""))
