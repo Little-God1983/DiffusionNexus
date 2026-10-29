@@ -250,7 +250,7 @@ public sealed class RecipeStore
         try
         {
             Directory.CreateDirectory(folder);
-            File.Move(staged, target, overwrite: true);
+            MoveWithRetry(staged, target);
             foreach (var other in OriginalNames.Select(n => Path.Combine(folder, n)).Where(p => p != target && File.Exists(p)))
             {
                 File.Delete(other);
@@ -265,6 +265,27 @@ public sealed class RecipeStore
         }
     }
 
+    // Waits between the attempts of a move another process blocks for a moment (#679): Defender and the search
+    // indexer open a just-written file briefly, and Windows denies replacing it until they let go. Under a second
+    // in all; a lock that stays fails as before.
+    private static readonly int[] MoveRetryDelaysMs = [25, 50, 100, 200, 400];
+
+    private static void MoveWithRetry(string source, string target)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(source, target, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when ((ex is IOException or UnauthorizedAccessException) && attempt < MoveRetryDelaysMs.Length)
+            {
+                Thread.Sleep(MoveRetryDelaysMs[attempt]);
+            }
+        }
+    }
+
     private StoredRecipe Write(SavedRecipe saved)
     {
         var folder = FolderFor(saved.Recipe.ImageId);
@@ -274,7 +295,7 @@ public sealed class RecipeStore
         {
             Directory.CreateDirectory(folder);
             File.WriteAllText(temp, JsonSerializer.Serialize(saved, JsonOptions));
-            File.Move(temp, path, overwrite: true);
+            MoveWithRetry(temp, path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
