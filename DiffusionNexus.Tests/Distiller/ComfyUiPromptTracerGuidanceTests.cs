@@ -128,4 +128,16 @@ public class ComfyUiPromptTracerGuidanceTests
     {
         Trace().Guidance.Should().BeNull();
     }
+
+    /// <summary>#674 review: like the pack, only a plain CLIPTextEncode ends the walk; CLIPTextEncodeControlnet passes conditioning on.</summary>
+    [Fact]
+    public void Flux_guidance_behind_clip_text_encode_controlnet()
+    {
+        var r = Trace(positive: """["9",0]""", extra: """
+              ,"8": {"class_type":"FluxGuidance","inputs":{"conditioning":["2",0],"guidance":3.5}},
+              "9": {"class_type":"CLIPTextEncodeControlnet","inputs":{"clip":["13",0],"conditioning":["8",0],"text":"cn"}}
+            """);
+
+        r.Guidance.Should().Be(3.5);
+    }
 }

@@ -284,7 +284,7 @@ internal static class ComfyUiPromptTracer
 
     // Flux's built-in guidance on the positive path (the pack's _find_guidance, #674): the nearest FluxGuidance /
     // CLIPTextEncodeFlux guidance. Null when there is none, when FluxDisableGuidance comes first, or when it is
-    // wired. The walk follows the same inputs as the prompt walk and stops at text encoders and samplers.
+    // wired. The walk follows the same inputs as the prompt walk and stops at CLIPTextEncode and samplers.
     private static double? FindGuidance(Dictionary<string, JsonElement> graph, JsonElement holder, string input)
     {
         if (!holder.TryGetProperty(input, out var link) || !IsLink(link)) return null;
@@ -299,7 +299,8 @@ internal static class ComfyUiPromptTracer
             if (!TryNode(graph, id, out var cls, out var ins)) continue;
             if (GuidanceClasses.Contains(cls)) return ReadDouble(ins, "guidance");
             if (cls.Equals("FluxDisableGuidance", StringComparison.OrdinalIgnoreCase)) return null;
-            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase) || SamplerClasses.Contains(cls)) continue;
+            // Only a plain CLIPTextEncode ends the walk, as in the pack: CLIPTextEncodeControlnet passes its conditioning on.
+            if (cls.Equals("CLIPTextEncode", StringComparison.OrdinalIgnoreCase) || SamplerClasses.Contains(cls)) continue;
             foreach (var next in ConditioningLinks(ins, "positive")) queue.Enqueue(OriginId(next));
         }
         return null;
