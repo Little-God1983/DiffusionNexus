@@ -80,6 +80,15 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<RecipeGroupViewModel> Groups { get; } = [];
 
+    /// <summary>
+    /// Called when the tab is shown: it can be opened before Browse Civitai ever was, and until the host has
+    /// read the library every card says "Checking library…" and nothing can be queued.
+    /// </summary>
+    public Task ActivateAsync() => _host.EnsureInstalledLoadedAsync();
+
+    /// <summary>Whether the cards are judged against the real library yet.</summary>
+    public bool IsLibraryRead => _host.IsInstalledLoaded;
+
     /// <summary>"1 recipe" / "3 recipes", the one wording every text of the tab uses.</summary>
     public static string Recipes(int count) => count == 1 ? "1 recipe" : $"{count} recipes";
 
@@ -99,8 +108,14 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     private void OnInstalledChanged(object? sender, EventArgs e)
     {
         var installed = _host.Installed;
-        foreach (var card in _cards) card.ApplyStatus(installed);
-        OpenRecipe?.ApplyInstalledIndex(installed);
+        foreach (var card in _cards) card.ApplyStatus(installed, IsLibraryRead);
+        if (OpenRecipe is { } open)
+        {
+            open.ApplyInstalledIndex(installed);
+            open.IsLibraryRead = IsLibraryRead;
+        }
+        OnPropertyChanged(nameof(IsLibraryRead));
+        QueueMissingCommand.NotifyCanExecuteChanged();
         Rebuild();
     }
 
@@ -204,7 +219,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         foreach (var stored in loaded)
         {
             var card = BuildCard(stored, now);
-            card.ApplyStatus(installed);
+            card.ApplyStatus(installed, IsLibraryRead);
             if (previous.TryGetValue(card.ImageId, out var old)) card.CopyStateFrom(old);
             cards.Add(card);
         }
@@ -259,6 +274,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
                 : $"{Recipes(hidden)} hidden by filters in {where}";
 
         EmptyText = _visible.Count > 0 ? null
+            : list.Count > 0 && !IsLibraryRead && StatusFilter != RecipeStatusFilter.All ? RecipeCardViewModel.CheckingText
             : list.Count == 0
                 ? (IsKeptView
                     ? "Nothing kept yet. Use ★ on a recipe to keep it."
@@ -328,6 +344,13 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     {
         var selected = Selected();
         SelectedCount = selected.Count;
+        if (!IsLibraryRead)
+        {
+            // Against the empty index every LoRA would count as missing; the button claims no number yet.
+            QueueButtonText = "Queue missing LoRAs";
+            QueueTooltip = RecipeCardViewModel.CheckingText;
+            return;
+        }
         QueueButtonText = $"Queue missing LoRAs ({QueueCandidates(selected).Count})";
 
         // Each LoRA once across the selection, like the button: unlinked by hash or name, failed by version id.
@@ -380,6 +403,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     private CivitaiRecipeViewModel BuildRecipeView(CivitaiImageRecipe recipe) =>
         new(recipe, _host.Installed, _host.CreateRecipeCard, _clipboard)
         {
+            IsLibraryRead = IsLibraryRead,
             UrlOpener = _host.OpenUrl,
             EnqueueHandler = pairs =>
             {
@@ -505,7 +529,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         _store.SetKept(ids, kept);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsLibraryRead))]
     private async Task QueueMissingAsync()
     {
         var selected = Selected();

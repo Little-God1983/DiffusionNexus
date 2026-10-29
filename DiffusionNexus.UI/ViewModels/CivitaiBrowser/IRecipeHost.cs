@@ -11,6 +11,15 @@ public interface IRecipeHost
 {
     CivitaiInstalledIndex Installed { get; }
 
+    /// <summary>
+    /// False until a snapshot of the library has been applied: before that <see cref="Installed"/> is empty,
+    /// and judging against it would call every LoRA missing.
+    /// </summary>
+    bool IsInstalledLoaded { get; }
+
+    /// <summary>Reads the library unless it has been read; concurrent calls share one read. Starts no search.</summary>
+    Task EnsureInstalledLoadedAsync();
+
     /// <summary>Raised after the installed index was replaced and applied to the browser's views.</summary>
     event EventHandler? InstalledIndexChanged;
 

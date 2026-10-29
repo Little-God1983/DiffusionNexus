@@ -168,6 +168,13 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
     public string SendToComfyUiTip => "Coming in a later version";
 
+    /// <summary>
+    /// False while the host has not read the library yet (#667): every row would look not installed, so
+    /// "Add to queue" waits instead of queueing installed LoRAs.
+    /// </summary>
+    [ObservableProperty, NotifyCanExecuteChangedFor(nameof(AddToQueueCommand))]
+    private bool _isLibraryRead = true;
+
     public Action<List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)>>? EnqueueHandler { get; set; }
 
     public Action<string>? UrlOpener { get; set; }
@@ -224,7 +231,7 @@ public partial class CivitaiRecipeViewModel : ObservableObject
         if (row?.CivitaiUrl is { } url) UrlOpener?.Invoke(url);
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(IsLibraryRead))]
     private void AddToQueue()
     {
         var pairs = SelectedPairs();

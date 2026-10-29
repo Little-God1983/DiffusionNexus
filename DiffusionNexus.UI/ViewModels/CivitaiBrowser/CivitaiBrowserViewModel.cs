@@ -24,7 +24,7 @@ namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 /// Civitai browser sub-tab. Search, filters, multi-select, cursor pagination, and
 /// a persistent concurrent download queue with SHA256 verification + sidecar writing.
 /// </summary>
-public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
+public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost, IDisposable
 {
     private readonly ICivitaiClient? _civitaiClient;
     private readonly IAppSettingsService? _settingsService;
@@ -32,6 +32,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
     private readonly CivitaiDownloadQueue _queue;
     private readonly CivitaiWaitlist _waitlist;
     private ICivitaiApiKeyProvider? _apiKeyProvider;
+    private readonly ILibraryChangeNotifier? _changeNotifier;
     private Avalonia.Threading.DispatcherTimer? _waitlistCountdownTimer;
 
     private CancellationTokenSource? _searchCts;
@@ -63,7 +64,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
         CivitaiDownloadQueue queue,
         CivitaiWaitlist waitlist,
         ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource,
-        ICivitaiApiKeyProvider? apiKeyProvider = null)
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        ILibraryChangeNotifier? changeNotifier = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -72,6 +74,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
         _waitlist = waitlist;
         _apiKeyProvider = apiKeyProvider;
         StartWaitlistCountdownTimer();
+
+        // A finished download changes what the cards and the Recipes tab must call installed (#667).
+        _changeNotifier = changeNotifier;
+        if (_changeNotifier is not null) _changeNotifier.ModelDownloaded += OnLibraryModelDownloaded;
 
         SortOptions = new ObservableCollection<string>
         {
@@ -1912,25 +1918,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
     {
         try
         {
-            if (App.Services is null) return;
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var uow = scope.ServiceProvider.GetService<IUnitOfWork>();
-            if (uow is null) return;
-
-            // Honor the IsEnabled toggle on LoRA sources: a LoRA stored under a
-            // disabled source no longer counts as "installed" for the Show flyout's
-            // Installed toggle / the card's Installed badge. Mirrors the Installed
-            // tab's filtering rule.
-            var settings = scope.ServiceProvider.GetService<IAppSettingsService>();
-            IReadOnlyList<string>? enabledRoots = null;
-            if (settings is not null)
-            {
-                enabledRoots = await settings.GetEnabledLoraSourcesAsync();
-            }
-
-            var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
-            var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
-            var index = new CivitaiInstalledIndex(set, hashes);
+            var index = await (InstalledIndexSource ?? ReadInstalledIndexAsync)();
+            if (index is null) return;
             _installed = index;
             await Dispatcher.UIThread.InvokeAsync(() => ApplyInstalledSnapshot(index));
         }
@@ -1940,7 +1929,83 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
         }
     }
 
+    /// <summary>The installed set from the database; null where there is none (designer, tests).</summary>
+    private static async Task<CivitaiInstalledIndex?> ReadInstalledIndexAsync()
+    {
+        if (App.Services is null) return null;
+        using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var uow = scope.ServiceProvider.GetService<IUnitOfWork>();
+        if (uow is null) return null;
+
+        // Honor the IsEnabled toggle on LoRA sources: a LoRA stored under a
+        // disabled source no longer counts as "installed" for the Show flyout's
+        // Installed toggle / the card's Installed badge. Mirrors the Installed
+        // tab's filtering rule.
+        var settings = scope.ServiceProvider.GetService<IAppSettingsService>();
+        IReadOnlyList<string>? enabledRoots = null;
+        if (settings is not null)
+        {
+            enabledRoots = await settings.GetEnabledLoraSourcesAsync();
+        }
+
+        var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
+        var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
+        return new CivitaiInstalledIndex(set, hashes);
+    }
+
     public CivitaiInstalledIndex Installed => _installed;
+
+    /// <summary>True once a snapshot of the library has been applied, by whichever path read it.</summary>
+    public bool IsInstalledLoaded { get; private set; }
+
+    private readonly object _installedLoadGate = new();
+    private Task? _installedLoad;
+
+    /// <summary>The Recipes tab's way in (#667): it can be opened before this browser ever was.</summary>
+    public Task EnsureInstalledLoadedAsync()
+    {
+        if (IsInstalledLoaded) return Task.CompletedTask;
+        lock (_installedLoadGate)
+        {
+            // A read that ended without a snapshot (no database, an error) is tried again by the next caller.
+            if (_installedLoad is null || _installedLoad.IsCompleted) _installedLoad = RefreshInstalledSetAsync();
+            return _installedLoad;
+        }
+    }
+
+    /// <summary>Test seam: replaces the database read of the installed set.</summary>
+    internal Func<Task<CivitaiInstalledIndex?>>? InstalledIndexSource { get; set; }
+
+    /// <summary>How long finished downloads are gathered before the installed set is read again.</summary>
+    internal TimeSpan InstalledRefreshDelay { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>The refresh a finished download scheduled, or the last one; tests wait on it.</summary>
+    internal Task InstalledRefreshAfterDownload { get; private set; } = Task.CompletedTask;
+
+    private int _installedRefreshQueued;
+
+    // Raised on the downloading thread. A queue batch raises one per file: the first schedules the
+    // refresh, the ones within the delay ride along, a later one schedules its own.
+    private void OnLibraryModelDownloaded(object? sender, ModelDownloadedEventArgs e)
+    {
+        if (Interlocked.Exchange(ref _installedRefreshQueued, 1) == 1) return;
+        InstalledRefreshAfterDownload = RefreshInstalledAfterDownloadsAsync();
+    }
+
+    private async Task RefreshInstalledAfterDownloadsAsync()
+    {
+        await Task.Delay(InstalledRefreshDelay).ConfigureAwait(false);
+        Interlocked.Exchange(ref _installedRefreshQueued, 0);
+        _logger?.Debug(LogCategory.Network, "CivitaiBrowser", "A download finished: reading the installed set again.");
+        await RefreshInstalledSetAsync();
+    }
+
+    /// <summary>Detaches from the library-changed signal, a singleton that would otherwise keep this view model alive.</summary>
+    public void Dispose()
+    {
+        if (_changeNotifier is not null) _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
+        GC.SuppressFinalize(this);
+    }
 
     public event EventHandler? InstalledIndexChanged;
 
@@ -1948,6 +2013,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
     internal void ApplyInstalledSnapshot(CivitaiInstalledIndex index)
     {
         _installed = index;
+        IsInstalledLoaded = true;
 
         void Apply()
         {

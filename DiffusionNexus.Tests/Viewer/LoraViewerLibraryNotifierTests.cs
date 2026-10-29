@@ -71,8 +71,8 @@ public class LoraViewerLibraryNotifierTests
 
         _ = CreateViewModel(notifier);
 
-        notifier.SubscriberCount.Should().Be(1,
-            "the Installed tab must rebuild whichever surface downloaded — including the Browse queue");
+        notifier.SubscriberCount.Should().Be(2,
+            "the Installed tab must rebuild whichever surface downloaded — including the Browse queue — and the browser must read its installed set again for the Recipes tab (#667)");
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class LoraViewerLibraryNotifierTests
         // rebuild, and keep each stale copy hitting the database on every download.
         var notifier = new FakeLibraryChangeNotifier();
         var vm = CreateViewModel(notifier);
-        notifier.SubscriberCount.Should().Be(1);
+        notifier.SubscriberCount.Should().Be(2, "the viewer and its Browse Civitai view model");
 
         vm.Dispose();
 

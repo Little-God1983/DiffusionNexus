@@ -58,6 +58,34 @@ public partial class RecipesTabView : UserControl
 
     private RecipesTabViewModel? ViewModel => DataContext as RecipesTabViewModel;
 
+    private bool _attached;
+
+    // As in the browser view: the DataContext binding can resolve before or after the attach, so both
+    // hooks try; ActivateAsync shares one library read however often the tab is shown.
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _attached = true;
+        TryActivate();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnDetachedFromVisualTree(e);
+        _attached = false;
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        TryActivate();
+    }
+
+    private void TryActivate()
+    {
+        if (_attached && ViewModel is { } vm) _ = vm.ActivateAsync();
+    }
+
     private void OnStatusAll(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => SetStatus(RecipeStatusFilter.All);
     private void OnStatusReady(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => SetStatus(RecipeStatusFilter.Ready);
     private void OnStatusMissing(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => SetStatus(RecipeStatusFilter.Missing);

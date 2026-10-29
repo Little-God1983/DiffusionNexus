@@ -504,7 +504,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             apiKeyProvider: _apiKeyProvider);
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger, apiCache: apiCache);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
-            apiKeyProvider: _apiKeyProvider);
+            apiKeyProvider: _apiKeyProvider, changeNotifier: _changeNotifier);
 
         // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
         // disk seams are the production implementations.
@@ -573,6 +573,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
 
         RecipesViewModel.Dispose();
+        BrowserViewModel.Dispose();
 
         GC.SuppressFinalize(this);
     }

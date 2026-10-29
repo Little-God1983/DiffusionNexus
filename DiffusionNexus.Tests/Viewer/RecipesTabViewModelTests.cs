@@ -26,11 +26,14 @@ public sealed class RecipesTabViewModelTests : IDisposable
     private readonly Mock<IDialogService> _dialogs = new();
     private readonly Mock<IUnifiedLogger> _logger = new();
     private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
+    private bool _libraryRead = true;
 
     public RecipesTabViewModelTests()
     {
         _store = new RecipeStore(_root, null);
         _host.SetupGet(h => h.Installed).Returns(() => _installed);
+        _host.SetupGet(h => h.IsInstalledLoaded).Returns(() => _libraryRead);
+        _host.Setup(h => h.EnsureInstalledLoadedAsync()).Returns(Task.CompletedTask);
         _host.Setup(h => h.CreateRecipeCard(It.IsAny<CivitaiModel>())).Returns<CivitaiModel>(m => new CivitaiResultViewModel(m, true));
         _host.Setup(h => h.EnqueueRecipeAsync(It.IsAny<List<(CivitaiResultViewModel, CivitaiVersionPickItemViewModel)>>())).Returns(Task.CompletedTask);
         _dialogs.Setup(d => d.ShowConfirmAsync(It.IsAny<string>(), It.IsAny<string>())).ReturnsAsync(true);
@@ -834,6 +837,67 @@ public sealed class RecipesTabViewModelTests : IDisposable
         vm.EmptyText.Should().Be("No recipe matches. 2 recipes hidden by filters in History");
         vm.StatusFilter = RecipeStatusFilter.All;
         vm.EmptyText.Should().BeNull();
+    }
+
+    /// <summary>Opened before Browse Civitai, the tab must not judge against an empty library (every LoRA "missing", installed ones queued).</summary>
+    [Fact]
+    public void BeforeTheLibraryIsRead_CardsSayChecking_AndNothingCanBeQueued()
+    {
+        _libraryRead = false;
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")]), Today);
+        Save(Recipe(2, resources: [Lora(200, 20, "Bar")]), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+        vm.Select(Card(vm, 2), true, false);
+
+        Card(vm, 1).StatusText.Should().Be("Checking library…");
+        Card(vm, 1).IsReady.Should().BeFalse();
+        Card(vm, 1).IsMissing.Should().BeFalse();
+        vm.QueueMissingCommand.CanExecute(null).Should().BeFalse();
+        vm.QueueButtonText.Should().Be("Queue missing LoRAs");
+        vm.StatusFilter = RecipeStatusFilter.Missing;
+        Ids(vm).Should().BeEmpty();
+        vm.EmptyText.Should().Be("Checking library…");
+        vm.StatusFilter = RecipeStatusFilter.All;
+        vm.OpenCommand.Execute(Card(vm, 1));
+        vm.OpenRecipe!.AddToQueueCommand.CanExecute(null).Should().BeFalse();
+        vm.BackCommand.Execute(null);
+
+        _installed = new CivitaiInstalledIndex([100], []);
+        _libraryRead = true;
+        _host.Raise(h => h.InstalledIndexChanged += null, EventArgs.Empty);
+
+        Card(vm, 1).StatusText.Should().Be("Ready");
+        Card(vm, 2).StatusText.Should().Be("1 of 1 LoRAs missing");
+        vm.QueueMissingCommand.CanExecute(null).Should().BeTrue();
+        vm.Select(Card(vm, 1), false, false); // the Missing filter above cleared the selection
+        vm.Select(Card(vm, 2), true, false);
+        vm.QueueButtonText.Should().Be("Queue missing LoRAs (1)");
+    }
+
+    [Fact]
+    public void OpenRecipe_WhileTheLibraryIsRead_CanQueueOnceItIs()
+    {
+        _libraryRead = false;
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")]), Today);
+        var vm = Create();
+        vm.OpenCommand.Execute(Card(vm, 1));
+        vm.OpenRecipe!.AddToQueueCommand.CanExecute(null).Should().BeFalse();
+
+        _libraryRead = true;
+        _host.Raise(h => h.InstalledIndexChanged += null, EventArgs.Empty);
+
+        vm.OpenRecipe!.AddToQueueCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Activate_AsksTheHostToReadTheLibrary()
+    {
+        var vm = Create();
+
+        await vm.ActivateAsync();
+
+        _host.Verify(h => h.EnsureInstalledLoadedAsync(), Times.Once);
     }
 
     [Fact]

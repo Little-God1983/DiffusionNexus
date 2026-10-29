@@ -298,6 +298,81 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         ((IRecipeHost)vm).Installed.Should().BeSameAs(index);
     }
 
+    private static void PumpUntil(Func<bool> done)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.UIThread.RunJobs();
+            Thread.Sleep(5);
+        }
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>The Recipes tab can be opened before Browse Civitai: it reads the library itself, without a search.</summary>
+    [Fact]
+    public async Task EnsureInstalledLoaded_BeforeTheBrowserWasShown_ReadsTheLibraryOnce()
+    {
+        var (vm, _) = Create();
+        var reads = 0;
+        var index = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        vm.InstalledIndexSource = async () => { Interlocked.Increment(ref reads); await release.Task; return index; };
+        var raised = 0;
+        IRecipeHost host = vm;
+        host.InstalledIndexChanged += (_, _) => raised++;
+        host.IsInstalledLoaded.Should().BeFalse();
+
+        var first = host.EnsureInstalledLoadedAsync();
+        var second = host.EnsureInstalledLoadedAsync();
+        release.SetResult();
+        PumpUntil(() => first.IsCompleted && second.IsCompleted);
+        await Task.WhenAll(first, second);
+        await host.EnsureInstalledLoadedAsync();
+
+        reads.Should().Be(1);
+        raised.Should().Be(1);
+        host.IsInstalledLoaded.Should().BeTrue();
+        host.Installed.Should().BeSameAs(index);
+    }
+
+    [Fact]
+    public void DownloadBurst_RefreshesTheInstalledSetOnce_UntilDisposed()
+    {
+        var notifier = new FakeNotifier();
+        var queue = new CivitaiDownloadQueue(null, null, null, null, persistPathOverride: Path.Combine(_dir, "queue.json"));
+        var waitlist = new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_dir, "waitlist.json"));
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue, waitlist, null, changeNotifier: notifier)
+        {
+            InstalledRefreshDelay = TimeSpan.FromMilliseconds(100),
+        };
+        var reads = 0;
+        vm.InstalledIndexSource = () =>
+        {
+            Interlocked.Increment(ref reads);
+            return Task.FromResult<CivitaiInstalledIndex?>(new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>()));
+        };
+
+        for (var i = 0; i < 5; i++) notifier.NotifyModelDownloaded(i);
+        PumpUntil(() => vm.InstalledRefreshAfterDownload.IsCompleted && ((IRecipeHost)vm).IsInstalledLoaded);
+
+        reads.Should().Be(1);
+        ((IRecipeHost)vm).IsInstalledLoaded.Should().BeTrue();
+
+        vm.Dispose();
+        notifier.SubscriberCount.Should().Be(0);
+    }
+
+    private sealed class FakeNotifier : DiffusionNexus.Domain.Services.ILibraryChangeNotifier
+    {
+        public event EventHandler<DiffusionNexus.Domain.Services.ModelDownloadedEventArgs>? ModelDownloaded;
+
+        public int SubscriberCount => ModelDownloaded?.GetInvocationList().Length ?? 0;
+
+        public void NotifyModelDownloaded(int modelId) =>
+            ModelDownloaded?.Invoke(this, new DiffusionNexus.Domain.Services.ModelDownloadedEventArgs(modelId));
+    }
+
     private sealed class PngHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>

@@ -76,10 +76,23 @@ public partial class RecipeCardViewModel : ObservableObject
     /// <summary>The LoRAs the card's recipe is missing, set by <see cref="ApplyStatus"/>.</summary>
     internal RecipeStatus? Status { get; private set; }
 
-    /// <summary>Judges the recipe against the library; a broken recipe is neither Ready nor Missing.</summary>
-    internal void ApplyStatus(CivitaiInstalledIndex installed)
+    internal const string CheckingText = "Checking library…";
+
+    /// <summary>
+    /// Judges the recipe against the library; a broken recipe is neither Ready nor Missing, and neither is
+    /// any recipe while the library has not been read (<paramref name="libraryRead"/> false).
+    /// </summary>
+    internal void ApplyStatus(CivitaiInstalledIndex installed, bool libraryRead = true)
     {
         if (Stored.Saved is null) return;
+        if (!libraryRead)
+        {
+            Status = null;
+            StatusText = CheckingText;
+            IsReady = false;
+            IsMissing = false;
+            return;
+        }
         Status = RecipeStatus.Compute(Stored.Saved.Recipe, installed);
         StatusText = Status.Text;
         IsReady = Status.IsReady;
