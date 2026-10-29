@@ -252,7 +252,8 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         var vm = CreateWithStore();
         await Search(vm, "https://civitai.com/images/7");
 
-        vm.Recipe.Should().NotBeNull();
+        // CI failed here once (74abaa10) and never locally: say what the browser reported instead.
+        vm.Recipe.Should().NotBeNull($"the saved copy is shown (status: {vm.StatusMessage}; saved: {Store.TryLoad(7)?.ReadError ?? "readable"})");
         vm.LinkLookupNotice.Should().StartWith("Could not refresh this recipe from Civitai (").And.EndWith("). Showing the saved copy.");
         Store.TryLoad(7)!.Saved!.PastedAt.Should().Be(pastedAt);
     }

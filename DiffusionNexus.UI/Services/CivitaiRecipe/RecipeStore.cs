@@ -282,6 +282,9 @@ public sealed class RecipeStore
             _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {saved.Recipe.ImageId} could not be written: {ex.Message}", path);
             throw;
         }
+        // Two writes inside one file-time tick can leave the same write time and length (a re-paste that only
+        // moves PastedAt): the stamp cannot tell them apart, so this store's own write always reads afresh.
+        _parsed.TryRemove(folder, out _);
         return Read(saved.Recipe.ImageId, folder);
     }
 
