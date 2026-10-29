@@ -404,6 +404,34 @@ public class ComfyUiPromptTracerTests
         r.NegativeZeroedOut.Should().BeFalse();
     }
 
+    /// <summary>
+    /// #672 review: the pack's own case. CLIPTextEncodeSDXL is matched as the encoder here (the "CLIPTextEncode"
+    /// substring) rather than as an unknown one, and its text is not read: the negative stays unknown either way.
+    /// </summary>
+    [Fact]
+    public void Zero_out_beside_an_sdxl_encoder_is_unknown_not_zeroed()
+    {
+        var r = TraceKSampler("""["10",0]""", """
+          ,"8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "9": {"class_type":"CLIPTextEncodeSDXL","inputs":{"text_g":"blurry","text_l":"blurry","clip":["1",1]}},
+          "10": {"class_type":"ConditioningCombine","inputs":{"conditioning_1":["8",0],"conditioning_2":["9",0]}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Positive_through_a_conditioning_pass_through_is_read()
+    {
+        var r = TraceKSampler("""["3",0]""", """
+          ,"8": {"class_type":"ConditioningConcat","inputs":{"conditioning_to":["2",0],"conditioning_from":["2",0]}}
+        """, positive: """["8",0]""");
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+    }
+
     [Fact]
     public void Zero_out_beside_a_missing_node_is_unknown_not_zeroed()
     {
