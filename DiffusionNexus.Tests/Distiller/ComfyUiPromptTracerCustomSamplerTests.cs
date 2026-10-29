@@ -245,4 +245,29 @@ public class ComfyUiPromptTracerCustomSamplerTests
         r.Steps.Should().Be(20);
         r.Scheduler.Should().BeNull();
     }
+
+    /// <summary>
+    /// #673 review: Image Saver's selector nodes feed KSamplerSelect's sampler_name and BasicScheduler's scheduler.
+    /// The settings node holds a link there, which is followed to the selector (differs from tracer.py).
+    /// </summary>
+    [Theory]
+    [InlineData("SamplerCustom")]
+    [InlineData("SamplerCustomAdvanced")]
+    public void Settings_node_values_linked_to_selector_nodes_are_followed(string samplerClass)
+    {
+        var r = Flux(
+            select: """{"class_type":"KSamplerSelect","inputs":{"sampler_name":["20",0]}}""",
+            scheduler: """{"class_type":"BasicScheduler","inputs":{"model":["14",0],"scheduler":["21",0],"steps":20,"denoise":1.0}}""",
+            sampler: samplerClass == "SamplerCustom"
+                ? """{"class_type":"SamplerCustom","inputs":{"model":["14",0],"noise_seed":7,"cfg":6.0,"positive":["2",0],"negative":["3",0],"sampler":["5",0],"sigmas":["6",0]}}"""
+                : Advanced,
+            extra: """
+              ,"20": {"class_type":"Sampler Selector (Image Saver)","inputs":{"sampler_name":"dpmpp_2m"}},
+              "21": {"class_type":"Scheduler Selector (Image Saver)","inputs":{"scheduler":"karras"}}
+            """);
+
+        r.SamplerName.Should().Be("dpmpp_2m");
+        r.Scheduler.Should().Be("karras");
+        r.Steps.Should().Be(20);
+    }
 }

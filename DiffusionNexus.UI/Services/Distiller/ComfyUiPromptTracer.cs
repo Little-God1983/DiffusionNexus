@@ -98,18 +98,14 @@ internal static class ComfyUiPromptTracer
         var (selectClass, select) = SettingsNode(graph, s, "sampler", "sampler_name", SamplerNodeNames);
         var (_, noise) = SettingsNode(graph, s, "noise", "noise_seed");
 
-        int? steps = ReadInt(s, "steps") ?? ReadInt(sched, "steps");
+        int? steps = SettingInt(graph, s, "steps") ?? SettingInt(graph, sched, "steps");
         double? cfg = names.Cfg is null ? null : ReadDouble(holder, names.Cfg);
         long? seed = ReadLong(s, "seed") ?? ReadLong(s, "noise_seed") ?? ReadLong(noise, "noise_seed");
-        string? samplerName = ReadString(s, "sampler_name") ?? ReadString(select, "sampler_name")
+        string? samplerName = SettingString(graph, s, "sampler_name") ?? SettingString(graph, select, "sampler_name")
             ?? SamplerNodeNames.GetValueOrDefault(selectClass);
-        string? scheduler = ReadString(s, "scheduler") ?? ReadString(sched, "scheduler")
+        string? scheduler = SettingString(graph, s, "scheduler") ?? SettingString(graph, sched, "scheduler")
             ?? SchedulerNodeNames.GetValueOrDefault(schedulerClass);
         double? denoise = ReadDouble(s, "denoise") ?? ReadDouble(sched, "denoise");
-
-        // A "Sampler Selector"/KSamplerSelect wired into a plain KSampler's sampler_name input (a link, not a
-        // literal): follow it so the graph doesn't come out with an empty sampler (differs from tracer.py).
-        samplerName ??= ReadString(SettingsNode(graph, s, "sampler_name", "sampler_name").Inputs, "sampler_name");
 
         string? positive = ResolvePrompt(graph, holder, names.Positive, "positive", out _);
         var negativeZeroed = false;
@@ -359,6 +355,15 @@ internal static class ComfyUiPromptTracer
         }
         return ("", NoInputs);
     }
+
+    // A setting read literally, or, when the input is a link, from the nearest node behind it with that input:
+    // Image Saver's "Sampler Selector" / "Scheduler Selector" wired into a KSampler, KSamplerSelect or
+    // BasicScheduler. Differs from tracer.py, which reads literals only and would leave these graphs empty.
+    private static string? SettingString(Dictionary<string, JsonElement> graph, JsonElement node, string key) =>
+        ReadString(node, key) ?? ReadString(SettingsNode(graph, node, key, key).Inputs, key);
+
+    private static int? SettingInt(Dictionary<string, JsonElement> graph, JsonElement node, string key) =>
+        ReadInt(node, key) ?? ReadInt(SettingsNode(graph, node, key, key).Inputs, key);
 
     private static int LinkSlot(JsonElement link) => link[1].TryGetInt32(out var i) ? i : 0;
 
