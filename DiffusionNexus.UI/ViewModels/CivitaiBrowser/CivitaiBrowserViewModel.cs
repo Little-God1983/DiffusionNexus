@@ -491,7 +491,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
                         var stored = await Task.Run(() => store.Save(result.Recipe, DateTimeOffset.Now), CancellationToken.None);
                         if (stored.Saved is not null) toShow = stored.Saved.Recipe;
                     }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
                         saveError = $"The recipe could not be saved: {ex.Message}";
                     }

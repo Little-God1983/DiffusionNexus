@@ -294,6 +294,78 @@ public sealed class RecipeStoreTests : IDisposable
         _store.TryLoad(1)!.Saved!.Kept.Should().BeTrue();
     }
 
+    /// <summary>Saves recipe <paramref name="id"/> and rewrites its json through <paramref name="edit"/>, as a hand edit or a newer build would.</summary>
+    private string SaveAndEdit(long id, Action<System.Text.Json.Nodes.JsonObject> edit)
+    {
+        _store.Save(Recipe(id), PastedAt);
+        var path = Path.Combine(_store.FolderFor(id), "recipe.json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        edit(json);
+        File.WriteAllText(path, json.ToJsonString());
+        return path;
+    }
+
+    [Theory]
+    [InlineData("Image")]
+    [InlineData("Data")]
+    [InlineData("Resources")]
+    [InlineData("UnlinkedLoras")]
+    public void LoadAll_RecipePartMissing_IsBroken(string part)
+    {
+        SaveAndEdit(5, json => json["Recipe"]![part] = null);
+
+        var entry = _store.LoadAll().Single();
+
+        entry.IsBroken.Should().BeTrue();
+        entry.ReadError.Should().Be("recipe.json holds no recipe.");
+    }
+
+    [Fact]
+    public void LoadAll_NewerFormat_IsBroken_AndSaysSo()
+    {
+        SaveAndEdit(5, json => json["FormatVersion"] = SavedRecipe.CurrentFormat + 1);
+
+        var entry = _store.LoadAll().Single();
+
+        entry.IsBroken.Should().BeTrue();
+        entry.IsNewerFormat.Should().BeTrue();
+        entry.ReadError.Should().Be("Made by a newer version of DiffusionNexus");
+    }
+
+    [Fact]
+    public void NewerFormat_IsNeverWritten()
+    {
+        var path = SaveAndEdit(5, json =>
+        {
+            json["FormatVersion"] = SavedRecipe.CurrentFormat + 1;
+            json["SomethingNew"] = "kept as it is";
+        });
+        var before = File.ReadAllBytes(path);
+
+        _store.SetKept([5], true);
+        var save = () => _store.Save(Recipe(5), PastedAt);
+        var update = () => _store.Update(Recipe(5));
+
+        save.Should().Throw<InvalidOperationException>().WithMessage("*newer version of DiffusionNexus*");
+        update.Should().Throw<InvalidOperationException>().WithMessage("*newer version of DiffusionNexus*");
+        File.ReadAllBytes(path).Should().Equal(before);
+    }
+
+    [Fact]
+    public void Read_DeletesAStaleTempFile_AndKeepsAFreshOne()
+    {
+        _store.Save(Recipe(5), PastedAt);
+        _store.Save(Recipe(6), PastedAt);
+        var stale = WriteFile(5, "recipe.json.tmp");
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-2));
+        var fresh = WriteFile(6, "recipe.json.tmp");
+
+        _store.LoadAll();
+
+        File.Exists(stale).Should().BeFalse();
+        File.Exists(fresh).Should().BeTrue("a save may be writing it right now");
+    }
+
     [Fact]
     public void IsDefiniteFailure_OnlyForGoneResources()
     {

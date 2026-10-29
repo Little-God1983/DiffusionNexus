@@ -12,6 +12,10 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
 {
     private const string LogSource = "CivitaiRecipe";
     private const string JsonName = "recipe.json";
+    private static readonly TimeSpan StaleTempAge = TimeSpan.FromHours(1);
+
+    /// <summary>The read error of a recipe a newer version wrote.</summary>
+    public const string NewerFormatText = "Made by a newer version of DiffusionNexus";
 
     /// <summary>The only names an original is stored under; an in-flight temp download never matches.</summary>
     internal static readonly string[] OriginalNames = ["original.png", "original.jpg", "original.webp"];
@@ -61,7 +65,9 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         StoredRecipe stored;
         lock (_gate)
         {
-            var existing = TryLoad(recipe.ImageId)?.Saved;
+            var current = TryLoad(recipe.ImageId);
+            ThrowIfNewerFormat(current);
+            var existing = current?.Saved;
             if (existing is not null) recipe = RecipeMerge.Refresh(existing.Recipe, recipe);
             stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, pastedAt, existing?.Kept ?? false, recipe));
         }
@@ -79,7 +85,9 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         StoredRecipe stored;
         lock (_gate)
         {
-            var existing = TryLoad(recipe.ImageId)?.Saved;
+            var current = TryLoad(recipe.ImageId);
+            ThrowIfNewerFormat(current);
+            var existing = current?.Saved;
             if (existing is null) return null;
             stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, existing.PastedAt, existing.Kept, recipe));
         }
@@ -164,11 +172,17 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
     {
         var size = SizeOf(folder);
         var path = Path.Combine(folder, JsonName);
+        DeleteStaleTemp(path + ".tmp");
         if (!File.Exists(path)) return new(imageId, folder, null, size, $"{JsonName} is missing.");
         try
         {
             var saved = JsonSerializer.Deserialize<SavedRecipe>(File.ReadAllText(path), JsonOptions);
-            if (saved?.Recipe is null) return new(imageId, folder, null, size, $"{JsonName} holds no recipe.");
+            if (saved?.FormatVersion > SavedRecipe.CurrentFormat) return new(imageId, folder, null, size, NewerFormatText, IsNewerFormat: true);
+            // A missing member binds to null; the cards read all four without asking.
+            if (saved?.Recipe is not { Image: not null, Data: not null, Resources: not null, UnlinkedLoras: not null })
+            {
+                return new(imageId, folder, null, size, $"{JsonName} holds no recipe.");
+            }
             // The folder is the truth: a moved profile must still find its original.
             var original = OriginalNames.Select(n => Path.Combine(folder, n)).FirstOrDefault(File.Exists);
             return new(imageId, folder, saved with { Recipe = saved.Recipe with { OriginalFilePath = original } }, size, null);
@@ -183,6 +197,26 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
     private static long SizeOf(string folder)
     {
         try { return new DirectoryInfo(folder).EnumerateFiles().Where(f => f.Extension != ".download").Sum(f => f.Length); }
-        catch (IOException) { return 0; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return 0; }
+    }
+
+    /// <summary>A temp file a crashed save left behind; a young one may be a save writing right now.</summary>
+    private static void DeleteStaleTemp(string temp)
+    {
+        try
+        {
+            if (File.Exists(temp) && File.GetLastWriteTimeUtc(temp) < DateTime.UtcNow - StaleTempAge) File.Delete(temp);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* next read tries again */ }
+    }
+
+    /// <summary>Refuses to write over a file a newer version wrote: this version would drop what it does not know.</summary>
+    private static void ThrowIfNewerFormat(StoredRecipe? current)
+    {
+        if (current is { IsNewerFormat: true })
+        {
+            throw new InvalidOperationException(
+                $"Recipe {current.ImageId} was saved by a newer version of DiffusionNexus; this version leaves it as it is.");
+        }
     }
 }

@@ -48,6 +48,9 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private string _queueButtonText = "Queue missing LoRAs (0)";
     [ObservableProperty] private string _queueTooltip = QueueTooltipDefault;
 
+    /// <summary>What the last action could not do; shown beside the counter.</summary>
+    [ObservableProperty] private string? _statusMessage;
+
     private const string QueueTooltipDefault = "Queues the LoRAs these recipes are missing, each once.";
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsRecipeOpen))] private CivitaiRecipeViewModel? _openRecipe;
@@ -123,7 +126,7 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         _quiet = true;
         foreach (var stored in _store.LoadAll())
         {
-            var card = new RecipeCardViewModel(stored, now, OnSelectionChanged);
+            var card = BuildCard(stored, now);
             card.ApplyStatus(installed);
             if (previous.TryGetValue(card.ImageId, out var old)) card.CopyStateFrom(old);
             cards.Add(card);
@@ -137,6 +140,20 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         CounterText = $"{Recipes(cards.Count)} · {FileSizeFormatter.Format(cards.Sum(c => c.Stored.SizeBytes))} on disk " +
                       $"(History {HistoryCount}, Kept {KeptCount})";
         Rebuild();
+    }
+
+    /// <summary>A recipe the card cannot show (a member deeper than the store checks is null) is a broken card, not a tab that fails to build.</summary>
+    private RecipeCardViewModel BuildCard(StoredRecipe stored, DateTime now)
+    {
+        try
+        {
+            return new RecipeCardViewModel(stored, now, OnSelectionChanged);
+        }
+        catch (Exception ex) when (ex is NullReferenceException or ArgumentException or InvalidOperationException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {stored.ImageId} could not be shown: {ex.Message}", stored.Folder);
+            return new RecipeCardViewModel(stored with { Saved = null, ReadError = "recipe.json holds no recipe." }, now, OnSelectionChanged);
+        }
     }
 
     private bool PassesStatus(RecipeCardViewModel c) => StatusFilter switch
@@ -401,6 +418,9 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     private void SetKept(List<RecipeCardViewModel> cards, bool kept)
     {
+        var newer = cards.Count(c => c.Stored.IsNewerFormat);
+        StatusMessage = newer == 0 ? null
+            : $"{Recipes(newer)} made by a newer version of DiffusionNexus {(newer == 1 ? "was left as it is" : "were left as they are")}.";
         var ids = cards.Where(c => !c.IsBroken).Select(c => c.ImageId).ToList();
         if (ids.Count == 0) return;
         _logger?.Info(LogCategory.FileSystem, LogSource,

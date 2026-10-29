@@ -77,6 +77,16 @@ public sealed class RecipesTabViewModelTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "recipe.json"), "{ not json");
     }
 
+    /// <summary>Saves <paramref name="recipe"/> and rewrites its json through <paramref name="edit"/>, as a hand edit or a newer build would.</summary>
+    private void SaveAndEdit(CivitaiImageRecipe recipe, Action<System.Text.Json.Nodes.JsonObject> edit)
+    {
+        Save(recipe, Today);
+        var path = Path.Combine(_store.FolderFor(recipe.ImageId), "recipe.json");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        edit(json);
+        File.WriteAllText(path, json.ToJsonString());
+    }
+
     private static List<long> Ids(RecipesTabViewModel vm) =>
         vm.Groups.SelectMany(g => g.Cards).Select(c => c.ImageId).ToList();
 
@@ -755,6 +765,35 @@ public sealed class RecipesTabViewModelTests : IDisposable
 
         vm.ShowKeptCommand.Execute(null);
         vm.EmptyText.Should().Be("Nothing kept yet. Use ★ on a recipe to keep it.");
+    }
+
+    [Fact]
+    public void RecipeWithoutData_IsABrokenCard_AndTheTabStillBuilds()
+    {
+        Save(Recipe(1), Today);
+        SaveAndEdit(Recipe(2), json => json["Recipe"]!["Data"] = null);
+
+        var vm = Create();
+
+        Card(vm, 2).IsBroken.Should().BeTrue();
+        Card(vm, 1).IsBroken.Should().BeFalse();
+        vm.HistoryCount.Should().Be(2);
+    }
+
+    [Fact]
+    public void KeepSelected_NewerFormatRecipe_IsLeftAlone_AndTheStatusSaysSo()
+    {
+        Save(Recipe(1), Today);
+        SaveAndEdit(Recipe(2), json => json["FormatVersion"] = SavedRecipe.CurrentFormat + 1);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+        vm.Select(Card(vm, 2), true, false);
+
+        vm.KeepSelectedCommand.Execute(null);
+        Pump();
+
+        _store.TryLoad(1)!.Saved!.Kept.Should().BeTrue();
+        vm.StatusMessage.Should().Be("1 recipe made by a newer version of DiffusionNexus was left as it is.");
     }
 
     [Fact]

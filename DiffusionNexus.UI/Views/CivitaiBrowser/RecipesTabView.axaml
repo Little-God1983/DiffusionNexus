@@ -71,6 +71,8 @@
       <TextBlock Text="{Binding CounterText}" FontWeight="SemiBold" FontSize="12"/>
       <TextBlock Text="{Binding HiddenText, StringFormat='· {0}'}" Foreground="#FFB020" FontSize="12"
                  IsVisible="{Binding HiddenText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      <TextBlock Text="{Binding StatusMessage, StringFormat='· {0}'}" Foreground="#FF6B6B" FontSize="12"
+                 IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
     </StackPanel>
 
     <!-- Cards -->

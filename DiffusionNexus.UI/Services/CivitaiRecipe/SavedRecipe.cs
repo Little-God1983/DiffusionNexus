@@ -18,7 +18,8 @@ public sealed record SavedRecipe(int FormatVersion, DateTimeOffset PastedAt, boo
 /// <param name="Saved">Null when the folder's recipe could not be read.</param>
 /// <param name="SizeBytes">Every file in the folder: the original and the json.</param>
 /// <param name="ReadError">Why <paramref name="Saved"/> is null.</param>
-public sealed record StoredRecipe(long ImageId, string Folder, SavedRecipe? Saved, long SizeBytes, string? ReadError)
+/// <param name="IsNewerFormat">The file was written by a newer version: shown as broken and never written, so its fields survive.</param>
+public sealed record StoredRecipe(long ImageId, string Folder, SavedRecipe? Saved, long SizeBytes, string? ReadError, bool IsNewerFormat = false)
 {
     public bool IsBroken => Saved is null;
 }
