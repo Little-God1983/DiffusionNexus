@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json;
+using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services.Distiller;
 using FluentAssertions;
 
@@ -356,5 +357,157 @@ public class ComfyUiPromptTracerTests
         r.Scheduler.Should().Be("karras");
         r.Steps.Should().Be(28);
         r.PositivePrompt.Should().Be("a cat");
+    }
+
+    // #672: KSampler graph from the pack's test_tracer_prompts.py; NEGATIVE is the sampler's negative link, EXTRA more nodes.
+    private const string KSamplerGraph = """
+        {
+          "1": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+          "2": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat","clip":["1",1]}},
+          "3": {"class_type":"CLIPTextEncode","inputs":{"text":"blurry","clip":["1",1]}},
+          "4": {"class_type":"KSampler","inputs":{
+                 "model":["1",0],"positive":POSITIVE,"negative":NEGATIVE,
+                 "seed":1,"steps":20,"cfg":7,"sampler_name":"euler","scheduler":"normal"}},
+          "6": {"class_type":"VAEDecode","inputs":{"samples":["4",0],"vae":["1",2]}},
+          "7": {"class_type":"SaveImage","inputs":{"images":["6",0]}}EXTRA
+        }
+        """;
+
+    private static ImageGenerationData TraceKSampler(string negative, string extra, string positive = """["2",0]""") =>
+        ComfyUiPromptTracer.Trace(Graph(KSamplerGraph.Replace("POSITIVE", positive).Replace("NEGATIVE", negative)
+            .Replace("EXTRA", extra)), null, 0, 0);
+
+    /// <summary>#672: one branch is zeroed, the other ends at an encoder the tracer can't read. The negative is unknown, not empty.</summary>
+    [Fact]
+    public void Zero_out_beside_a_clip_fed_encoder_is_unknown_not_zeroed()
+    {
+        var r = TraceKSampler("""["10",0]""", """
+          ,          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "9": {"class_type":"ImpactWildcardEncode","inputs":{"wildcard_text":"blurry","model":["1",0],"clip":["1",1]}},
+          "10": {"class_type":"ConditioningCombine","inputs":{"conditioning_1":["8",0],"conditioning_2":["9",2]}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Zero_out_beside_a_TextEncode_class_is_unknown_not_zeroed()
+    {
+        var r = TraceKSampler("""["10",0]""", """
+          ,          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "9": {"class_type":"TextEncodeQwenImageEdit","inputs":{"prompt":"blurry","vae":["1",2]}},
+          "10": {"class_type":"ConditioningCombine","inputs":{"conditioning_1":["8",0],"conditioning_2":["9",0]}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Zero_out_beside_a_missing_node_is_unknown_not_zeroed()
+    {
+        var r = TraceKSampler("""["10",0]""", """
+          ,          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "10": {"class_type":"ConditioningCombine","inputs":{"conditioning_1":["8",0],"conditioning_2":["99",0]}}
+        """);
+
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    /// <summary>#672: Flux Kontext. The latent branch ends at LoadImage, which says nothing about the text.</summary>
+    [Fact]
+    public void Zeroed_negative_through_a_latent_carrier_is_zeroed()
+    {
+        var r = TraceKSampler("""["11",0]""", """
+          ,          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "9": {"class_type":"LoadImage","inputs":{"image":"ref.png"}},
+          "10": {"class_type":"VAEEncode","inputs":{"pixels":["9",0],"vae":["1",2]}},
+          "11": {"class_type":"ReferenceLatent","inputs":{"conditioning":["8",0],"latent":["10",0]}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    /// <summary>#672: hook nodes carry both conditionings under suffixed names (positive_NEW / negative_NEW, *_A / *_B).</summary>
+    [Fact]
+    public void Pair_conditioning_follows_the_suffixed_inputs()
+    {
+        var r = TraceKSampler("""["9",1]""", """
+          ,          "8": {"class_type":"PairConditioningSetProperties","inputs":{"positive_NEW":["2",0],"negative_NEW":["3",0],"strength":1.0,"set_cond_area":"default"}},
+          "9": {"class_type":"PairConditioningCombine","inputs":{"positive_A":["8",0],"negative_A":["8",1],"positive_B":["2",0],"negative_B":["3",0]}}
+        """, positive: """["9",0]""");
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+    }
+
+    [Fact]
+    public void Pair_conditioning_set_properties_alone_gives_its_negative()
+    {
+        var r = TraceKSampler("""["8",1]""", """
+          ,          "8": {"class_type":"PairConditioningSetProperties","inputs":{"positive_NEW":["2",0],"negative_NEW":["3",0],"strength":1.0,"set_cond_area":"default"}}
+        """, positive: """["8",0]""");
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+    }
+
+    /// <summary>#672: a carrier whose optional negative is unwired (so absent from the API prompt) must not fall back to its positive.</summary>
+    [Fact]
+    public void Carrier_without_the_matching_input_never_reads_the_other_side()
+    {
+        var r = TraceKSampler("""["8",1]""", """
+          ,          "8": {"class_type":"SomeCarrier","inputs":{"positive":["2",0],"strength":1.0}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    /// <summary>#672: two stages. The stage-2 negative's latent branch must not reach the stage-1 sampler and report its negative.</summary>
+    [Fact]
+    public void Walk_stops_at_an_earlier_sampler()
+    {
+        var r = TraceKSampler("""["11",0]""", """
+          ,          "20": {"class_type":"CLIPTextEncode","inputs":{"text":"stage1 blurry","clip":["1",1]}},
+          "21": {"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"negative":["20",0],
+                 "seed":1,"steps":30,"cfg":7,"sampler_name":"euler","scheduler":"normal"}},
+          "22": {"class_type":"VAEDecode","inputs":{"samples":["21",0],"vae":["1",2]}},
+          "23": {"class_type":"VAEEncode","inputs":{"pixels":["22",0],"vae":["1",2]}},
+          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+          "11": {"class_type":"ReferenceLatent","inputs":{"conditioning":["8",0],"latent":["23",0]}}
+        """);
+
+        r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeTrue();
+        r.Steps.Should().Be(20, "the traced sampler is still the one feeding the save node");
+    }
+
+    /// <summary>#670 regression in the #672 graph: ComfyUI's SD3 template, Combine(SetTimestepRange(ZeroOut(enc)), SetTimestepRange(enc)).</summary>
+    [Fact]
+    public void Sd3_template_combine_keeps_the_real_negative()
+    {
+        var r = TraceKSampler("""["11",0]""", """
+          ,          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["3",0]}},
+          "9": {"class_type":"ConditioningSetTimestepRange","inputs":{"conditioning":["8",0],"start":0.1,"end":1.0}},
+          "10": {"class_type":"ConditioningSetTimestepRange","inputs":{"conditioning":["3",0],"start":0.0,"end":0.1}},
+          "11": {"class_type":"ConditioningCombine","inputs":{"conditioning_1":["9",0],"conditioning_2":["10",0]}}
+        """);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+        r.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Plain_negative_encode_is_read()
+    {
+        var r = TraceKSampler("""["3",0]""", "");
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().Be("blurry");
+        r.NegativeZeroedOut.Should().BeFalse();
     }
 }
