@@ -68,6 +68,19 @@ public sealed class RecipeMergeTests
     }
 
     [Fact]
+    public void NoKeyTwice_StillKeepsResourcesOnlyTheSiteListed()
+    {
+        // The merged recipe still holds the key-only resources: the next keyless paste must keep them too.
+        var saved = Recipe(Enumerable.Range(1, 6).Select(i => Loaded(i, 0.5)).ToList(), hasApiKey: true);
+        var once = RecipeMerge.Refresh(saved, Recipe([], hasApiKey: false));
+
+        var twice = RecipeMerge.Refresh(once, Recipe([], hasApiKey: false));
+
+        once.HasApiKey.Should().BeTrue();
+        twice.Resources.Select(r => r.VersionId).Should().Equal(1, 2, 3, 4, 5, 6);
+    }
+
+    [Fact]
     public void KeyBothTimes_ResourceMissingFromFresh_IsDropped()
     {
         var saved = Recipe([Loaded(1, 0.5), Loaded(2, 0.5)]);

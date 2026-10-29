@@ -51,6 +51,7 @@ public static class RecipeMerge
         // The unlinked LoRAs are derived from the file data, so they follow whichever data won.
         var unlinked = (keepData ? saved.UnlinkedLoras : fresh.UnlinkedLoras).Where(l => !keptNames.Contains(l.Name)).ToList();
 
-        return fresh with { Resources = resources, Data = data, UnlinkedLoras = unlinked };
+        // Key-only resources kept above stay in the recipe, so the next keyless paste must keep them too.
+        return fresh with { Resources = resources, Data = data, UnlinkedLoras = unlinked, HasApiKey = fresh.HasApiKey || saved.HasApiKey };
     }
 }

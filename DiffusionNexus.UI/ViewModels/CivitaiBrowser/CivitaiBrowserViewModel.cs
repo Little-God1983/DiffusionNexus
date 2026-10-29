@@ -41,6 +41,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost, ID
     private bool _isLoading;
     private bool _initialized;
     private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
+    private long _installedReadsStarted;
+    private long _installedReadApplied; // UI thread only
     private CivitaiResultViewModel? _lastClickedItem;
 
     /// <summary>
@@ -1916,12 +1918,18 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost, ID
 
     private async Task RefreshInstalledSetAsync()
     {
+        // Reads can overlap (Recipes tab, Browse, the refresh after a download): the newest one started wins.
+        var generation = Interlocked.Increment(ref _installedReadsStarted);
         try
         {
             var index = await (InstalledIndexSource ?? ReadInstalledIndexAsync)();
             if (index is null) return;
-            _installed = index;
-            await Dispatcher.UIThread.InvokeAsync(() => ApplyInstalledSnapshot(index));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (generation < _installedReadApplied) return;
+                _installedReadApplied = generation;
+                ApplyInstalledSnapshot(index);
+            });
         }
         catch (Exception ex)
         {

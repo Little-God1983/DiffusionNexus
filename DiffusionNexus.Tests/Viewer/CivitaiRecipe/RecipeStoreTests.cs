@@ -169,6 +169,16 @@ public sealed class RecipeStoreTests : IDisposable
     }
 
     [Fact]
+    public void LoadAll_IgnoresIdsWithLeadingZeros()
+    {
+        // "0042" would read as id 42 beside the real "42": two cards with one id, and Delete would miss it.
+        WriteFile(42, "original.png", length: 1);
+        Directory.CreateDirectory(Path.Combine(_root, "0042"));
+
+        _store.LoadAll().Should().ContainSingle().Which.Folder.Should().EndWith(Path.DirectorySeparatorChar + "42");
+    }
+
+    [Fact]
     public void LoadAll_NoRootYet_IsEmpty() => _store.LoadAll().Should().BeEmpty();
 
     [Fact]

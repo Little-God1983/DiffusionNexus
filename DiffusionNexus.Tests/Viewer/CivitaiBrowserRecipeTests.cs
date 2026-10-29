@@ -336,6 +336,34 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         host.Installed.Should().BeSameAs(index);
     }
 
+    /// <summary>A read that started before a download landed must not overwrite the read made after it.</summary>
+    [Fact]
+    public void OlderInstalledRead_FinishingLast_DoesNotWin()
+    {
+        var notifier = new FakeNotifier();
+        var queue = new CivitaiDownloadQueue(null, null, null, null, persistPathOverride: Path.Combine(_dir, "queue.json"));
+        var waitlist = new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_dir, "waitlist.json"));
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue, waitlist, null, changeNotifier: notifier)
+        {
+            InstalledRefreshDelay = TimeSpan.FromMilliseconds(10),
+        };
+        var before = new CivitaiInstalledIndex(new HashSet<int>(), new HashSet<string>());
+        var after = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+        var slow = new TaskCompletionSource<CivitaiInstalledIndex?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        vm.InstalledIndexSource = () => Interlocked.Increment(ref reads) == 1 ? slow.Task : Task.FromResult<CivitaiInstalledIndex?>(after);
+        IRecipeHost host = vm;
+
+        var first = host.EnsureInstalledLoadedAsync();
+        notifier.NotifyModelDownloaded(1);
+        PumpUntil(() => vm.InstalledRefreshAfterDownload.IsCompleted && host.Installed == after);
+        slow.SetResult(before);
+        PumpUntil(() => first.IsCompleted);
+
+        host.Installed.Should().BeSameAs(after);
+        vm.Dispose();
+    }
+
     [Fact]
     public void DownloadBurst_RefreshesTheInstalledSetOnce_UntilDisposed()
     {

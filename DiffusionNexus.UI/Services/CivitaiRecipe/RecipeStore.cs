@@ -106,8 +106,11 @@ public sealed class RecipeStore
         var result = new List<StoredRecipe>();
         foreach (var folder in Directory.EnumerateDirectories(Root))
         {
-            if (!long.TryParse(Path.GetFileName(folder), System.Globalization.NumberStyles.None,
+            var name = Path.GetFileName(folder);
+            if (!long.TryParse(name, System.Globalization.NumberStyles.None,
                     System.Globalization.CultureInfo.InvariantCulture, out var id)) continue;
+            // "0042" is not 42's folder: FolderFor(42) is "42", and two cards would share one id.
+            if (name != id.ToString(System.Globalization.CultureInfo.InvariantCulture)) continue;
             result.Add(Read(id, folder));
         }
         return result;
