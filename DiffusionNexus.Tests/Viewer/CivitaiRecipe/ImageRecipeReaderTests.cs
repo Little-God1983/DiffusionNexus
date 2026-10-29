@@ -115,6 +115,29 @@ public sealed class ImageRecipeReaderTests
         data.NegativePrompt.Should().Be("blurry");
     }
 
+    /// <summary>#673: SamplerCustomAdvanced keeps the prompts and cfg on its guider and the seed on RandomNoise.</summary>
+    [Fact]
+    public void TracedGraph_SamplerCustomAdvanced_ReadsTheGuider()
+    {
+        var data = Read(("prompt", """
+            {"1":{"class_type":"UNETLoader","inputs":{"unet_name":"flux.safetensors"}},
+             "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "3":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "4":{"class_type":"CFGGuider","inputs":{"model":["1",0],"positive":["2",0],"negative":["3",0],"cfg":3.5}},
+             "5":{"class_type":"KSamplerSelect","inputs":{"sampler_name":"euler"}},
+             "6":{"class_type":"BasicScheduler","inputs":{"model":["1",0],"scheduler":"simple","steps":20,"denoise":1.0}},
+             "7":{"class_type":"RandomNoise","inputs":{"noise_seed":42}},
+             "8":{"class_type":"SamplerCustomAdvanced","inputs":{"noise":["7",0],"guider":["4",0],"sampler":["5",0],"sigmas":["6",0]}}}
+            """));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.Prompt.Should().Be("a cat");
+        data.NegativePrompt.Should().Be("blurry");
+        data.Cfg.Should().Be(3.5);
+        data.Seed.Should().Be(42);
+        data.Steps.Should().Be(20);
+    }
+
     [Fact]
     public void TextOnly_TakesWeightsFromLoraTags()
     {

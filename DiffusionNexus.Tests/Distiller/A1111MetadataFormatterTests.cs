@@ -41,6 +41,8 @@ public class A1111MetadataFormatterTests
     [InlineData("dpmpp_sde", "exponential", "DPM++ SDE Exponential")]
     [InlineData("my_custom_sampler", "karras", "My Custom Sampler Karras")] // unmapped -> title-case
     [InlineData("uni_pc", "sgm_uniform", "UniPC")]        // uni_pc -> UniPC, sgm_uniform is plain
+    [InlineData("dpmpp_2m_sde", "beta", "DPM++ 2M SDE")]  // #675: BetaSamplingScheduler is plain
+    [InlineData("dpmpp_2m", "align_your_steps", "DPM++ 2M align_your_steps")] // #675: unknown scheduler appended as is
     public void Build_maps_sampler_and_scheduler_to_combined_a1111_name(string sampler, string scheduler, string expected)
     {
         var data = Data() with { SamplerName = sampler, Scheduler = scheduler };

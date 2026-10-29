@@ -33,36 +33,91 @@ internal static class ComfyUiPromptTracer
         ["UnetLoaderGGUFAdvanced"] = ("unet_name", "diffusion_models"),
     };
 
+    // The modular samplers keep their settings on nodes wired into them (#673): SamplerCustomAdvanced takes a
+    // guider (prompts, cfg, model), noise (RandomNoise: seed), sampler (KSamplerSelect: sampler_name) and sigmas
+    // (BasicScheduler: steps, scheduler, denoise); SamplerCustom wires only the last two. Guider class -> its
+    // (positive, negative, cfg) inputs; null = none, because it runs without CFG. Other guiders (PerpNegGuider,
+    // custom ones) use the CFGGuider names. DualCFGGuider's scale against the negative (A1111's "CFG scale") is
+    // cfg_cond2_negative; cfg_conds is cond1 vs cond2.
+    private static readonly Dictionary<string, (string Positive, string? Negative, string? Cfg)> GuiderInputs =
+        new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["CFGGuider"] = ("positive", "negative", "cfg"),
+        ["DualCFGGuider"] = ("cond1", "negative", "cfg_cond2_negative"),
+        ["BasicGuider"] = ("conditioning", null, null),
+    };
+
+    private static readonly (string Positive, string? Negative, string? Cfg) DefaultGuiderInputs = ("positive", "negative", "cfg");
+
+    // Core sampler / scheduler nodes that say what runs by their class, not a sampler_name / scheduler widget
+    // (#675; the *_gpu noise-device variants share their CPU name's A1111 label).
+    private static readonly Dictionary<string, string> SamplerNodeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["SamplerEulerAncestral"] = "euler_ancestral",
+        ["SamplerEulerAncestralCFGPP"] = "euler_ancestral_cfg_pp",
+        ["SamplerEulerCFGpp"] = "euler_cfg_pp",
+        ["SamplerLMS"] = "lms",
+        ["SamplerDPMPP_2S_Ancestral"] = "dpmpp_2s_ancestral",
+        ["SamplerDPMPP_SDE"] = "dpmpp_sde",
+        ["SamplerDPMPP_2M_SDE"] = "dpmpp_2m_sde",
+        ["SamplerDPMPP_3M_SDE"] = "dpmpp_3m_sde",
+        ["SamplerDPMAdaptative"] = "dpm_adaptive",
+        ["SamplerER_SDE"] = "er_sde",
+        ["SamplerSASolver"] = "sa_solver",
+        ["SamplerSEEDS2"] = "seeds_2",
+        ["SamplerLCM"] = "lcm",
+    };
+
+    // Model-specific schedulers (Flux2Scheduler, LTXVScheduler, ...) name no known schedule and stay unnamed.
+    private static readonly Dictionary<string, string> SchedulerNodeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["KarrasScheduler"] = "karras",
+        ["ExponentialScheduler"] = "exponential",
+        ["PolyexponentialScheduler"] = "polyexponential",
+        ["LaplaceScheduler"] = "laplace",
+        ["BetaSamplingScheduler"] = "beta",
+        ["AlignYourStepsScheduler"] = "align_your_steps",
+    };
+
+    private static readonly JsonElement NoInputs = JsonDocument.Parse("{}").RootElement.Clone();
+
     public static ImageGenerationData Trace(
         Dictionary<string, JsonElement> graph, string? fileName, int width, int height)
     {
         var startId = PickSamplerId(graph);
-        if (startId is null || !TryNode(graph, startId, out _, out var s))
+        if (startId is null || !TryNode(graph, startId, out var samplerClass, out var s))
             return new ImageGenerationData { FileName = fileName, Width = width, Height = height, HasData = false };
 
-        int? steps = ReadInt(s, "steps");
-        double? cfg = ReadDouble(s, "cfg");
-        long? seed = ReadLong(s, "seed") ?? ReadLong(s, "noise_seed");
-        string? samplerName = ReadString(s, "sampler_name");
-        string? scheduler = ReadString(s, "scheduler");
-        double? denoise = ReadDouble(s, "denoise");
+        // SamplerCustomAdvanced keeps the prompts, cfg and model on its guider; every other sampler on itself.
+        var (holderClass, holder) = Holder(graph, samplerClass, s);
+        var names = GuiderInputs.GetValueOrDefault(holderClass, DefaultGuiderInputs);
 
-        // SamplerCustom / SamplerCustomAdvanced keep sampler_name/scheduler/steps on separate
-        // KSamplerSelect / BasicScheduler nodes wired into the sampler/sigmas link inputs — follow them
-        // so these graphs don't come out with an empty sampler.
-        samplerName ??= FollowLinkedString(graph, s, "sampler", "sampler_name");
-        scheduler ??= FollowLinkedString(graph, s, "sigmas", "scheduler");
-        steps ??= FollowLinkedInt(graph, s, "sigmas", "steps");
+        // Each settings node is found once and all its fields are read from it, so SplitSigmasDenoise's own
+        // denoise (a split point) is never taken for the scheduler's.
+        var (schedulerClass, sched) = SettingsNode(graph, s, "sigmas", "steps");
+        var (selectClass, select) = SettingsNode(graph, s, "sampler", "sampler_name", SamplerNodeNames);
+        var (_, noise) = SettingsNode(graph, s, "noise", "noise_seed");
 
-        // A "Sampler Selector"/KSamplerSelect wired into a plain KSampler's sampler_name input
-        // (a link, not a literal) — follow it so the graph doesn't come out with an empty sampler.
-        samplerName ??= FollowLinkedString(graph, s, "sampler_name", "sampler_name");
+        int? steps = ReadInt(s, "steps") ?? ReadInt(sched, "steps");
+        double? cfg = names.Cfg is null ? null : ReadDouble(holder, names.Cfg);
+        long? seed = ReadLong(s, "seed") ?? ReadLong(s, "noise_seed") ?? ReadLong(noise, "noise_seed");
+        string? samplerName = ReadString(s, "sampler_name") ?? ReadString(select, "sampler_name")
+            ?? SamplerNodeNames.GetValueOrDefault(selectClass);
+        string? scheduler = ReadString(s, "scheduler") ?? ReadString(sched, "scheduler")
+            ?? SchedulerNodeNames.GetValueOrDefault(schedulerClass);
+        double? denoise = ReadDouble(s, "denoise") ?? ReadDouble(sched, "denoise");
 
-        string? positive = ResolvePrompt(graph, s, "positive", out _);
-        string? negative = ResolvePrompt(graph, s, "negative", out var negativeZeroed);
+        // A "Sampler Selector"/KSamplerSelect wired into a plain KSampler's sampler_name input (a link, not a
+        // literal): follow it so the graph doesn't come out with an empty sampler (differs from tracer.py).
+        samplerName ??= ReadString(SettingsNode(graph, s, "sampler_name", "sampler_name").Inputs, "sampler_name");
+
+        string? positive = ResolvePrompt(graph, holder, names.Positive, "positive", out _);
+        var negativeZeroed = false;
+        // A guider without CFG (BasicGuider) has no negative at all.
+        string? negative = names.Negative is null ? null : ResolvePrompt(graph, holder, names.Negative, "negative", out negativeZeroed);
 
         var loras = new List<LoraInfo>();
-        string? checkpoint = WalkModelChain(graph, s, loras);
+        string? checkpoint = WalkModelChain(graph, holder, loras);
         loras.Reverse(); // collected sampler-first; load order is checkpoint-first
 
         var hasData = positive is not null || negative is not null || checkpoint is not null
@@ -139,12 +194,14 @@ internal static class ComfyUiPromptTracer
     }
 
     // ── prompts (§3.3) ──────────────────────────────────────────────────────────
-    private static string? ResolvePrompt(Dictionary<string, JsonElement> graph, JsonElement sampler, string key, out bool zeroed)
+    // input: the holder's conditioning input (the guider names it "conditioning" or "cond1" for the positive);
+    // side: the conditioning it carries, "positive" or "negative".
+    private static string? ResolvePrompt(Dictionary<string, JsonElement> graph, JsonElement holder, string input, string side, out bool zeroed)
     {
         zeroed = false;
-        if (!sampler.TryGetProperty(key, out var v) || !IsLink(v)) return null;
+        if (!holder.TryGetProperty(input, out var v) || !IsLink(v)) return null;
 
-        var encId = FindEncoder(graph, OriginId(v), key, out zeroed);
+        var encId = FindEncoder(graph, OriginId(v), side, out zeroed);
         if (encId is null || !TryNode(graph, encId, out _, out var enc)) return null;
 
         if (!enc.TryGetProperty("text", out var text)) return null;
@@ -273,23 +330,20 @@ internal static class ComfyUiPromptTracer
         }
     }
 
-    // ── SamplerCustom follow-through (KSamplerSelect / BasicScheduler) ───────────
-    private static string? FollowLinkedString(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
-    {
-        var v = FollowLinkedField(graph, node, linkKey, fieldKey);
-        return v is { ValueKind: JsonValueKind.String } ? v.Value.GetString() : null;
-    }
+    // ── modular samplers: guider and settings nodes (#673, #675) ────────────────
+    // The node holding the prompts, cfg and model: SamplerCustomAdvanced's guider, else the sampler itself.
+    private static (string Class, JsonElement Inputs) Holder(Dictionary<string, JsonElement> graph, string samplerClass, JsonElement sampler) =>
+        sampler.TryGetProperty("guider", out var link) && IsLink(link) && TryNode(graph, OriginId(link), out var cls, out var ins)
+            ? (cls, ins)
+            : (samplerClass, sampler);
 
-    private static int? FollowLinkedInt(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
+    // BFS back from node[linkKey] to the nearest node that has a `key` input or is one of `classes` (the pack's
+    // _settings_node): KSamplerSelect or a dedicated sampler node behind sampler, the scheduler behind sigmas,
+    // RandomNoise behind noise. Never reads past a sampler: an earlier stage's settings are not this one's.
+    private static (string Class, JsonElement Inputs) SettingsNode(Dictionary<string, JsonElement> graph, JsonElement node,
+        string linkKey, string key, IReadOnlyDictionary<string, string>? classes = null)
     {
-        var v = FollowLinkedField(graph, node, linkKey, fieldKey);
-        return v is { ValueKind: JsonValueKind.Number } && v.Value.TryGetInt32(out var i) ? i : null;
-    }
-
-    // Follows node[linkKey] (a link) backward to the nearest node carrying a literal fieldKey.
-    private static JsonElement? FollowLinkedField(Dictionary<string, JsonElement> graph, JsonElement node, string linkKey, string fieldKey)
-    {
-        if (!node.TryGetProperty(linkKey, out var link) || !IsLink(link)) return null;
+        if (!node.TryGetProperty(linkKey, out var link) || !IsLink(link)) return ("", NoInputs);
 
         var seen = new HashSet<string>();
         var queue = new Queue<string>();
@@ -298,20 +352,20 @@ internal static class ComfyUiPromptTracer
         {
             var id = queue.Dequeue();
             if (!seen.Add(id)) continue;
-            if (!TryNode(graph, id, out _, out var ins)) continue;
-            if (ins.TryGetProperty(fieldKey, out var val) && !IsLink(val)) return val;
+            if (!TryNode(graph, id, out var cls, out var ins) || SamplerClasses.Contains(cls)) continue;
+            if (ins.TryGetProperty(key, out _) || classes?.ContainsKey(cls) == true) return (cls, ins);
             foreach (var prop in ins.EnumerateObject())
                 if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
         }
-        return null;
+        return ("", NoInputs);
     }
 
     private static int LinkSlot(JsonElement link) => link[1].TryGetInt32(out var i) ? i : 0;
 
     // ── model chain + LoRAs (§3.4–3.5) ──────────────────────────────────────────
-    private static string? WalkModelChain(Dictionary<string, JsonElement> graph, JsonElement sampler, List<LoraInfo> loras)
+    private static string? WalkModelChain(Dictionary<string, JsonElement> graph, JsonElement holder, List<LoraInfo> loras)
     {
-        if (!sampler.TryGetProperty("model", out var link) || !IsLink(link)) return null;
+        if (!holder.TryGetProperty("model", out var link) || !IsLink(link)) return null;
 
         string? current = OriginId(link);
         var seen = new HashSet<string>();
