@@ -60,6 +60,19 @@ public sealed class CivitaiInstalledIndexTests
     }
 
     [Fact]
+    public void HasFileHashPrefix_MatchesAutoV2AndSha12_NotShortOrUnknown()
+    {
+        var index = new CivitaiInstalledIndex([], ["abcdef0123456789ffff"]);
+
+        index.HasFileHashPrefix("ABCDEF0123").Should().BeTrue("AutoV2 is the first 10 characters");
+        index.HasFileHashPrefix("abcdef012345").Should().BeTrue("SHA256_12 is the first 12");
+        index.HasFileHashPrefix("abcdef0123456789ffff").Should().BeTrue();
+        index.HasFileHashPrefix("abcdef012").Should().BeFalse("shorter than 10 characters");
+        index.HasFileHashPrefix("0123456789").Should().BeFalse();
+        index.HasFileHashPrefix(null).Should().BeFalse();
+    }
+
+    [Fact]
     public void ApplyingTheIndexBadgesTheOwnedRowOnly_AndLightsTheCard()
     {
         var model = new CivitaiModel

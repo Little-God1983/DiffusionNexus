@@ -13,7 +13,12 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// <param name="Use">The image file's entry for it (weight, hash); null when none matched.</param>
 /// <param name="LoadError">Why <paramref name="Model"/> is missing; null when it loaded.</param>
 public sealed record CivitaiRecipeResource(
-    int VersionId, CivitaiModelVersion? Version, CivitaiModel? Model, RecipeLoraUse? Use, string? LoadError);
+    int VersionId, CivitaiModelVersion? Version, CivitaiModel? Model, RecipeLoraUse? Use, string? LoadError)
+{
+    /// <summary>Civitai answered that the resource is gone, as opposed to a failure that may pass (429, timeout).</summary>
+    public bool IsDefiniteFailure =>
+        LoadError is CivitaiImageRecipeService.NotFoundText or CivitaiImageRecipeService.NoLongerAvailableText;
+}
 
 /// <summary>
 /// Everything the recipe view shows for one Civitai image (#628). The rating is Civitai's — the

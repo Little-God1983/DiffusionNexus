@@ -16,7 +16,7 @@ public partial class CivitaiRecipeResourceRowViewModel : ObservableObject
 {
     internal const string UnlinkedNote = "not linked on Civitai";
 
-    private static readonly HashSet<CivitaiModelType> LoraTypes =
+    internal static readonly HashSet<CivitaiModelType> LoraTypes =
         [CivitaiModelType.LORA, CivitaiModelType.LoCon, CivitaiModelType.DoRA];
 
     /// <summary>A resource Civitai lists; <paramref name="card"/> is null when its model did not load.</summary>

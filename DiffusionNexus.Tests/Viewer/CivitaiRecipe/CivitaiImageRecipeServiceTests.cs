@@ -62,6 +62,55 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RetryFailedResources_SkipsDefiniteFailures()
+    {
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            ImageRecipeData.Empty(RecipeFileFormat.Png),
+            [new CivitaiRecipeResource(100, null, null, null, CivitaiImageRecipeService.NotFoundText)], []);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        result.Should().BeSameAs(recipe);
+        _client.Verify(c => c.GetModelVersionAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RetryFailedResources_ReloadsTransientOnes_AndLinksTheUnlinkedLora()
+    {
+        HasLora(100, 1, "style.safetensors");
+        var use = new RecipeLoraUse("style", null, 0.8, null);
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            new ImageRecipeData { Format = RecipeFileFormat.Png, Source = RecipeDataSource.SettingsText, Loras = [use] },
+            [new CivitaiRecipeResource(100, null, null, null, "429")], [use]);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        result.Resources.Single().LoadError.Should().BeNull();
+        result.Resources.Single().Model.Should().NotBeNull();
+        result.Resources.Single().Use.Should().Be(use);
+        result.UnlinkedLoras.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RetryFailedResources_KeepsTheSiteWeight_WhenTheFileGivesNone()
+    {
+        // First paste: the version hit a 429, Civitai's page still gave its strength (0.8).
+        HasLora(100, 1, "style.safetensors");
+        var fileEntry = new RecipeLoraUse("style", null, null, null);
+        var siteUse = new RecipeLoraUse("Version 100", null, 0.8, null, 100);
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            new ImageRecipeData { Format = RecipeFileFormat.Png, Source = RecipeDataSource.SettingsText, Loras = [fileEntry] },
+            [new CivitaiRecipeResource(100, null, null, siteUse, "429")], [fileEntry]);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        var resource = result.Resources.Single();
+        resource.LoadError.Should().BeNull();
+        resource.Use!.Name.Should().Be("style", "the file entry now links to the loaded version");
+        resource.Use.Weight.Should().Be(0.8, "the weight the page gave is not lost");
+    }
+
+    [Fact]
     public async Task UnknownImage_GivesMessageAndNoRecipe()
     {
         _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -146,18 +195,61 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task PngServedUnderJpegUrl_IsCachedAsPng_AndReusedNextTime()
+    public async Task PngServedUnderJpegUrl_IsSavedAsPng_AndReusedNextTime()
     {
         HasImage(12);
         _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+        var store = new RecipeStore(_cache, null);
 
         var first = (await Service().LoadAsync(12, null, default)).Recipe!;
+        store.Save(first, DateTimeOffset.Now);
         var second = (await Service().LoadAsync(12, null, default)).Recipe!;
 
-        first.OriginalFilePath.Should().Be(Path.Combine(_cache, "12.png"));
-        second.OriginalFilePath.Should().Be(first.OriginalFilePath);
+        Path.GetFileName(first.OriginalFilePath).Should().Be("original.png");
+        second.OriginalFilePath.Should().Be(Path.Combine(_cache, "12", "original.png"));
         second.Data.Prompt.Should().Be("a cat");
         _http.Calls.Should().Be(1);
+    }
+
+    /// <summary>Until the recipe is saved its original is not in a recipe folder: a load that ends unsaved must leave no broken card.</summary>
+    [Fact]
+    public async Task LoadedOriginal_IsStaged_NotInARecipeFolder()
+    {
+        HasImage(17);
+        _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+
+        var recipe = (await Service().LoadAsync(17, null, default)).Recipe!;
+
+        recipe.OriginalFilePath.Should().StartWith(Path.Combine(_cache, ".staging", "17-"));
+        Directory.Exists(Path.Combine(_cache, "17")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CancelledAfterTheOriginalLanded_LeavesNoRecipeFolder_AndNoStaging()
+    {
+        HasImage(33, 1, "image", 100);
+        _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+        using var cts = new CancellationTokenSource();
+        _client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, string?, CancellationToken>(async (_, _, ct) =>
+            {
+                // The resource is still loading when the original has landed; then the user pastes again.
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (!Directory.EnumerateFiles(_cache, "original.png", SearchOption.AllDirectories).Any() && DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(10, CancellationToken.None);
+                }
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                return null;
+            });
+
+        var act = () => Service().LoadAsync(33, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        Directory.Exists(Path.Combine(_cache, "33")).Should().BeFalse();
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty();
+        (Directory.Exists(Path.Combine(_cache, ".staging")) ? Directory.GetDirectories(Path.Combine(_cache, ".staging")) : []).Should().BeEmpty();
     }
 
     [Fact]
@@ -174,7 +266,46 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         recipe.Data.Source.Should().Be(RecipeDataSource.None);
         recipe.OriginalFilePath.Should().BeNull();
         recipe.Resources.Should().HaveCount(2);
-        Directory.GetFiles(_cache).Should().BeEmpty("a failed download leaves nothing half-written in the cache");
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty("a failed download leaves nothing half-written in the cache");
+    }
+
+    [Fact]
+    public async Task FailedDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(30);
+        _http.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError);
+
+        await Service().LoadAsync(30, null, default);
+
+        Directory.Exists(Path.Combine(_cache, "30")).Should().BeFalse("an empty folder would be listed as a broken recipe");
+    }
+
+    [Fact]
+    public async Task NonImageDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(31);
+        _http.Respond = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html>challenge</html>") };
+
+        await Service().LoadAsync(31, null, default);
+
+        Directory.Exists(Path.Combine(_cache, "31")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CancelledDownload_LeavesNoRecipeFolder()
+    {
+        HasImage(32);
+        using var cts = new CancellationTokenSource();
+        _http.Respond = _ =>
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        };
+
+        var act = () => Service().LoadAsync(32, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        Directory.Exists(Path.Combine(_cache, "32")).Should().BeFalse();
     }
 
     [Fact]
@@ -190,7 +321,7 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
         recipe.Data.ReadError.Should().Be("The file Civitai served for this image is not a PNG, JPEG or WebP image.");
         recipe.OriginalFilePath.Should().BeNull();
         recipe.Resources.Should().ContainSingle();
-        Directory.GetFiles(_cache).Should().BeEmpty();
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty();
         _http.Calls.Should().Be(2, "nothing was cached, so the next paste tries again");
     }
 

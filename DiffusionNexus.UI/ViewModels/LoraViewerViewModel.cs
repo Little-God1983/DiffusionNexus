@@ -20,6 +20,7 @@ using DiffusionNexus.Service.Services.Sync;
 using DiffusionNexus.UI.Models;
 using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.CivitaiBrowser;
+using DiffusionNexus.UI.Services.CivitaiRecipe;
 using DiffusionNexus.UI.Services.Download;
 using DiffusionNexus.UI.Services.Lora.Sorting;
 using DiffusionNexus.UI.Utilities;
@@ -435,6 +436,8 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         UnknownBaseModelItem.SelectionChanged += OnBaseModelFilterChanged;
         BrowserViewModel = new CivitaiBrowserViewModel();
         SorterViewModel = new LoraSorterViewModel();
+        RecipesViewModel = new RecipesTabViewModel(
+            new RecipeStore(Path.Combine(Path.GetTempPath(), "DiffusionNexus-design-recipes"), null), BrowserViewModel, null, null);
         // Load demo data for design-time preview
         LoadDemoData();
     }
@@ -501,7 +504,7 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
             apiKeyProvider: _apiKeyProvider);
         var waitlist = new CivitaiWaitlist(_civitaiClient, _logger, apiCache: apiCache);
         BrowserViewModel = new CivitaiBrowserViewModel(_civitaiClient, _settingsService, _logger, queue, waitlist, AvailableBaseModels,
-            apiKeyProvider: _apiKeyProvider);
+            apiKeyProvider: _apiKeyProvider, changeNotifier: _changeNotifier);
 
         // LoRA Sorter sub-tab. Same DB-backed source of truth as the Installed tab;
         // disk seams are the production implementations.
@@ -520,6 +523,15 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
                 loadCachedFiles: LoadCachedFilesForSorterAsync,
                 hiddenFeatures: App.Services?.GetService<HiddenFeatures>());
         SorterViewModel.SortCompleted += (_, _) => _ = RefreshAsync();
+
+        // Recipes sub-tab (#667): one store shared with the browser, which saves every pasted recipe into it.
+        var recipeStore = new RecipeStore(RecipeStore.DefaultRoot, _logger);
+        BrowserViewModel.RecipeStore = recipeStore;
+        RecipesViewModel = new RecipesTabViewModel(recipeStore, BrowserViewModel, dialogService, _logger,
+            clipboard: AvaloniaClipboardService.Instance,
+            retryService: () => BrowserViewModel.BuildRecipeService()
+                ?? throw new InvalidOperationException("No Civitai client is available to retry the recipe."),
+            uiScheduler: _uiScheduler);
 
         _ = InitializeBaseModelFilterAsync();
         _ = LoadDestinationFoldersAsync(destination);
@@ -561,6 +573,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
         if (_changeNotifier is not null)
             _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
 
+        RecipesViewModel.Dispose();
+        BrowserViewModel.Dispose();
+
         GC.SuppressFinalize(this);
     }
 
@@ -571,6 +586,9 @@ public partial class LoraViewerViewModel : BusyViewModelBase, IDisposable
 
     /// <summary>View model for the "LoRA Sorter" sub-tab.</summary>
     public LoraSorterViewModel SorterViewModel { get; }
+
+    /// <summary>View model for the "Recipes" sub-tab (#667).</summary>
+    public RecipesTabViewModel RecipesViewModel { get; }
 
     #endregion
 

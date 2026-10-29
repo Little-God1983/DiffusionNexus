@@ -153,6 +153,255 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
         card.PreviewUrl.Should().Contain("nsfw-preview", "flipping Show NSFW does not reach the recipe");
     }
 
+    private RecipeStore Store => _store ??= new RecipeStore(Path.Combine(_dir, "recipes"), null);
+    private RecipeStore? _store;
+
+    private CivitaiBrowserViewModel CreateWithStore(RecipeStore? store = null)
+    {
+        var (vm, _) = Create();
+        vm.RecipeStore = store ?? Store;
+        // As in the app: the service downloads into the store's own root.
+        vm.RecipeServiceFactory = () => new CivitaiImageRecipeService(
+            _client.Object, new HttpClient(new PngHandler()), vm.RecipeStore.Root, null);
+        return vm;
+    }
+
+    private string[] StagingEntries() =>
+        Directory.Exists(Path.Combine(Store.Root, ".staging")) ? Directory.GetFileSystemEntries(Path.Combine(Store.Root, ".staging")) : [];
+
+    [Fact]
+    public async Task PasteTwice_OneOriginal_NoStaging()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+        await Search(vm, "https://civitai.com/images/7");
+
+        Directory.GetFiles(Store.FolderFor(7), "original.*").Should().ContainSingle();
+        StagingEntries().Should().BeEmpty();
+    }
+
+    /// <summary>A second paste cancels the first; the first must not leave a folder with only its original (a broken card).</summary>
+    [Fact]
+    public async Task SupersededPaste_SavesOnlyTheSecond_AndLeavesNoStaging()
+    {
+        HasImage(7, 1, 100);
+        HasImage(8, 1);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () => { reached.TrySetResult(); await gate.Task; return null; });
+        var vm = CreateWithStore();
+
+        vm.SearchText = "https://civitai.com/images/7";
+        var first = vm.SearchCommand.ExecuteAsync(null);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Search(vm, "https://civitai.com/images/8");
+        gate.SetResult();
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!first.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.UIThread.RunJobs();
+            Thread.Sleep(5);
+        }
+        await first;
+
+        Store.LoadAll().Select(s => s.ImageId).Should().Equal(8);
+        StagingEntries().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Paste_SavesTheRecipe()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        var saved = Store.LoadAll().Should().ContainSingle().Which;
+        saved.ImageId.Should().Be(7);
+        saved.Saved!.Recipe.Resources.Should().ContainSingle().Which.VersionId.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task PasteTwice_OneSavedRecipe()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+        await Search(vm, "https://civitai.com/images/7");
+
+        Store.LoadAll().Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task RefreshFails_ShowsSavedCopy_NotMoved()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        await Search(CreateWithStore(), "https://civitai.com/images/7");
+        var pastedAt = Store.TryLoad(7)!.Saved!.PastedAt;
+
+        _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModelImage>());
+        var vm = CreateWithStore();
+        await Search(vm, "https://civitai.com/images/7");
+
+        // CI failed here once (74abaa10) and never locally: say what the browser reported instead.
+        vm.Recipe.Should().NotBeNull($"the saved copy is shown (status: {vm.StatusMessage}; saved: {Store.TryLoad(7)?.ReadError ?? "readable"})");
+        vm.LinkLookupNotice.Should().StartWith("Could not refresh this recipe from Civitai (").And.EndWith("). Showing the saved copy.");
+        Store.TryLoad(7)!.Saved!.PastedAt.Should().Be(pastedAt);
+    }
+
+    [Fact]
+    public async Task NoStore_NoSavedCopyToShow()
+    {
+        _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CivitaiPagedResponse<CivitaiModelImage>());
+        var (vm, _) = Create();
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        vm.Recipe.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SaveFails_StillShowsTheRecipe_AndSaysSo()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var blocker = Path.Combine(_dir, "not-a-folder");
+        File.WriteAllText(blocker, "x");
+        var vm = CreateWithStore(new RecipeStore(blocker, null));
+
+        await Search(vm, "https://civitai.com/images/7");
+
+        vm.Recipe.Should().NotBeNull();
+        vm.StatusMessage.Should().StartWith("The recipe could not be saved: ");
+    }
+
+    [Fact]
+    public void InstalledIndexChanged_Raised_WhenTheIndexIsReplaced()
+    {
+        var (vm, _) = Create();
+        var raised = 0;
+        ((IRecipeHost)vm).InstalledIndexChanged += (_, _) => raised++;
+        var index = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+
+        vm.ApplyInstalledSnapshot(index);
+
+        raised.Should().Be(1);
+        ((IRecipeHost)vm).Installed.Should().BeSameAs(index);
+    }
+
+    private static void PumpUntil(Func<bool> done)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!done() && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.UIThread.RunJobs();
+            Thread.Sleep(5);
+        }
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>The Recipes tab can be opened before Browse Civitai: it reads the library itself, without a search.</summary>
+    [Fact]
+    public async Task EnsureInstalledLoaded_BeforeTheBrowserWasShown_ReadsTheLibraryOnce()
+    {
+        var (vm, _) = Create();
+        var reads = 0;
+        var index = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        vm.InstalledIndexSource = async () => { Interlocked.Increment(ref reads); await release.Task; return index; };
+        var raised = 0;
+        IRecipeHost host = vm;
+        host.InstalledIndexChanged += (_, _) => raised++;
+        host.IsInstalledLoaded.Should().BeFalse();
+
+        var first = host.EnsureInstalledLoadedAsync();
+        var second = host.EnsureInstalledLoadedAsync();
+        release.SetResult();
+        PumpUntil(() => first.IsCompleted && second.IsCompleted);
+        await Task.WhenAll(first, second);
+        await host.EnsureInstalledLoadedAsync();
+
+        reads.Should().Be(1);
+        raised.Should().Be(1);
+        host.IsInstalledLoaded.Should().BeTrue();
+        host.Installed.Should().BeSameAs(index);
+    }
+
+    /// <summary>A read that started before a download landed must not overwrite the read made after it.</summary>
+    [Fact]
+    public void OlderInstalledRead_FinishingLast_DoesNotWin()
+    {
+        var notifier = new FakeNotifier();
+        var queue = new CivitaiDownloadQueue(null, null, null, null, persistPathOverride: Path.Combine(_dir, "queue.json"));
+        var waitlist = new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_dir, "waitlist.json"));
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue, waitlist, null, changeNotifier: notifier)
+        {
+            InstalledRefreshDelay = TimeSpan.FromMilliseconds(10),
+        };
+        var before = new CivitaiInstalledIndex(new HashSet<int>(), new HashSet<string>());
+        var after = new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>());
+        var slow = new TaskCompletionSource<CivitaiInstalledIndex?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        vm.InstalledIndexSource = () => Interlocked.Increment(ref reads) == 1 ? slow.Task : Task.FromResult<CivitaiInstalledIndex?>(after);
+        IRecipeHost host = vm;
+
+        var first = host.EnsureInstalledLoadedAsync();
+        notifier.NotifyModelDownloaded(1);
+        PumpUntil(() => vm.InstalledRefreshAfterDownload.IsCompleted && host.Installed == after);
+        slow.SetResult(before);
+        PumpUntil(() => first.IsCompleted);
+
+        host.Installed.Should().BeSameAs(after);
+        vm.Dispose();
+    }
+
+    [Fact]
+    public void DownloadBurst_RefreshesTheInstalledSetOnce_UntilDisposed()
+    {
+        var notifier = new FakeNotifier();
+        var queue = new CivitaiDownloadQueue(null, null, null, null, persistPathOverride: Path.Combine(_dir, "queue.json"));
+        var waitlist = new CivitaiWaitlist(null, null, persistPathOverride: Path.Combine(_dir, "waitlist.json"));
+        var vm = new CivitaiBrowserViewModel(null, null, null, queue, waitlist, null, changeNotifier: notifier)
+        {
+            InstalledRefreshDelay = TimeSpan.FromMilliseconds(100),
+        };
+        var reads = 0;
+        vm.InstalledIndexSource = () =>
+        {
+            Interlocked.Increment(ref reads);
+            return Task.FromResult<CivitaiInstalledIndex?>(new CivitaiInstalledIndex(new HashSet<int> { 5 }, new HashSet<string>()));
+        };
+
+        for (var i = 0; i < 5; i++) notifier.NotifyModelDownloaded(i);
+        PumpUntil(() => vm.InstalledRefreshAfterDownload.IsCompleted && ((IRecipeHost)vm).IsInstalledLoaded);
+
+        reads.Should().Be(1);
+        ((IRecipeHost)vm).IsInstalledLoaded.Should().BeTrue();
+
+        vm.Dispose();
+        notifier.SubscriberCount.Should().Be(0);
+    }
+
+    private sealed class FakeNotifier : DiffusionNexus.Domain.Services.ILibraryChangeNotifier
+    {
+        public event EventHandler<DiffusionNexus.Domain.Services.ModelDownloadedEventArgs>? ModelDownloaded;
+
+        public int SubscriberCount => ModelDownloaded?.GetInvocationList().Length ?? 0;
+
+        public void NotifyModelDownloaded(int modelId) =>
+            ModelDownloaded?.Invoke(this, new DiffusionNexus.Domain.Services.ModelDownloadedEventArgs(modelId));
+    }
+
     private sealed class PngHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>

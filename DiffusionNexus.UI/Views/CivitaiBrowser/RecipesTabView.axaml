@@ -1,0 +1,203 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.CivitaiBrowser"
+             xmlns:cb="using:DiffusionNexus.UI.Views.CivitaiBrowser"
+             xmlns:conv="using:DiffusionNexus.UI.Converters"
+             x:Class="DiffusionNexus.UI.Views.CivitaiBrowser.RecipesTabView"
+             x:DataType="vm:RecipesTabViewModel">
+
+  <!-- Recipes tab (#667): the recipes on disk as History and Kept, grouped by date; an opened recipe
+       takes the list's place while the list stays in the tree so Back finds its scroll position. -->
+  <UserControl.Styles>
+    <Style Selector="Button.chip">
+      <Setter Property="CornerRadius" Value="12"/>
+      <Setter Property="Padding" Value="10,3"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Background" Value="#262626"/>
+      <Setter Property="BorderBrush" Value="#3A3A3A"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+    <Style Selector="Button.chip.active">
+      <Setter Property="Background" Value="#6D3FD6"/>
+      <Setter Property="BorderBrush" Value="#8A63E8"/>
+    </Style>
+    <Style Selector="Button.chip.active /template/ ContentPresenter">
+      <Setter Property="Background" Value="#6D3FD6"/>
+    </Style>
+    <Style Selector="TextBlock.status">
+      <Setter Property="FontSize" Value="11"/>
+      <Setter Property="Foreground" Value="#8A8A8A"/>
+    </Style>
+    <Style Selector="TextBlock.status.ready">
+      <Setter Property="Foreground" Value="#4CD964"/>
+    </Style>
+    <Style Selector="TextBlock.status.missing">
+      <Setter Property="Foreground" Value="#FFB020"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+    <!-- Filter bar -->
+    <Border Grid.Row="0" Padding="12,10" IsVisible="{Binding !IsRecipeOpen}">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto">
+        <Button Grid.Column="0" Classes="chip" Classes.active="{Binding !IsKeptView}"
+                Command="{Binding ShowHistoryCommand}" Margin="0,0,6,0">
+          <TextBlock Text="{Binding HistoryCount, StringFormat='History {0}'}"/>
+        </Button>
+        <Button Grid.Column="1" Classes="chip" Classes.active="{Binding IsKeptView}"
+                Command="{Binding ShowKeptCommand}" Margin="0,0,14,0">
+          <TextBlock Text="{Binding KeptCount, StringFormat='★ Kept {0}'}"/>
+        </Button>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" Margin="0,0,14,0">
+          <Button Classes="chip" Content="All" Click="OnStatusAll"
+                  Classes.active="{Binding StatusFilter, Converter={x:Static cb:RecipesTabView.IsAll}}"/>
+          <Button Classes="chip" Content="Ready" Click="OnStatusReady"
+                  Classes.active="{Binding StatusFilter, Converter={x:Static cb:RecipesTabView.IsReady}}"/>
+          <Button Classes="chip" Content="Missing LoRAs" Click="OnStatusMissing"
+                  Classes.active="{Binding StatusFilter, Converter={x:Static cb:RecipesTabView.IsMissing}}"/>
+        </StackPanel>
+        <CheckBox Grid.Column="3" Content="Show NSFW" IsChecked="{Binding ShowNsfw, Mode=TwoWay}"
+                  VerticalAlignment="Center"/>
+        <TextBox Grid.Column="5" Width="260" Watermark="Search prompt, creator, LoRA..."
+                 Text="{Binding SearchText, Mode=TwoWay}" Margin="0,0,8,0"/>
+        <Button Grid.Column="6" Content="Clear history..." Command="{Binding ClearHistoryCommand}"
+                IsVisible="{Binding !IsKeptView}"/>
+      </Grid>
+    </Border>
+
+    <!-- Counter line -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="12,0,12,6"
+                IsVisible="{Binding !IsRecipeOpen}">
+      <TextBlock Text="{Binding CounterText}" FontWeight="SemiBold" FontSize="12"/>
+      <TextBlock Text="{Binding HiddenText, StringFormat='· {0}'}" Foreground="#FFB020" FontSize="12"
+                 IsVisible="{Binding HiddenText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+      <TextBlock Text="{Binding StatusMessage, StringFormat='· {0}'}" Foreground="#FF6B6B" FontSize="12"
+                 IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+    </StackPanel>
+
+    <!-- Cards -->
+    <Panel Grid.Row="2">
+      <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding !IsRecipeOpen}">
+        <ItemsControl ItemsSource="{Binding Groups}" Margin="12,0,12,12">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:RecipeGroupViewModel">
+              <StackPanel Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,6">
+                  <TextBlock Text="{Binding Header}" FontWeight="SemiBold" FontSize="13"/>
+                  <TextBlock Text="{Binding CountText}" Opacity="0.5" FontSize="12" VerticalAlignment="Bottom"/>
+                </StackPanel>
+                <ItemsControl ItemsSource="{Binding Cards}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:RecipeCardViewModel">
+                      <Border Margin="0,0,8,8" Width="168" Background="#1E1E1E" CornerRadius="6"
+                              BorderThickness="2" ClipToBounds="True"
+                              BorderBrush="{Binding IsSelected, Converter={x:Static conv:BoolConverters.BoolToSelectionBorder}}"
+                              Cursor="Hand"
+                              PointerPressed="OnCardPressed">
+                        <StackPanel>
+                          <Grid Height="132" Background="#141414">
+                            <Image Stretch="UniformToFill"
+                                   AttachedToVisualTree="OnThumbAttached"
+                                   DetachedFromVisualTree="OnThumbDetached"/>
+                            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4"
+                                    CornerRadius="3" Padding="4,1" IsVisible="{Binding !IsBroken}"
+                                    Background="{Binding IsSafe, Converter={x:Static cb:RecipesTabView.RatingBrush}}">
+                              <TextBlock Text="{Binding RatingBadge}" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+                            </Border>
+                            <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="2"
+                                    Padding="4,0" Background="Transparent" BorderThickness="0" FontSize="16"
+                                    IsVisible="{Binding !IsBroken}"
+                                    Content="{Binding IsKept, Converter={x:Static cb:RecipesTabView.StarText}}"
+                                    Foreground="{Binding IsKept, Converter={x:Static cb:RecipesTabView.StarBrush}}"
+                                    Command="{Binding $parent[UserControl].((vm:RecipesTabViewModel)DataContext).ToggleKeptCommand}"
+                                    CommandParameter="{Binding}"
+                                    ToolTip.Tip="Keep this recipe: History clearing leaves it alone"/>
+                            <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4"
+                                    CornerRadius="3" Padding="4,1" Background="#CC000000"
+                                    IsVisible="{Binding BaseModel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                              <TextBlock Text="{Binding BaseModel}" FontSize="10" Foreground="White"
+                                         TextTrimming="CharacterEllipsis" MaxWidth="90"/>
+                            </Border>
+                            <CheckBox HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,2"
+                                      MinWidth="0" Padding="0"
+                                      IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                      ToolTip.Tip="Select"/>
+                          </Grid>
+                          <StackPanel Margin="8,6,8,8" Spacing="1">
+                            <TextBlock Text="{Binding Title}" FontSize="12" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}"/>
+                            <TextBlock Text="{Binding Byline}" FontSize="11" Opacity="0.6"
+                                       TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Byline}"/>
+                            <TextBlock Classes="status" Classes.ready="{Binding IsReady}" Classes.missing="{Binding IsMissing}"
+                                       Text="{Binding StatusText, StringFormat='● {0}'}"
+                                       IsVisible="{Binding !IsBroken}" TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding StatusText}"/>
+                          </StackPanel>
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <TextBlock Text="{Binding EmptyText}" Opacity="0.6" TextWrapping="Wrap" MaxWidth="480"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center">
+        <TextBlock.IsVisible>
+          <MultiBinding Converter="{x:Static BoolConverters.And}">
+            <Binding Path="!IsRecipeOpen"/>
+            <Binding Path="EmptyText" Converter="{x:Static StringConverters.IsNotNullOrEmpty}"/>
+          </MultiBinding>
+        </TextBlock.IsVisible>
+      </TextBlock>
+
+      <!-- An opened recipe: DataContext and IsVisible sit on different elements, as in the browser. -->
+      <Panel IsVisible="{Binding IsRecipeOpen}">
+        <DockPanel>
+          <Button DockPanel.Dock="Top" Content="{Binding BackText}" Command="{Binding BackCommand}"
+                  Margin="12,8,12,8" HorizontalAlignment="Left"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <cb:CivitaiRecipeView DataContext="{Binding OpenRecipe}" Margin="6,0,6,12"/>
+          </ScrollViewer>
+        </DockPanel>
+      </Panel>
+    </Panel>
+
+    <!-- Selection bar -->
+    <Border Grid.Row="3" Margin="12,0,12,12" Padding="12,8" CornerRadius="6" Background="#161B26"
+            BorderBrush="#2A3550" BorderThickness="1">
+      <Border.IsVisible>
+        <MultiBinding Converter="{x:Static BoolConverters.And}">
+          <Binding Path="!IsRecipeOpen"/>
+          <Binding Path="SelectedCount" Converter="{x:Static cb:RecipesTabView.IsPositive}"/>
+        </MultiBinding>
+      </Border.IsVisible>
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+          <TextBlock Text="{Binding SelectedCount, StringFormat='{}{0} selected'}" FontWeight="SemiBold"/>
+          <Button Content="Clear selection" Command="{Binding ClearSelectionCommand}"
+                  Background="Transparent" BorderThickness="0" Padding="4,2" FontSize="11"/>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+          <Button Content="★ Keep" Classes="accent" Command="{Binding KeepSelectedCommand}"
+                  IsVisible="{Binding !IsKeptView}"/>
+          <Button Content="Move back to History" Command="{Binding UnkeepSelectedCommand}"
+                  IsVisible="{Binding IsKeptView}"/>
+          <Button Content="{Binding QueueButtonText}" Classes="accent" Command="{Binding QueueMissingCommand}"
+                  ToolTip.Tip="{Binding QueueTooltip}"/>
+          <Button Content="Open on Civitai" Command="{Binding OpenOnCivitaiCommand}"/>
+          <Button Content="Delete..." Command="{Binding DeleteSelectedCommand}"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

@@ -382,5 +382,9 @@
     <TabItem Header="LoRA Sorter">
       <views:LoraSorterView DataContext="{Binding SorterViewModel}"/>
     </TabItem>
+
+    <TabItem Header="Recipes">
+      <browser:RecipesTabView DataContext="{Binding RecipesViewModel}"/>
+    </TabItem>
   </TabControl>
 </UserControl>

@@ -24,7 +24,7 @@ namespace DiffusionNexus.UI.ViewModels.CivitaiBrowser;
 /// Civitai browser sub-tab. Search, filters, multi-select, cursor pagination, and
 /// a persistent concurrent download queue with SHA256 verification + sidecar writing.
 /// </summary>
-public partial class CivitaiBrowserViewModel : ObservableObject
+public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost, IDisposable
 {
     private readonly ICivitaiClient? _civitaiClient;
     private readonly IAppSettingsService? _settingsService;
@@ -32,6 +32,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private readonly CivitaiDownloadQueue _queue;
     private readonly CivitaiWaitlist _waitlist;
     private ICivitaiApiKeyProvider? _apiKeyProvider;
+    private readonly ILibraryChangeNotifier? _changeNotifier;
     private Avalonia.Threading.DispatcherTimer? _waitlistCountdownTimer;
 
     private CancellationTokenSource? _searchCts;
@@ -40,6 +41,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private bool _isLoading;
     private bool _initialized;
     private CivitaiInstalledIndex _installed = CivitaiInstalledIndex.Empty;
+    private long _installedReadsStarted;
+    private long _installedReadApplied; // UI thread only
     private CivitaiResultViewModel? _lastClickedItem;
 
     /// <summary>
@@ -63,7 +66,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         CivitaiDownloadQueue queue,
         CivitaiWaitlist waitlist,
         ObservableCollection<BaseModelFilterItem>? sharedBaseModelSource,
-        ICivitaiApiKeyProvider? apiKeyProvider = null)
+        ICivitaiApiKeyProvider? apiKeyProvider = null,
+        ILibraryChangeNotifier? changeNotifier = null)
     {
         _civitaiClient = civitaiClient;
         _settingsService = settingsService;
@@ -72,6 +76,10 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         _waitlist = waitlist;
         _apiKeyProvider = apiKeyProvider;
         StartWaitlistCountdownTimer();
+
+        // A finished download changes what the cards and the Recipes tab must call installed (#667).
+        _changeNotifier = changeNotifier;
+        if (_changeNotifier is not null) _changeNotifier.ModelDownloaded += OnLibraryModelDownloaded;
 
         SortOptions = new ObservableCollection<string>
         {
@@ -429,8 +437,16 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     private static readonly Lazy<HttpClient> s_recipeHttp = new(() => new HttpClient { Timeout = TimeSpan.FromMinutes(2) });
 
+    /// <summary>Where every pasted recipe is saved (set by the LoRA Viewer); null means nothing is saved.</summary>
+    internal RecipeStore? RecipeStore { get; set; }
+
     /// <summary>Test seam: builds the recipe service. Null uses the browser's Civitai client.</summary>
     internal Func<CivitaiImageRecipeService>? RecipeServiceFactory { get; set; }
+
+    /// <summary>The service that loads a recipe (also the Recipes tab's retry); null while there is no Civitai client.</summary>
+    internal CivitaiImageRecipeService? BuildRecipeService() =>
+        RecipeServiceFactory?.Invoke()
+        ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, RecipeStore?.Root ?? Services.CivitaiRecipe.RecipeStore.DefaultRoot, _logger));
 
     private void ClearRecipe()
     {
@@ -451,8 +467,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMore));
         ApplyClientSideFilters();
 
-        var service = RecipeServiceFactory?.Invoke()
-            ?? (_civitaiClient is null ? null : new CivitaiImageRecipeService(_civitaiClient, s_recipeHttp.Value, CivitaiImageRecipeService.DefaultCacheDirectory, _logger));
+        var service = BuildRecipeService();
         if (service is null)
         {
             IsBusy = false;
@@ -461,6 +476,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             return;
         }
 
+        string? staged = null;
         try
         {
             IsBusy = true;
@@ -469,12 +485,44 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
             var apiKey = await GetApiKeyAsync();
             var result = await service.LoadAsync(imageId, apiKey, ct);
+            staged = result.Recipe?.OriginalFilePath;
+            if (ct.IsCancellationRequested) return;
+
+            // The file IO of the store stays off the UI thread.
+            var toShow = result.Recipe;
+            var notice = RecipeNoticeText;
+            string? saveError = null;
+            if (RecipeStore is { } store)
+            {
+                if (result.Recipe is not null)
+                {
+                    try
+                    {
+                        var stored = await Task.Run(() => store.Save(result.Recipe, DateTimeOffset.Now), CancellationToken.None);
+                        if (stored.Saved is not null) toShow = stored.Saved.Recipe;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+                    {
+                        saveError = $"The recipe could not be saved: {ex.Message}";
+                    }
+                }
+                else
+                {
+                    var saved = await Task.Run(() => store.TryLoad(imageId)?.Saved, CancellationToken.None);
+                    if (saved is not null)
+                    {
+                        toShow = saved.Recipe;
+                        notice = $"Could not refresh this recipe from Civitai ({result.Message}). Showing the saved copy.";
+                        _logger?.Info(LogCategory.Network, "CivitaiRecipe", $"Recipe {imageId}: refresh failed, showing the saved copy.");
+                    }
+                }
+            }
             if (ct.IsCancellationRequested) return;
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (ct.IsCancellationRequested || result.Recipe is null) return;
-                var recipe = new CivitaiRecipeViewModel(result.Recipe, _installed, CreateRecipeCard, AvaloniaClipboardService.Instance)
+                if (ct.IsCancellationRequested || toShow is null) return;
+                var recipe = new CivitaiRecipeViewModel(toShow, _installed, CreateRecipeCard, AvaloniaClipboardService.Instance)
                 {
                     UrlOpener = OpenUrl,
                 };
@@ -488,8 +536,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
             });
             if (ct.IsCancellationRequested) return;
 
-            LinkLookupNotice = Recipe is not null ? RecipeNoticeText : null;
-            StatusMessage = result.Message;
+            LinkLookupNotice = Recipe is not null ? notice : null;
+            StatusMessage = saveError ?? result.Message;
             if (Recipe is { } shown)
             {
                 _logger?.Info(LogCategory.Network, "CivitaiRecipe",
@@ -521,6 +569,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
         finally
         {
+            // Save adopts the downloaded original; a load that ends without a save (superseded, failed) drops it.
+            Services.CivitaiRecipe.RecipeStore.DiscardStaged(staged);
             if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }
@@ -709,7 +759,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     /// </summary>
     public Action<string> UrlOpener { get; set; } = UrlLauncher.Open;
 
-    private void OpenUrl(string url) => UrlLauncher.TryOpen(url, UrlOpener, _logger, "CivitaiWaitlist");
+    public void OpenUrl(string url) => UrlLauncher.TryOpen(url, UrlOpener, _logger, "CivitaiWaitlist");
 
     [RelayCommand]
     private void RemoveWaitlistEntry(CivitaiWaitlistEntry? entry)
@@ -1280,7 +1330,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject
     private CivitaiResultViewModel CreateResultCard(CivitaiModel model) => CreateCard(model, ShowNsfw);
 
     /// <summary>A recipe's resource card: a pasted link hides nothing, so its preview ignores Show NSFW (#628).</summary>
-    private CivitaiResultViewModel CreateRecipeCard(CivitaiModel model) => CreateCard(model, showNsfwPreviews: true);
+    public CivitaiResultViewModel CreateRecipeCard(CivitaiModel model) => CreateCard(model, showNsfwPreviews: true);
 
     private CivitaiResultViewModel CreateCard(CivitaiModel model, bool showNsfwPreviews)
     {
@@ -1868,48 +1918,17 @@ public partial class CivitaiBrowserViewModel : ObservableObject
 
     private async Task RefreshInstalledSetAsync()
     {
+        // Reads can overlap (Recipes tab, Browse, the refresh after a download): the newest one started wins.
+        var generation = Interlocked.Increment(ref _installedReadsStarted);
         try
         {
-            if (App.Services is null) return;
-            using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
-            var uow = scope.ServiceProvider.GetService<IUnitOfWork>();
-            if (uow is null) return;
-
-            // Honor the IsEnabled toggle on LoRA sources: a LoRA stored under a
-            // disabled source no longer counts as "installed" for the Show flyout's
-            // Installed toggle / the card's Installed badge. Mirrors the Installed
-            // tab's filtering rule.
-            var settings = scope.ServiceProvider.GetService<IAppSettingsService>();
-            IReadOnlyList<string>? enabledRoots = null;
-            if (settings is not null)
-            {
-                enabledRoots = await settings.GetEnabledLoraSourcesAsync();
-            }
-
-            var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
-            var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
-            _installed = new CivitaiInstalledIndex(set, hashes);
-
+            var index = await (InstalledIndexSource ?? ReadInstalledIndexAsync)();
+            if (index is null) return;
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                // Refreshes the card badge AND every version row — a download that just
-                // finished must light up the row it landed in, not only the card.
-                var repicked = new List<string>();
-                foreach (var r in Results)
-                {
-                    r.ApplyInstalledIndex(_installed);
-                    // A link card built before this snapshot may have ticked a version that is in
-                    // fact installed; redo its pre-tick unless the user has changed it since.
-                    if (r.ReapplyLinkPreselectIfUntouched()) repicked.Add($"\"{r.Name}\" → {r.SelectedVersionSummary}");
-                }
-                Recipe?.ApplyInstalledIndex(_installed);
-                if (repicked.Count > 0)
-                {
-                    _logger?.Info(LogCategory.Network, "CivitaiBrowser",
-                        $"Installed library refreshed: link pre-ticks redone on {repicked.Count} card(s) — {string.Join("; ", repicked)}");
-                }
-                OnSelectionChanged();
-                ApplyClientSideFilters();
+                if (generation < _installedReadApplied) return;
+                _installedReadApplied = generation;
+                ApplyInstalledSnapshot(index);
             });
         }
         catch (Exception ex)
@@ -1918,7 +1937,122 @@ public partial class CivitaiBrowserViewModel : ObservableObject
         }
     }
 
-    private Task<string?> GetApiKeyAsync()
+    /// <summary>The installed set from the database; null where there is none (designer, tests).</summary>
+    private static async Task<CivitaiInstalledIndex?> ReadInstalledIndexAsync()
+    {
+        if (App.Services is null) return null;
+        using var scope = App.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var uow = scope.ServiceProvider.GetService<IUnitOfWork>();
+        if (uow is null) return null;
+
+        // Honor the IsEnabled toggle on LoRA sources: a LoRA stored under a
+        // disabled source no longer counts as "installed" for the Show flyout's
+        // Installed toggle / the card's Installed badge. Mirrors the Installed
+        // tab's filtering rule.
+        var settings = scope.ServiceProvider.GetService<IAppSettingsService>();
+        IReadOnlyList<string>? enabledRoots = null;
+        if (settings is not null)
+        {
+            enabledRoots = await settings.GetEnabledLoraSourcesAsync();
+        }
+
+        var set = await uow.Models.GetInstalledCivitaiVersionIdsAsync(enabledRoots);
+        var hashes = await uow.Models.GetInstalledFileHashesAsync(enabledRoots);
+        return new CivitaiInstalledIndex(set, hashes);
+    }
+
+    public CivitaiInstalledIndex Installed => _installed;
+
+    /// <summary>True once a snapshot of the library has been applied, by whichever path read it.</summary>
+    public bool IsInstalledLoaded { get; private set; }
+
+    private readonly object _installedLoadGate = new();
+    private Task? _installedLoad;
+
+    /// <summary>The Recipes tab's way in (#667): it can be opened before this browser ever was.</summary>
+    public Task EnsureInstalledLoadedAsync()
+    {
+        if (IsInstalledLoaded) return Task.CompletedTask;
+        lock (_installedLoadGate)
+        {
+            // A read that ended without a snapshot (no database, an error) is tried again by the next caller.
+            if (_installedLoad is null || _installedLoad.IsCompleted) _installedLoad = RefreshInstalledSetAsync();
+            return _installedLoad;
+        }
+    }
+
+    /// <summary>Test seam: replaces the database read of the installed set.</summary>
+    internal Func<Task<CivitaiInstalledIndex?>>? InstalledIndexSource { get; set; }
+
+    /// <summary>How long finished downloads are gathered before the installed set is read again.</summary>
+    internal TimeSpan InstalledRefreshDelay { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>The refresh a finished download scheduled, or the last one; tests wait on it.</summary>
+    internal Task InstalledRefreshAfterDownload { get; private set; } = Task.CompletedTask;
+
+    private int _installedRefreshQueued;
+
+    // Raised on the downloading thread. A queue batch raises one per file: the first schedules the
+    // refresh, the ones within the delay ride along, a later one schedules its own.
+    private void OnLibraryModelDownloaded(object? sender, ModelDownloadedEventArgs e)
+    {
+        if (Interlocked.Exchange(ref _installedRefreshQueued, 1) == 1) return;
+        InstalledRefreshAfterDownload = RefreshInstalledAfterDownloadsAsync();
+    }
+
+    private async Task RefreshInstalledAfterDownloadsAsync()
+    {
+        await Task.Delay(InstalledRefreshDelay).ConfigureAwait(false);
+        Interlocked.Exchange(ref _installedRefreshQueued, 0);
+        _logger?.Debug(LogCategory.Network, "CivitaiBrowser", "A download finished: reading the installed set again.");
+        await RefreshInstalledSetAsync();
+    }
+
+    /// <summary>Detaches from the library-changed signal, a singleton that would otherwise keep this view model alive.</summary>
+    public void Dispose()
+    {
+        if (_changeNotifier is not null) _changeNotifier.ModelDownloaded -= OnLibraryModelDownloaded;
+        GC.SuppressFinalize(this);
+    }
+
+    public event EventHandler? InstalledIndexChanged;
+
+    /// <summary>Replaces the installed index and applies it to the views, then tells the Recipes tab. UI thread only; also the test seam of the refresh.</summary>
+    internal void ApplyInstalledSnapshot(CivitaiInstalledIndex index)
+    {
+        _installed = index;
+        IsInstalledLoaded = true;
+
+        void Apply()
+        {
+            // Refreshes the card badge AND every version row — a download that just
+            // finished must light up the row it landed in, not only the card.
+            var repicked = new List<string>();
+            foreach (var r in Results)
+            {
+                r.ApplyInstalledIndex(_installed);
+                // A link card built before this snapshot may have ticked a version that is in
+                // fact installed; redo its pre-tick unless the user has changed it since.
+                if (r.ReapplyLinkPreselectIfUntouched()) repicked.Add($"\"{r.Name}\" → {r.SelectedVersionSummary}");
+            }
+            Recipe?.ApplyInstalledIndex(_installed);
+            if (repicked.Count > 0)
+            {
+                _logger?.Info(LogCategory.Network, "CivitaiBrowser",
+                    $"Installed library refreshed: link pre-ticks redone on {repicked.Count} card(s) — {string.Join("; ", repicked)}");
+            }
+            OnSelectionChanged();
+            ApplyClientSideFilters();
+            InstalledIndexChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        Apply();
+    }
+
+    public Task EnqueueRecipeAsync(List<(CivitaiResultViewModel Result, CivitaiVersionPickItemViewModel Pick)> pairs) =>
+        EnqueueWithPreflightPromptAsync(pairs);
+
+    public Task<string?> GetApiKeyAsync()
     {
         _apiKeyProvider ??= CivitaiApiKeys.Resolve(fallbackSettings: _settingsService);
         return _apiKeyProvider.GetApiKeyAsync();

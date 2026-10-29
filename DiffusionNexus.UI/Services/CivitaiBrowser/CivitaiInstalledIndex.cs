@@ -47,6 +47,21 @@ public sealed class CivitaiInstalledIndex
         return false;
     }
 
+    /// <summary>
+    /// True when an installed file's SHA256 starts with <paramref name="hash"/>. Image files carry the
+    /// short forms (AutoV2 = first 10 characters, SHA256_12 = first 12), so anything shorter than 10
+    /// is too ambiguous to count.
+    /// </summary>
+    public bool HasFileHashPrefix(string? hash)
+    {
+        if (hash is null || hash.Length < 10) return false;
+        foreach (var installed in _fileHashes)
+        {
+            if (installed.StartsWith(hash, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
     /// <summary>True when ANY version of the model is already in the local library.</summary>
     public bool IsInstalled(CivitaiModel? model)
     {

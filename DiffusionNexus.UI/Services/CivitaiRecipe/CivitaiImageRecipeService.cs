@@ -12,18 +12,17 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// ids of the resources it was made with (without <c>nsfw=X</c> an NSFW image comes back as nothing);</item>
 /// <item>each resource's version and model, through the API gateway, one failure per row;</item>
 /// <item>the generation data from the original file, which is the only source — the public API's
-/// <c>meta</c> was null for every image sampled. The file is cached by image id and also serves
-/// as the view's preview.</item>
+/// <c>meta</c> was null for every image sampled. A download waits in the store's staging folder until
+/// <see cref="RecipeStore.Save"/> adopts it; a saved recipe's original serves later pastes and the preview.</item>
 /// </list>
 /// </summary>
 public sealed class CivitaiImageRecipeService
 {
     private const string LogSource = "CivitaiRecipe";
 
+    internal const string NotFoundText = "not found on Civitai";
+    internal const string NoLongerAvailableText = "model no longer available on Civitai";
     internal const string NotAnImageText = "The file Civitai served for this image is not a PNG, JPEG or WebP image.";
-
-    /// <summary>Only files the recipe can read are cached, so a cache hit is always one of these.</summary>
-    private static readonly string[] CachedExtensions = [".png", ".jpg", ".webp"];
 
     private readonly ICivitaiClient _client;
     private readonly HttpClient _http;
@@ -37,10 +36,6 @@ public sealed class CivitaiImageRecipeService
         _cacheDirectory = cacheDirectory;
         _logger = logger;
     }
-
-    public static string DefaultCacheDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "DiffusionNexus", "Cache", "civitai-recipes");
 
     public async Task<CivitaiImageRecipeLoadResult> LoadAsync(long imageId, string? apiKey, CancellationToken ct)
     {
@@ -69,7 +64,16 @@ public sealed class CivitaiImageRecipeService
 
         var resourcesTask = Task.WhenAll(versionIds.Select(id => LoadResourceAsync(id, apiKey, ct)));
         var originalTask = GetOriginalAsync(image, imageId, ct);
-        await Task.WhenAll(resourcesTask, originalTask);
+        try
+        {
+            await Task.WhenAll(resourcesTask, originalTask);
+        }
+        catch
+        {
+            // The original may have landed before the load was cancelled; no save will adopt it.
+            if (originalTask.IsCompletedSuccessfully) RecipeStore.DiscardStaged(originalTask.Result.Path);
+            throw;
+        }
         var resources = resourcesTask.Result;
         var (originalPath, data) = originalTask.Result;
 
@@ -99,6 +103,40 @@ public sealed class CivitaiImageRecipeService
             data.ReadError);
 
         return new(new CivitaiImageRecipe(imageId, image, rating, originalPath, data, withUses, match.Unlinked, hasApiKey), null);
+    }
+
+    /// <summary>
+    /// Loads again the resources of a saved recipe that failed for a reason that may pass (429, timeout).
+    /// "Not found" answers are final and are not asked twice. Returns <paramref name="recipe"/> itself when
+    /// nothing needed a retry.
+    /// </summary>
+    public async Task<CivitaiImageRecipe> RetryFailedResourcesAsync(CivitaiImageRecipe recipe, string? apiKey, CancellationToken ct)
+    {
+        var failed = recipe.Resources.Where(r => r.LoadError is not null && !r.IsDefiniteFailure).Select(r => r.VersionId).ToList();
+        if (failed.Count == 0) return recipe;
+
+        var reloaded = (await Task.WhenAll(failed.Select(id => LoadResourceAsync(id, apiKey, ct)))).ToDictionary(r => r.VersionId);
+
+        // Only the entries no resource holds yet can be claimed by a newly loaded version.
+        var taken = recipe.Resources.Where(r => r.Use is not null && !reloaded.ContainsKey(r.VersionId)).Select(r => r.Use!).ToList();
+        var free = recipe.Data.Loras.Where(u => !taken.Contains(u)).ToList();
+        var loaded = reloaded.Values.Where(r => r.Version is not null).Select(r => r.Version!).ToList();
+        var match = RecipeResourceMatcher.Match(loaded, free);
+
+        var resources = recipe.Resources.Select(old =>
+        {
+            if (!reloaded.TryGetValue(old.VersionId, out var now)) return old;
+            if (now.LoadError is not null) return old with { LoadError = now.LoadError, Version = now.Version ?? old.Version };
+            if (!match.ByVersionId.TryGetValue(old.VersionId, out var use)) return now with { Use = old.Use };
+            // A weight Civitai's page gave on the first paste stays when the file entry carries none.
+            return now with { Use = use.Weight is null && old.Use?.Weight is { } weight ? use with { Weight = weight } : use };
+        }).ToList();
+        var claimed = match.ByVersionId.Values.ToList();
+        var unlinked = recipe.UnlinkedLoras.Where(u => !claimed.Contains(u)).ToList();
+
+        _logger?.Info(LogCategory.Network, LogSource,
+            $"Recipe {recipe.ImageId}: retried {failed.Count} resource(s), {resources.Count(r => failed.Contains(r.VersionId) && r.LoadError is null)} loaded now.");
+        return recipe with { Resources = resources, UnlinkedLoras = unlinked };
     }
 
     /// <summary>A weight Civitai's page knows, for a resource the file gave none.</summary>
@@ -140,7 +178,7 @@ public sealed class CivitaiImageRecipeService
             if (version is null)
             {
                 _logger?.Info(LogCategory.Network, LogSource, $"Recipe: GET model-versions/{versionId} → not found ({sw.ElapsedMilliseconds} ms)");
-                return new(versionId, null, null, null, "not found on Civitai");
+                return new(versionId, null, null, null, NotFoundText);
             }
 
             var model = await _client.GetModelAsync(version.ModelId, apiKey, ct);
@@ -148,7 +186,7 @@ public sealed class CivitaiImageRecipeService
             {
                 _logger?.Info(LogCategory.Network, LogSource,
                     $"Recipe: version {versionId} → model {version.ModelId} not available (mode {model?.Mode?.ToString() ?? "missing"}, {sw.ElapsedMilliseconds} ms)");
-                return new(versionId, version, null, null, "model no longer available on Civitai");
+                return new(versionId, version, null, null, NoLongerAvailableText);
             }
 
             _logger?.Info(LogCategory.Network, LogSource,
@@ -171,9 +209,9 @@ public sealed class CivitaiImageRecipeService
             return (null, ImageRecipeData.Empty(RecipeFileFormat.Video));
         }
 
-        Directory.CreateDirectory(_cacheDirectory);
-        var cached = CachedExtensions
-            .Select(ext => Path.Combine(_cacheDirectory, imageId + ext))
+        var folder = RecipeStore.FolderPath(_cacheDirectory, imageId);
+        var cached = RecipeStore.OriginalNames
+            .Select(name => Path.Combine(folder, name))
             .FirstOrDefault(f => File.Exists(f) && new FileInfo(f).Length > 0);
         if (cached is not null)
         {
@@ -181,14 +219,18 @@ public sealed class CivitaiImageRecipeService
             return (cached, ImageRecipeReader.Read(cached));
         }
 
-        // A name of its own: paste + Enter starts two loads of the same image at once.
-        var temp = Path.Combine(_cacheDirectory, $"{imageId}.{Guid.NewGuid():N}.download");
+        // Into a staging folder of its own, not the recipe folder: paste + Enter starts two loads of the same
+        // image at once, and a load that ends without a save (cancelled, superseded, failed) must leave no
+        // recipe folder behind. RecipeStore.Save moves the file into the recipe folder.
+        var staging = RecipeStore.NewStagingFolder(_cacheDirectory, imageId);
+        var temp = Path.Combine(staging, "original.download");
         var sw = Stopwatch.StartNew();
         try
         {
             using (var response = await _http.GetAsync(image.Url, HttpCompletionOption.ResponseHeadersRead, ct))
             {
                 response.EnsureSuccessStatusCode();
+                Directory.CreateDirectory(staging);
                 await using var file = File.Create(temp);
                 await response.Content.CopyToAsync(file, ct);
             }
@@ -205,35 +247,26 @@ public sealed class CivitaiImageRecipeService
             {
                 // An HTML challenge page or an image type nothing here reads: cached, it would answer every
                 // later paste of this image with the same nothing.
-                TryDelete(temp);
+                TryDeleteFolder(staging);
                 _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: the original file is {format}, not an image the recipe can read — not cached.", image.Url);
                 return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, NotAnImageText));
             }
 
-            var path = Path.Combine(_cacheDirectory, imageId + extension);
-            try
-            {
-                // No overwrite: replacing a file another load is reading fails with "access denied".
-                File.Move(temp, path, overwrite: false);
-            }
-            catch (IOException) when (File.Exists(path))
-            {
-                // Another load of the same image got there first; theirs is the same file.
-                TryDelete(temp);
-            }
+            var path = Path.Combine(staging, "original" + extension);
+            File.Move(temp, path);
             _logger?.Info(LogCategory.Network, LogSource,
                 $"Recipe {imageId}: original file downloaded — {format}, {new FileInfo(path).Length / 1024} KB ({sw.ElapsedMilliseconds} ms)");
             return (path, ImageRecipeReader.Read(path));
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            TryDelete(temp);
+            TryDeleteFolder(staging);
             _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: original file download failed: {ex.Message}", image.Url);
             return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, $"Could not download the original image file ({ex.Message})."));
         }
         catch
         {
-            TryDelete(temp);
+            TryDeleteFolder(staging);
             throw;
         }
     }
@@ -246,8 +279,8 @@ public sealed class CivitaiImageRecipeService
         return RecipeFileReader.DetectFormat(head[..read]);
     }
 
-    private static void TryDelete(string path)
+    private static void TryDeleteFolder(string folder)
     {
-        try { File.Delete(path); } catch { /* best-effort */ }
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* best-effort; the store removes it once it is a day old */ }
     }
 }
