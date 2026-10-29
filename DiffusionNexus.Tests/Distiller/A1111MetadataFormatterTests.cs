@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using DiffusionNexus.UI.Models;
+using DiffusionNexus.UI.Services;
 using DiffusionNexus.UI.Services.Distiller;
 using FluentAssertions;
 
@@ -82,5 +83,48 @@ public class A1111MetadataFormatterTests
         var data = Data() with { SamplerName = null };
         var s = A1111MetadataFormatter.Build(data, "p", null, [], hashes: null);
         s.Should().NotContain("Sampler:");
+    }
+
+    /// <summary>#674: Flux's built-in guidance goes after the real CFG under Forge's name, as the pack's a1111.format_parameters writes it.</summary>
+    [Fact]
+    public void Build_writes_flux_guidance_as_distilled_cfg_scale_after_the_cfg()
+    {
+        var data = Data() with { Cfg = 1, Guidance = 3.5, Seed = 1 };
+
+        A1111MetadataFormatter.Build(data, "cat", null, [], hashes: null)
+            .Should().Contain("CFG scale: 1, Distilled CFG Scale: 3.5, Seed: 1");
+    }
+
+    [Fact]
+    public void Build_without_guidance_writes_no_distilled_cfg_scale()
+    {
+        A1111MetadataFormatter.Build(Data(), "cat", null, [], hashes: null).Should().NotContain("Distilled");
+    }
+
+    [Fact]
+    public void Parse_reads_distilled_cfg_scale_as_the_guidance()
+    {
+        var data = ImageMetadataParser.ParseA1111Parameters(
+            "cat\nNegative prompt: \nSteps: 8, Sampler: Euler, CFG scale: 1, Distilled CFG Scale: 3.5, Seed: 1", null, 0, 0);
+
+        data.Guidance.Should().Be(3.5);
+        data.Cfg.Should().Be(1);
+    }
+
+    [Fact]
+    public void Parse_without_distilled_cfg_scale_has_no_guidance()
+    {
+        ImageMetadataParser.ParseA1111Parameters("cat\nSteps: 8, CFG scale: 7, Seed: 1", null, 0, 0).Guidance.Should().BeNull();
+    }
+
+    [Fact]
+    public void Guidance_round_trips_through_the_text()
+    {
+        var text = A1111MetadataFormatter.Build(Data() with { Cfg = 1, Guidance = 3.5 }, "cat", "blurry", [], hashes: null);
+
+        var back = ImageMetadataParser.ParseA1111Parameters(text, null, 0, 0);
+
+        back.Cfg.Should().Be(1);
+        back.Guidance.Should().Be(3.5);
     }
 }

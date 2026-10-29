@@ -92,12 +92,17 @@
               <TextBox Text="{Binding Scheduler}"/>
             </StackPanel>
           </Grid>
-          <Grid ColumnDefinitions="*,3*" Margin="0,8,0,0">
+          <Grid ColumnDefinitions="*,Auto,3*" Margin="0,8,0,0">
             <StackPanel Grid.Column="0" Margin="0,0,6,0">
               <TextBlock Text="SEED" FontSize="10" Foreground="#868B93"/>
               <TextBox Text="{Binding SeedText}"/>
             </StackPanel>
-            <StackPanel Grid.Column="1">
+            <StackPanel Grid.Column="1" Width="110" Margin="0,0,6,0" IsVisible="{Binding HasGuidance}"
+                        ToolTip.Tip="Flux's built-in guidance, written as &quot;Distilled CFG Scale&quot;">
+              <TextBlock Text="FLUX GUIDANCE" FontSize="10" Foreground="#868B93"/>
+              <TextBox Text="{Binding GuidanceText}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
               <TextBlock Text="MODEL" FontSize="10" Foreground="#868B93"/>
               <TextBox Text="{Binding Model}"/>
             </StackPanel>

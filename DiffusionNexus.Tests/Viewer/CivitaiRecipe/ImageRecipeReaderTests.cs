@@ -138,6 +138,28 @@ public sealed class ImageRecipeReaderTests
         data.Steps.Should().Be(20);
     }
 
+    /// <summary>#674: the traced Flux guidance comes first, the text's "Distilled CFG Scale" when the graph has none.</summary>
+    [Fact]
+    public void TracedGraph_FluxGuidance_PrefersTheGraph_ElseTheText()
+    {
+        const string graph = """
+            {"1":{"class_type":"UNETLoader","inputs":{"unet_name":"flux.safetensors"}},
+             "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "3":{"class_type":"FluxGuidance","inputs":{"conditioning":["2",0],"guidance":GUIDANCE}},
+             "4":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["3",0],"seed":7,"steps":20,"cfg":1.0,"sampler_name":"euler","scheduler":"simple"}}}
+            """;
+        const string text = "a cat\nSteps: 20, CFG scale: 1, Distilled CFG Scale: 2.5, Seed: 7";
+
+        Read(("prompt", graph.Replace("GUIDANCE", "3.5")), ("parameters", text)).Guidance.Should().Be(3.5);
+        Read(("prompt", graph.Replace("GUIDANCE", "[\"9\",0]")), ("parameters", text)).Guidance.Should().Be(2.5);
+    }
+
+    [Fact]
+    public void TextOnly_ReadsTheDistilledCfgScale()
+    {
+        Read(("parameters", "a cat\nSteps: 20, CFG scale: 1, Distilled CFG Scale: 2.5, Seed: 7")).Guidance.Should().Be(2.5);
+    }
+
     [Fact]
     public void TextOnly_TakesWeightsFromLoraTags()
     {

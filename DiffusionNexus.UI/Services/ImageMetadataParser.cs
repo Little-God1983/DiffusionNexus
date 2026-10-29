@@ -138,6 +138,8 @@ internal sealed partial class ImageMetadataParser
         int? steps = settings.TryGetValue("Steps", out var stepsStr) && int.TryParse(stepsStr, out var st) ? st : null;
         long? seed = settings.TryGetValue("Seed", out var seedStr) && long.TryParse(seedStr, out var sd) ? sd : null;
         double? cfg = settings.TryGetValue("CFG scale", out var cfgStr) && double.TryParse(cfgStr, System.Globalization.CultureInfo.InvariantCulture, out var c) ? c : null;
+        // Forge's name for Flux's built-in guidance, also written by the ComfyUI pack (#674).
+        double? guidance = settings.TryGetValue("Distilled CFG Scale", out var guidanceStr) && double.TryParse(guidanceStr, System.Globalization.CultureInfo.InvariantCulture, out var g) ? g : null;
         double? denoise = settings.TryGetValue("Denoising strength", out var denStr) && double.TryParse(denStr, System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
 
         // Override dimensions from "Size:" if present and we couldn't read IHDR
@@ -171,6 +173,7 @@ internal sealed partial class ImageMetadataParser
             Steps = steps,
             Seed = seed,
             Cfg = cfg,
+            Guidance = guidance,
             Denoise = denoise,
             HasData = hasData
         };

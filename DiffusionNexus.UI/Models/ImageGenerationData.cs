@@ -28,6 +28,12 @@ public record ImageGenerationData
     public int? Steps { get; init; }
     public long? Seed { get; init; }
     public double? Cfg { get; init; }
+
+    /// <summary>
+    /// Flux's built-in ("distilled") guidance, from FluxGuidance / CLIPTextEncodeFlux or the text's
+    /// "Distilled CFG Scale" (#674). Separate from <see cref="Cfg"/>, which stays the real CFG.
+    /// </summary>
+    public double? Guidance { get; init; }
     public double? Denoise { get; init; }
 
     public bool HasData { get; init; }

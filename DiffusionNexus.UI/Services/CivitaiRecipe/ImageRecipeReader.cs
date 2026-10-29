@@ -108,6 +108,7 @@ internal static class ImageRecipeReader
                 Scheduler = trace.Scheduler ?? text?.Scheduler,
                 Steps = trace.Steps ?? text?.Steps,
                 Cfg = trace.Cfg ?? text?.Cfg,
+                Guidance = trace.Guidance ?? text?.Guidance,
                 Seed = trace.Seed ?? text?.Seed,
             };
         }
@@ -129,6 +130,7 @@ internal static class ImageRecipeReader
                 Scheduler = text.Scheduler,
                 Steps = text.Steps,
                 Cfg = text.Cfg,
+                Guidance = text.Guidance,
                 Seed = text.Seed,
             };
         }
