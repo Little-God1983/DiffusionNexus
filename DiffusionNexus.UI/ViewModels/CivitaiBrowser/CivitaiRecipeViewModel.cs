@@ -98,6 +98,7 @@ public partial class CivitaiRecipeViewModel : ObservableObject
             data.Steps?.ToString(CultureInfo.InvariantCulture) ?? Unknown,
             data.Cfg?.ToString("0.###", CultureInfo.InvariantCulture) ?? Unknown,
             data.Seed?.ToString(CultureInfo.InvariantCulture) ?? Unknown);
+        FluxGuidanceText = data.Guidance?.ToString("0.###", CultureInfo.InvariantCulture);
 
         foreach (var row in Rows)
         {
@@ -149,6 +150,9 @@ public partial class CivitaiRecipeViewModel : ObservableObject
 
     /// <summary>"8 · 1 · 832350830334358", each missing part "unknown".</summary>
     public string StepsCfgSeedLine { get; }
+
+    /// <summary>Flux's built-in guidance (#674); null when the file has none, and then the row is hidden.</summary>
+    public string? FluxGuidanceText { get; }
 
     [ObservableProperty]
     private bool _isPromptExpanded;

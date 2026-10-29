@@ -249,7 +249,7 @@
                         <Separator Background="#333" Height="1"/>
 
                         <!-- Sampler Settings Grid -->
-                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto"
+                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
                               Margin="0,4">
                             <!-- Sampler -->
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="Sampler"
@@ -296,11 +296,20 @@
                                        Classes="fieldValue" Margin="0,0,0,6"
                                        IsVisible="{Binding Metadata.Cfg, Converter={x:Static ObjectConverters.IsNotNull}}"/>
 
+                            <!-- Flux guidance (#674): Flux's built-in guidance, separate from the CFG -->
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Flux guidance"
+                                       Classes="fieldLabel" Margin="0,0,16,6"
+                                       IsVisible="{Binding Metadata.Guidance, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1"
+                                       Text="{Binding Metadata.Guidance, StringFormat='{}{0:F1}'}"
+                                       Classes="fieldValue" Margin="0,0,0,6"
+                                       IsVisible="{Binding Metadata.Guidance, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+
                             <!-- Denoise (only if < 1.0) -->
-                            <TextBlock Grid.Row="5" Grid.Column="0" Text="Denoise"
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="Denoise"
                                        Classes="fieldLabel" Margin="0,0,16,6"
                                        IsVisible="{Binding ShowDenoise}"/>
-                            <TextBlock Grid.Row="5" Grid.Column="1"
+                            <TextBlock Grid.Row="6" Grid.Column="1"
                                        Text="{Binding Metadata.Denoise, StringFormat='{}{0:F2}'}"
                                        Classes="fieldValue" Margin="0,0,0,6"
                                        IsVisible="{Binding ShowDenoise}"/>

@@ -273,4 +273,16 @@ public sealed class CivitaiRecipeViewModelTests
         vm.FooterText.Should().Be($"1 selected · {CivitaiVersionPickItemViewModel.FormatSize(2L << 20)}");
         vm.AddToQueueText.Should().Be("Add 1 to queue");
     }
+
+    /// <summary>#674: Flux's built-in guidance gets its own row, shown only when the file has it.</summary>
+    [Fact]
+    public void FluxGuidance_IsShownOnlyWhenSet()
+    {
+        var with = Vm(Recipe([], data: new ImageRecipeData { Source = RecipeDataSource.SettingsText, Cfg = 1, Guidance = 3.5 }));
+        var without = Vm(Recipe([]));
+
+        with.FluxGuidanceText.Should().Be("3.5");
+        with.StepsCfgSeedLine.Should().Be("unknown · 1 · unknown", "CFG stays the real CFG");
+        without.FluxGuidanceText.Should().BeNull();
+    }
 }

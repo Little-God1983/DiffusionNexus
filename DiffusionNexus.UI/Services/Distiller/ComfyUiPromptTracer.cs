@@ -79,6 +79,11 @@ internal static class ComfyUiPromptTracer
         ["AlignYourStepsScheduler"] = "align_your_steps",
     };
 
+    // Flux's built-in ("distilled") guidance sits on the positive conditioning, not on the sampler (#674); it is
+    // written as Forge's "Distilled CFG Scale". FluxDisableGuidance turns it off.
+    private static readonly HashSet<string> GuidanceClasses = new(StringComparer.OrdinalIgnoreCase)
+    { "FluxGuidance", "CLIPTextEncodeFlux" };
+
     private static readonly JsonElement NoInputs = JsonDocument.Parse("{}").RootElement.Clone();
 
     public static ImageGenerationData Trace(
@@ -111,6 +116,7 @@ internal static class ComfyUiPromptTracer
         var negativeZeroed = false;
         // A guider without CFG (BasicGuider) has no negative at all.
         string? negative = names.Negative is null ? null : ResolvePrompt(graph, holder, names.Negative, "negative", out negativeZeroed);
+        double? guidance = FindGuidance(graph, holder, names.Positive);
 
         var loras = new List<LoraInfo>();
         string? checkpoint = WalkModelChain(graph, holder, loras);
@@ -124,7 +130,7 @@ internal static class ComfyUiPromptTracer
             FileName = fileName, Width = width, Height = height,
             PositivePrompt = positive, NegativePrompt = negative, Checkpoint = checkpoint,
             Loras = loras, SamplerName = samplerName, Scheduler = scheduler,
-            Steps = steps, Seed = seed, Cfg = cfg, Denoise = denoise, HasData = hasData,
+            Steps = steps, Seed = seed, Cfg = cfg, Guidance = guidance, Denoise = denoise, HasData = hasData,
             NegativeZeroedOut = negativeZeroed,
         };
     }
@@ -275,6 +281,29 @@ internal static class ComfyUiPromptTracer
 
     private static bool IsSide(string input, string side) =>
         input == side || input.StartsWith(side + "_", StringComparison.Ordinal);
+
+    // Flux's built-in guidance on the positive path (the pack's _find_guidance, #674): the nearest FluxGuidance /
+    // CLIPTextEncodeFlux guidance. Null when there is none, when FluxDisableGuidance comes first, or when it is
+    // wired. The walk follows the same inputs as the prompt walk and stops at text encoders and samplers.
+    private static double? FindGuidance(Dictionary<string, JsonElement> graph, JsonElement holder, string input)
+    {
+        if (!holder.TryGetProperty(input, out var link) || !IsLink(link)) return null;
+
+        var seen = new HashSet<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(OriginId(link));
+        while (queue.Count > 0)
+        {
+            var id = queue.Dequeue();
+            if (!seen.Add(id)) continue;
+            if (!TryNode(graph, id, out var cls, out var ins)) continue;
+            if (GuidanceClasses.Contains(cls)) return ReadDouble(ins, "guidance");
+            if (cls.Equals("FluxDisableGuidance", StringComparison.OrdinalIgnoreCase)) return null;
+            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase) || SamplerClasses.Contains(cls)) continue;
+            foreach (var next in ConditioningLinks(ins, "positive")) queue.Enqueue(OriginId(next));
+        }
+        return null;
+    }
 
     // ── AI2Go Prompt Batch resolution ───────────────────────────────────────────
     // Port of prompt_batch_core.parse_prompts/select_prompt: the node holds a JSON array of prompts

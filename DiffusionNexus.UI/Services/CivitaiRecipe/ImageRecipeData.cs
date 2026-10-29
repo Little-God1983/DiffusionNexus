@@ -58,6 +58,9 @@ public sealed record ImageRecipeData
     public string? Scheduler { get; init; }
     public int? Steps { get; init; }
     public double? Cfg { get; init; }
+
+    /// <summary>Flux's built-in guidance (Forge's "Distilled CFG Scale", #674); separate from <see cref="Cfg"/>.</summary>
+    public double? Guidance { get; init; }
     public long? Seed { get; init; }
     public IReadOnlyList<RecipeLoraUse> Loras { get; init; } = [];
 

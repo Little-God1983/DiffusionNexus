@@ -159,4 +159,21 @@ public class DistillerViewModelsTests
         edited.Checkpoint.Should().Be("base");
         loras.Select(l => l.Name).Should().Equal("keep");
     }
+
+    /// <summary>#674: the Distiller shows Flux guidance next to CFG when the image has it, and writes the edited value.</summary>
+    [Fact]
+    public void Item_shows_flux_guidance_only_when_set_and_writes_the_edit()
+    {
+        var flux = new DistillerItemViewModel("c:/x.png", new ImageGenerationData { Cfg = 1, Guidance = 3.5, HasData = true });
+        var plain = new DistillerItemViewModel("c:/y.png", new ImageGenerationData { Cfg = 7, HasData = true });
+
+        flux.HasGuidance.Should().BeTrue();
+        flux.GuidanceText.Should().Be("3.5");
+        plain.HasGuidance.Should().BeFalse();
+
+        flux.GuidanceText = "2.5";
+        flux.BuildEditedData().Guidance.Should().Be(2.5);
+        flux.BuildEditedData().Cfg.Should().Be(1);
+        plain.BuildEditedData().Guidance.Should().BeNull();
+    }
 }

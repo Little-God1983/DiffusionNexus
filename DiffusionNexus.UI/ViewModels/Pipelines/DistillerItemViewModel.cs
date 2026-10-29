@@ -37,6 +37,10 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
     [ObservableProperty] private IReadOnlyList<TextHighlightRange>? _negativeHighlights;
     [ObservableProperty] private string _stepsText = "";
     [ObservableProperty] private string _cfgText = "";
+
+    /// <summary>Flux's built-in guidance (#674), shown next to CFG only when the image has it.</summary>
+    [ObservableProperty] private string _guidanceText = "";
+    public bool HasGuidance { get; }
     [ObservableProperty] private string _seedText = "";
     [ObservableProperty] private string? _samplerName;
     [ObservableProperty] private string? _scheduler;
@@ -61,6 +65,8 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
         Negative = data.NegativePrompt;
         StepsText = data.Steps?.ToString(CultureInfo.InvariantCulture) ?? "";
         CfgText = data.Cfg?.ToString("0.###", CultureInfo.InvariantCulture) ?? "";
+        HasGuidance = data.Guidance is not null;
+        GuidanceText = data.Guidance?.ToString("0.###", CultureInfo.InvariantCulture) ?? "";
         SeedText = data.Seed?.ToString(CultureInfo.InvariantCulture) ?? "";
         SamplerName = data.SamplerName;
         Scheduler = data.Scheduler;
@@ -99,6 +105,7 @@ public partial class DistillerItemViewModel : ViewModelBase, System.IDisposable
         NegativePrompt = Negative,
         Steps = int.TryParse(StepsText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var s) ? s : null,
         Cfg = double.TryParse(CfgText, NumberStyles.Float, CultureInfo.InvariantCulture, out var c) ? c : null,
+        Guidance = double.TryParse(GuidanceText, NumberStyles.Float, CultureInfo.InvariantCulture, out var g) ? g : null,
         Seed = long.TryParse(SeedText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sd) ? sd : null,
         SamplerName = SamplerName,
         Scheduler = Scheduler,

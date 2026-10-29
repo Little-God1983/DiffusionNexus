@@ -76,6 +76,9 @@ internal static class A1111MetadataFormatter
         if (!string.IsNullOrWhiteSpace(data.SamplerName))
             settings.Add($"Sampler: {ToA1111Sampler(data.SamplerName, data.Scheduler)}");
         if (data.Cfg is { } cfg) settings.Add($"CFG scale: {cfg.ToString("0.###", CultureInfo.InvariantCulture)}");
+        // Flux's built-in guidance under Forge's name, right after the real CFG, as the pack's format_parameters (#674).
+        if (data.Guidance is { } guidance)
+            settings.Add($"Distilled CFG Scale: {guidance.ToString("0.###", CultureInfo.InvariantCulture)}");
         if (data.Seed is { } seed) settings.Add($"Seed: {seed}");
         if (data.Width > 0 && data.Height > 0) settings.Add($"Size: {data.Width}x{data.Height}");
 
