@@ -12,8 +12,8 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// ids of the resources it was made with (without <c>nsfw=X</c> an NSFW image comes back as nothing);</item>
 /// <item>each resource's version and model, through the API gateway, one failure per row;</item>
 /// <item>the generation data from the original file, which is the only source — the public API's
-/// <c>meta</c> was null for every image sampled. The file is cached by image id and also serves
-/// as the view's preview.</item>
+/// <c>meta</c> was null for every image sampled. A download waits in the store's staging folder until
+/// <see cref="RecipeStore.Save"/> adopts it; a saved recipe's original serves later pastes and the preview.</item>
 /// </list>
 /// </summary>
 public sealed class CivitaiImageRecipeService
@@ -64,7 +64,16 @@ public sealed class CivitaiImageRecipeService
 
         var resourcesTask = Task.WhenAll(versionIds.Select(id => LoadResourceAsync(id, apiKey, ct)));
         var originalTask = GetOriginalAsync(image, imageId, ct);
-        await Task.WhenAll(resourcesTask, originalTask);
+        try
+        {
+            await Task.WhenAll(resourcesTask, originalTask);
+        }
+        catch
+        {
+            // The original may have landed before the load was cancelled; no save will adopt it.
+            if (originalTask.IsCompletedSuccessfully) RecipeStore.DiscardStaged(originalTask.Result.Path);
+            throw;
+        }
         var resources = resourcesTask.Result;
         var (originalPath, data) = originalTask.Result;
 
@@ -202,15 +211,18 @@ public sealed class CivitaiImageRecipeService
             return (cached, ImageRecipeReader.Read(cached));
         }
 
-        // A name of its own: paste + Enter starts two loads of the same image at once.
-        var temp = Path.Combine(folder, $"original.{Guid.NewGuid():N}.download");
+        // Into a staging folder of its own, not the recipe folder: paste + Enter starts two loads of the same
+        // image at once, and a load that ends without a save (cancelled, superseded, failed) must leave no
+        // recipe folder behind. RecipeStore.Save moves the file into the recipe folder.
+        var staging = RecipeStore.NewStagingFolder(_cacheDirectory, imageId);
+        var temp = Path.Combine(staging, "original.download");
         var sw = Stopwatch.StartNew();
         try
         {
             using (var response = await _http.GetAsync(image.Url, HttpCompletionOption.ResponseHeadersRead, ct))
             {
                 response.EnsureSuccessStatusCode();
-                Directory.CreateDirectory(folder);
+                Directory.CreateDirectory(staging);
                 await using var file = File.Create(temp);
                 await response.Content.CopyToAsync(file, ct);
             }
@@ -227,38 +239,26 @@ public sealed class CivitaiImageRecipeService
             {
                 // An HTML challenge page or an image type nothing here reads: cached, it would answer every
                 // later paste of this image with the same nothing.
-                TryDelete(temp);
-                TryRemoveIfEmpty(folder);
+                TryDeleteFolder(staging);
                 _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: the original file is {format}, not an image the recipe can read — not cached.", image.Url);
                 return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, NotAnImageText));
             }
 
-            var path = Path.Combine(folder, "original" + extension);
-            try
-            {
-                // No overwrite: replacing a file another load is reading fails with "access denied".
-                File.Move(temp, path, overwrite: false);
-            }
-            catch (IOException) when (File.Exists(path))
-            {
-                // Another load of the same image got there first; theirs is the same file.
-                TryDelete(temp);
-            }
+            var path = Path.Combine(staging, "original" + extension);
+            File.Move(temp, path);
             _logger?.Info(LogCategory.Network, LogSource,
                 $"Recipe {imageId}: original file downloaded — {format}, {new FileInfo(path).Length / 1024} KB ({sw.ElapsedMilliseconds} ms)");
             return (path, ImageRecipeReader.Read(path));
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            TryDelete(temp);
-            TryRemoveIfEmpty(folder);
+            TryDeleteFolder(staging);
             _logger?.Warn(LogCategory.Network, LogSource, $"Recipe {imageId}: original file download failed: {ex.Message}", image.Url);
             return (null, ImageRecipeData.Empty(RecipeFileFormat.Unknown, $"Could not download the original image file ({ex.Message})."));
         }
         catch
         {
-            TryDelete(temp);
-            TryRemoveIfEmpty(folder);
+            TryDeleteFolder(staging);
             throw;
         }
     }
@@ -271,14 +271,8 @@ public sealed class CivitaiImageRecipeService
         return RecipeFileReader.DetectFormat(head[..read]);
     }
 
-    /// <summary>A folder without a file would be listed as a broken recipe; a non-empty one is left alone.</summary>
-    private static void TryRemoveIfEmpty(string folder)
+    private static void TryDeleteFolder(string folder)
     {
-        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: false); } catch { /* not empty, or in use */ }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try { File.Delete(path); } catch { /* best-effort */ }
+        try { if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true); } catch { /* best-effort; the store removes it once it is a day old */ }
     }
 }

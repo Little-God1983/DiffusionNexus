@@ -176,18 +176,61 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task PngServedUnderJpegUrl_IsCachedAsPng_AndReusedNextTime()
+    public async Task PngServedUnderJpegUrl_IsSavedAsPng_AndReusedNextTime()
     {
         HasImage(12);
         _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+        var store = new RecipeStore(_cache, null);
 
         var first = (await Service().LoadAsync(12, null, default)).Recipe!;
+        store.Save(first, DateTimeOffset.Now);
         var second = (await Service().LoadAsync(12, null, default)).Recipe!;
 
-        first.OriginalFilePath.Should().Be(Path.Combine(_cache, "12", "original.png"));
-        second.OriginalFilePath.Should().Be(first.OriginalFilePath);
+        Path.GetFileName(first.OriginalFilePath).Should().Be("original.png");
+        second.OriginalFilePath.Should().Be(Path.Combine(_cache, "12", "original.png"));
         second.Data.Prompt.Should().Be("a cat");
         _http.Calls.Should().Be(1);
+    }
+
+    /// <summary>Until the recipe is saved its original is not in a recipe folder: a load that ends unsaved must leave no broken card.</summary>
+    [Fact]
+    public async Task LoadedOriginal_IsStaged_NotInARecipeFolder()
+    {
+        HasImage(17);
+        _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+
+        var recipe = (await Service().LoadAsync(17, null, default)).Recipe!;
+
+        recipe.OriginalFilePath.Should().StartWith(Path.Combine(_cache, ".staging", "17-"));
+        Directory.Exists(Path.Combine(_cache, "17")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task CancelledAfterTheOriginalLanded_LeavesNoRecipeFolder_AndNoStaging()
+    {
+        HasImage(33, 1, "image", 100);
+        _http.Respond = _ => Png(("parameters", "a cat\nSteps: 20"));
+        using var cts = new CancellationTokenSource();
+        _client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<int, string?, CancellationToken>(async (_, _, ct) =>
+            {
+                // The resource is still loading when the original has landed; then the user pastes again.
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                while (!Directory.EnumerateFiles(_cache, "original.png", SearchOption.AllDirectories).Any() && DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(10, CancellationToken.None);
+                }
+                cts.Cancel();
+                ct.ThrowIfCancellationRequested();
+                return null;
+            });
+
+        var act = () => Service().LoadAsync(33, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        Directory.Exists(Path.Combine(_cache, "33")).Should().BeFalse();
+        Directory.GetFiles(_cache, "*", SearchOption.AllDirectories).Should().BeEmpty();
+        (Directory.Exists(Path.Combine(_cache, ".staging")) ? Directory.GetDirectories(Path.Combine(_cache, ".staging")) : []).Should().BeEmpty();
     }
 
     [Fact]

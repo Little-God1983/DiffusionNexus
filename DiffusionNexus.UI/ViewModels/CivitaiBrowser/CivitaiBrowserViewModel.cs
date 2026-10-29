@@ -468,6 +468,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
             return;
         }
 
+        string? staged = null;
         try
         {
             IsBusy = true;
@@ -476,6 +477,7 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
 
             var apiKey = await GetApiKeyAsync();
             var result = await service.LoadAsync(imageId, apiKey, ct);
+            staged = result.Recipe?.OriginalFilePath;
             if (ct.IsCancellationRequested) return;
 
             // The file IO of the store stays off the UI thread.
@@ -559,6 +561,8 @@ public partial class CivitaiBrowserViewModel : ObservableObject, IRecipeHost
         }
         finally
         {
+            // Save adopts the downloaded original; a load that ends without a save (superseded, failed) drops it.
+            Services.CivitaiRecipe.RecipeStore.DiscardStaged(staged);
             if (!ct.IsCancellationRequested) IsBusy = false;
         }
     }

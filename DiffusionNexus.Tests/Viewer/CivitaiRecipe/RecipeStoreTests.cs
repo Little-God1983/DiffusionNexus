@@ -366,6 +366,61 @@ public sealed class RecipeStoreTests : IDisposable
         File.Exists(fresh).Should().BeTrue("a save may be writing it right now");
     }
 
+    /// <summary>An original as the recipe service leaves it before the save: in a staging folder of its own.</summary>
+    private string Staged(long id, string name, int length = 10)
+    {
+        var folder = Path.Combine(_root, ".staging", $"{id}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, name);
+        File.WriteAllBytes(path, new byte[length]);
+        return path;
+    }
+
+    [Fact]
+    public void Save_AdoptsTheStagedOriginal_AndRemovesTheStaging()
+    {
+        var staged = Staged(5, "original.png", length: 300);
+
+        var stored = _store.Save(Recipe(5, staged), PastedAt);
+
+        stored.Saved!.Recipe.OriginalFilePath.Should().Be(Path.Combine(_store.FolderFor(5), "original.png"));
+        File.ReadAllBytes(stored.Saved.Recipe.OriginalFilePath!).Should().HaveCount(300);
+        Directory.Exists(Path.GetDirectoryName(staged)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Save_StagedOriginal_ReplacesTheOlderOriginal()
+    {
+        WriteFile(5, "original.jpg", length: 100);
+        _store.Save(Recipe(5), PastedAt);
+
+        _store.Save(Recipe(5, Staged(5, "original.png", length: 300)), PastedAt);
+
+        Directory.GetFiles(_store.FolderFor(5), "original.*").Select(Path.GetFileName).Should().Equal("original.png");
+        _store.TryLoad(5)!.SizeBytes.Should().Be(300 + new FileInfo(Path.Combine(_store.FolderFor(5), "recipe.json")).Length);
+    }
+
+    [Fact]
+    public void LoadAll_IgnoresTheStagingFolder()
+    {
+        Staged(5, "original.png");
+
+        _store.LoadAll().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Construction_RemovesStaleStaging_AndKeepsAFreshOne()
+    {
+        var stale = Path.GetDirectoryName(Staged(5, "original.png"))!;
+        var fresh = Path.GetDirectoryName(Staged(6, "original.png"))!;
+        Directory.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-25));
+
+        _ = new RecipeStore(_root, null);
+
+        Directory.Exists(stale).Should().BeFalse();
+        Directory.Exists(fresh).Should().BeTrue("another running build may be downloading into it");
+    }
+
     [Fact]
     public void IsDefiniteFailure_OnlyForGoneResources()
     {

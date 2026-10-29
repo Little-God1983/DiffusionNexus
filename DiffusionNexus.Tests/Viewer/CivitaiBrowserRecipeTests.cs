@@ -160,7 +160,56 @@ public sealed class CivitaiBrowserRecipeTests : IDisposable
     {
         var (vm, _) = Create();
         vm.RecipeStore = store ?? Store;
+        // As in the app: the service downloads into the store's own root.
+        vm.RecipeServiceFactory = () => new CivitaiImageRecipeService(
+            _client.Object, new HttpClient(new PngHandler()), vm.RecipeStore.Root, null);
         return vm;
+    }
+
+    private string[] StagingEntries() =>
+        Directory.Exists(Path.Combine(Store.Root, ".staging")) ? Directory.GetFileSystemEntries(Path.Combine(Store.Root, ".staging")) : [];
+
+    [Fact]
+    public async Task PasteTwice_OneOriginal_NoStaging()
+    {
+        HasImage(7, 1, 100);
+        HasLora(100, 10);
+        var vm = CreateWithStore();
+
+        await Search(vm, "https://civitai.com/images/7");
+        await Search(vm, "https://civitai.com/images/7");
+
+        Directory.GetFiles(Store.FolderFor(7), "original.*").Should().ContainSingle();
+        StagingEntries().Should().BeEmpty();
+    }
+
+    /// <summary>A second paste cancels the first; the first must not leave a folder with only its original (a broken card).</summary>
+    [Fact]
+    public async Task SupersededPaste_SavesOnlyTheSecond_AndLeavesNoStaging()
+    {
+        HasImage(7, 1, 100);
+        HasImage(8, 1);
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _client.Setup(c => c.GetModelVersionAsync(100, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () => { reached.TrySetResult(); await gate.Task; return null; });
+        var vm = CreateWithStore();
+
+        vm.SearchText = "https://civitai.com/images/7";
+        var first = vm.SearchCommand.ExecuteAsync(null);
+        await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await Search(vm, "https://civitai.com/images/8");
+        gate.SetResult();
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (!first.IsCompleted && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.UIThread.RunJobs();
+            Thread.Sleep(5);
+        }
+        await first;
+
+        Store.LoadAll().Select(s => s.ImageId).Should().Equal(8);
+        StagingEntries().Should().BeEmpty();
     }
 
     [Fact]

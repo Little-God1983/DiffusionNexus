@@ -7,12 +7,20 @@ namespace DiffusionNexus.UI.Services.CivitaiRecipe;
 /// The recipes on disk (#667): one folder per Civitai image, <c>&lt;root&gt;\&lt;imageId&gt;\</c>, holding
 /// <c>original.png|jpg|webp</c> (none for a video) and <c>recipe.json</c>. The app never deletes a
 /// recipe by itself; only <see cref="Delete"/>, called after the user confirmed.
+/// An original downloaded for a recipe not saved yet waits in <c>&lt;root&gt;\.staging\&lt;imageId&gt;-&lt;random&gt;\</c>,
+/// which is not a recipe folder: a load that ends without a save leaves no card behind.
 /// </summary>
-public sealed class RecipeStore(string root, IUnifiedLogger? logger)
+public sealed class RecipeStore
 {
     private const string LogSource = "CivitaiRecipe";
     private const string JsonName = "recipe.json";
+    private const string StagingName = ".staging";
     private static readonly TimeSpan StaleTempAge = TimeSpan.FromHours(1);
+
+    // A stable and a dev build may share the root and run at once: only a day-old staging folder is abandoned.
+    private static readonly TimeSpan StaleStagingAge = TimeSpan.FromHours(24);
+
+    private readonly IUnifiedLogger? _logger;
 
     /// <summary>The read error of a recipe a newer version wrote.</summary>
     public const string NewerFormatText = "Made by a newer version of DiffusionNexus";
@@ -29,7 +37,14 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "DiffusionNexus", "Recipes");
 
-    public string Root { get; } = root;
+    public RecipeStore(string root, IUnifiedLogger? logger)
+    {
+        Root = root;
+        _logger = logger;
+        RemoveStaleStaging();
+    }
+
+    public string Root { get; }
 
     /// <summary>Raised after every Save, Update, SetKept and Delete.</summary>
     public event EventHandler? Changed;
@@ -38,6 +53,43 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
 
     internal static string FolderPath(string root, long imageId) =>
         Path.Combine(root, imageId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    /// <summary>A new staging folder for one download of <paramref name="imageId"/>'s original; not created yet.</summary>
+    internal static string NewStagingFolder(string root, long imageId) =>
+        Path.Combine(root, StagingName, $"{imageId.ToString(System.Globalization.CultureInfo.InvariantCulture)}-{Guid.NewGuid():N}");
+
+    /// <summary>Whether <paramref name="path"/> is an original waiting in a staging folder.</summary>
+    internal static bool IsStaged(string? path) =>
+        path is not null && Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(path))) == StagingName;
+
+    /// <summary>Deletes the staging folder of an original no save adopted; a path that is not staged is left alone.</summary>
+    internal static void DiscardStaged(string? path)
+    {
+        if (!IsStaged(path)) return;
+        try { Directory.Delete(Path.GetDirectoryName(path)!, recursive: true); }
+        catch (DirectoryNotFoundException) { /* adopted, or never written */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* the next start removes it once it is a day old */ }
+    }
+
+    private void RemoveStaleStaging()
+    {
+        var staging = Path.Combine(Root, StagingName);
+        try
+        {
+            if (!Directory.Exists(staging)) return;
+            foreach (var entry in new DirectoryInfo(staging).EnumerateFileSystemInfos())
+            {
+                if (entry.LastWriteTimeUtc > DateTime.UtcNow - StaleStagingAge) continue;
+                if (entry is DirectoryInfo folder) folder.Delete(recursive: true);
+                else entry.Delete();
+                _logger?.Info(LogCategory.FileSystem, LogSource, $"Abandoned download {entry.Name} removed from the recipe staging folder.");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"The recipe staging folder could not be cleaned: {ex.Message}", staging);
+        }
+    }
 
     /// <summary>Every folder under the root whose name is an image id, broken ones included.</summary>
     public IReadOnlyList<StoredRecipe> LoadAll()
@@ -59,19 +111,44 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         return Directory.Exists(folder) ? Read(imageId, folder) : null;
     }
 
-    /// <summary>Writes the recipe; an existing entry for the image keeps its Kept flag and is merged by <see cref="RecipeMerge"/>.</summary>
+    /// <summary>
+    /// Writes the recipe; an existing entry for the image keeps its Kept flag and is merged by <see cref="RecipeMerge"/>.
+    /// A staged original (<see cref="IsStaged"/>) moves into the recipe folder first, replacing an older one; its
+    /// staging folder is gone afterwards whether the save succeeded or not.
+    /// </summary>
     public StoredRecipe Save(CivitaiImageRecipe recipe, DateTimeOffset pastedAt)
     {
         StoredRecipe stored;
-        lock (_gate)
+        var staged = recipe.OriginalFilePath;
+        try
         {
-            var current = TryLoad(recipe.ImageId);
-            ThrowIfNewerFormat(current);
-            var existing = current?.Saved;
-            if (existing is not null) recipe = RecipeMerge.Refresh(existing.Recipe, recipe);
-            stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, pastedAt, existing?.Kept ?? false, recipe));
+            lock (_gate)
+            {
+                var current = TryLoad(recipe.ImageId);
+                ThrowIfNewerFormat(current);
+                var existing = current?.Saved;
+                if (existing is not null) recipe = RecipeMerge.Refresh(existing.Recipe, recipe);
+
+                var folder = FolderFor(recipe.ImageId);
+                var isNew = current is null;
+                try
+                {
+                    if (IsStaged(staged)) recipe = recipe with { OriginalFilePath = AdoptStaged(staged!, folder) };
+                    stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, pastedAt, existing?.Kept ?? false, recipe));
+                }
+                catch (Exception) when (isNew)
+                {
+                    // The folder is this save's own: left with only the original it would be a broken card.
+                    try { Directory.Delete(folder, recursive: true); } catch { /* best-effort */ }
+                    throw;
+                }
+            }
         }
-        logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} saved ({stored.SizeBytes / 1024} KB).");
+        finally
+        {
+            DiscardStaged(staged);
+        }
+        _logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} saved ({stored.SizeBytes / 1024} KB).");
         Changed?.Invoke(this, EventArgs.Empty);
         return stored;
     }
@@ -91,7 +168,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
             if (existing is null) return null;
             stored = Write(new SavedRecipe(SavedRecipe.CurrentFormat, existing.PastedAt, existing.Kept, recipe));
         }
-        logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} updated.");
+        _logger?.Info(LogCategory.FileSystem, LogSource, $"Recipe {recipe.ImageId} updated.");
         Changed?.Invoke(this, EventArgs.Empty);
         return stored;
     }
@@ -114,7 +191,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         }
         finally
         {
-            logger?.Info(LogCategory.FileSystem, LogSource, $"{changed} recipe(s) {(kept ? "kept" : "moved back to History")}.");
+            _logger?.Info(LogCategory.FileSystem, LogSource, $"{changed} recipe(s) {(kept ? "kept" : "moved back to History")}.");
             if (changed > 0) Changed?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -139,13 +216,35 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {id} could not be deleted: {ex.Message}", folder);
+                    _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {id} could not be deleted: {ex.Message}", folder);
                 }
             }
         }
-        logger?.Info(LogCategory.FileSystem, LogSource, $"{count} recipe(s) deleted, {freed / 1024} KB freed.");
+        _logger?.Info(LogCategory.FileSystem, LogSource, $"{count} recipe(s) deleted, {freed / 1024} KB freed.");
         Changed?.Invoke(this, EventArgs.Empty);
         return freed;
+    }
+
+    /// <summary>Moves a staged original into <paramref name="folder"/> and removes the other originals; returns the folder's original.</summary>
+    private string? AdoptStaged(string staged, string folder)
+    {
+        var target = Path.Combine(folder, Path.GetFileName(staged));
+        try
+        {
+            Directory.CreateDirectory(folder);
+            File.Move(staged, target, overwrite: true);
+            foreach (var other in OriginalNames.Select(n => Path.Combine(folder, n)).Where(p => p != target && File.Exists(p)))
+            {
+                File.Delete(other);
+            }
+            return target;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // An older original being read (a thumbnail) cannot be replaced; the recipe keeps that one.
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {Path.GetFileName(folder)}: the new original could not replace the old one: {ex.Message}", folder);
+            return OriginalNames.Select(n => Path.Combine(folder, n)).FirstOrDefault(File.Exists);
+        }
     }
 
     private StoredRecipe Write(SavedRecipe saved)
@@ -162,7 +261,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             try { File.Delete(temp); } catch { /* best-effort */ }
-            logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {saved.Recipe.ImageId} could not be written: {ex.Message}", path);
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {saved.Recipe.ImageId} could not be written: {ex.Message}", path);
             throw;
         }
         return Read(saved.Recipe.ImageId, folder);
@@ -189,7 +288,7 @@ public sealed class RecipeStore(string root, IUnifiedLogger? logger)
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
-            logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {imageId} could not be read: {ex.Message}", path);
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"Recipe {imageId} could not be read: {ex.Message}", path);
             return new(imageId, folder, null, size, ex.Message);
         }
     }
