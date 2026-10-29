@@ -8,9 +8,9 @@ namespace DiffusionNexus.UI.Services.Distiller;
 
 /// <summary>
 /// Recovers generation parameters from a ComfyUI "prompt"-chunk graph (the resolved API prompt,
-/// NOT the editor "workflow" graph). C# port of
-/// ComfyUI-AI2Go-Utils/nodes/civitai_metadata/tracer.py; see comfyui-metadata-extraction-for-csharp.md.
-/// Differs where marked: prompt resolution stops at ConditioningZeroOut and follows pass-through nodes by name (#670).
+/// NOT the editor "workflow" graph). C# port of ComfyUI-IntoTheLatent-Utils (formerly ComfyUI-AI2Go-Utils)
+/// nodes/civitai_metadata/tracer.py; see comfyui-metadata-extraction-for-csharp.md. The prompt walk follows
+/// the pack's _find_clip_encode (#670, #672); other differences are marked where they are.
 /// Using the API prompt is what makes rgthree Power Lora / Lora Stack detection tractable.
 /// </summary>
 internal static class ComfyUiPromptTracer
@@ -166,13 +166,17 @@ internal static class ComfyUiPromptTracer
         return null;
     }
 
-    // BFS from a sampler's positive/negative to its CLIPTextEncode (differs from tracer.py, #670). A node
-    // carrying both conditionings (WanImageToVideo, ControlNetApplyAdvanced) is followed only through the
-    // input of the same name, and a ConditioningZeroOut has no text: behind it sits the positive encode it zeroes.
-    // zeroed: no encoder was found and the walk ended at a zero-out, so the prompt is known to be empty.
+    // BFS from a sampler's positive/negative to its CLIPTextEncode, as the pack's _find_clip_encode (#670, #672).
+    // A ConditioningZeroOut has no text (behind it sits the encode it zeroes), and conditioning never passes a
+    // sampler, so the walk stops at both. A text encoder it can't read (a class with "TextEncode" in its name, or
+    // a node with a wired clip input) or a missing node makes the prompt unknown. zeroed: no encoder was found,
+    // a zero-out was reached and nothing unknown was, so the prompt is known to be empty. Other leaves (LoadImage,
+    // VAE loaders behind latent or image inputs) say nothing about the text.
     private static string? FindEncoder(Dictionary<string, JsonElement> graph, string startId, string key, out bool zeroed)
     {
         zeroed = false;
+        var reachedZeroOut = false;
+        var unknown = false;
         var seen = new HashSet<string>();
         var queue = new Queue<string>();
         queue.Enqueue(startId);
@@ -180,27 +184,44 @@ internal static class ComfyUiPromptTracer
         {
             var id = queue.Dequeue();
             if (!seen.Add(id)) continue;
-            if (!TryNode(graph, id, out var cls, out var ins)) continue;
-            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase))
+            if (!TryNode(graph, id, out var cls, out var ins))
             {
-                zeroed = false;
-                return id;
+                unknown = true;
+                continue;
             }
+            if (cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase)) return id;
             if (cls.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase))
             {
-                zeroed = true;
+                reachedZeroOut = true;
                 continue;
             }
-            if (ins.TryGetProperty(key, out var own) && IsLink(own))
+            if (SamplerClasses.Contains(cls)) continue; // reached through a latent input
+            if (cls.Contains("TextEncode", StringComparison.OrdinalIgnoreCase)
+                || (ins.TryGetProperty("clip", out var clip) && IsLink(clip)))
             {
-                queue.Enqueue(OriginId(own));
+                unknown = true;
                 continue;
             }
-            foreach (var prop in ins.EnumerateObject())
-                if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
+            foreach (var link in ConditioningLinks(ins, key)) queue.Enqueue(OriginId(link));
         }
+        zeroed = reachedZeroOut && !unknown;
         return null;
     }
+
+    // The links a conditioning walk follows out of a node (the pack's _conditioning_links): its inputs named
+    // `side` or `side_*` (WanImageToVideo's negative, PairConditioning*'s negative_NEW / negative_A) if any is
+    // linked, else every other linked input but the other side's, so a negative never walks into the positive.
+    private static List<JsonElement> ConditioningLinks(JsonElement ins, string side)
+    {
+        var other = side == "positive" ? "negative" : "positive";
+        var own = ins.EnumerateObject().Where(p => IsSide(p.Name, side) && IsLink(p.Value)).Select(p => p.Value).ToList();
+        return own.Count > 0
+            ? own
+            : ins.EnumerateObject().Where(p => !IsSide(p.Name, other) && IsLink(p.Value)).Select(p => p.Value).ToList();
+    }
+
+    private static bool IsSide(string input, string side) =>
+        input == side || input.StartsWith(side + "_", StringComparison.Ordinal);
 
     // ── AI2Go Prompt Batch resolution ───────────────────────────────────────────
     // Port of prompt_batch_core.parse_prompts/select_prompt: the node holds a JSON array of prompts

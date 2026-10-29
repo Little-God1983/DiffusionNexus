@@ -95,6 +95,26 @@ public sealed class ImageRecipeReaderTests
         data.NegativeZeroedOut.Should().BeTrue();
     }
 
+    /// <summary>#672: a zero-out beside an encoder the tracer can't read is not "no negative"; the text has the real one.</summary>
+    [Fact]
+    public void TracedGraph_ZeroOutBesideAnUnknownEncoder_KeepsTheTextsNegative()
+    {
+        var data = Read(
+            ("prompt", """
+                {"1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+                 "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat","clip":["1",1]}},
+                 "3":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+                 "4":{"class_type":"ImpactWildcardEncode","inputs":{"wildcard_text":"blurry","model":["1",0],"clip":["1",1]}},
+                 "5":{"class_type":"ConditioningCombine","inputs":{"conditioning_1":["3",0],"conditioning_2":["4",2]}},
+                 "6":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"negative":["5",0],"seed":7,"steps":8,"cfg":1.0,"sampler_name":"euler","scheduler":"simple","denoise":1.0}}}
+                """),
+            ("parameters", "a cat\nNegative prompt: blurry\nSteps: 8, Seed: 7"));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.NegativeZeroedOut.Should().BeFalse();
+        data.NegativePrompt.Should().Be("blurry");
+    }
+
     [Fact]
     public void TextOnly_TakesWeightsFromLoraTags()
     {
