@@ -72,7 +72,8 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         _clipboard = clipboard;
         _retryService = retryService;
 
-        Reload();
+        // Built with the LoRA Viewer on the UI thread: the first read of the disk must not hold it up.
+        RequestReload();
         _store.Changed += OnStoreChanged;
         _host.InstalledIndexChanged += OnInstalledChanged;
     }
@@ -86,17 +87,14 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     {
         _disposed = true;
         _openCts?.Cancel();
+        _searchCts?.Cancel();
         ReleaseCards(OpenRecipe);
         _store.Changed -= OnStoreChanged;
         _host.InstalledIndexChanged -= OnInstalledChanged;
     }
 
-    // The browser saves inside Task.Run, so Changed arrives on a pool thread.
-    private void OnStoreChanged(object? sender, EventArgs e)
-    {
-        if (Dispatcher.UIThread.CheckAccess()) Reload();
-        else Dispatcher.UIThread.Post(Reload);
-    }
+    // Any thread: the browser saves inside Task.Run, the tab's own commands on the UI thread.
+    private void OnStoreChanged(object? sender, EventArgs e) => RequestReload();
 
     private void OnInstalledChanged(object? sender, EventArgs e)
     {
@@ -107,7 +105,28 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
     }
 
     partial void OnStatusFilterChanged(RecipeStatusFilter value) => Rebuild();
-    partial void OnSearchTextChanged(string value) => Rebuild();
+
+    /// <summary>How long typing must pause before the list is rebuilt; filter toggles rebuild at once.</summary>
+    internal static readonly TimeSpan SearchDebounce = TimeSpan.FromMilliseconds(250);
+
+    private CancellationTokenSource? _searchCts;
+
+    partial void OnSearchTextChanged(string value)
+    {
+        _searchCts?.Cancel();
+        _searchCts = new CancellationTokenSource();
+        SearchTask = RebuildAfterTypingAsync(_searchCts.Token);
+    }
+
+    private async Task RebuildAfterTypingAsync(CancellationToken ct)
+    {
+        try { await Task.Delay(SearchDebounce, ct); }
+        catch (OperationCanceledException) { return; }
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!ct.IsCancellationRequested && !_disposed) Rebuild();
+        });
+    }
 
     partial void OnShowNsfwChanged(bool value)
     {
@@ -117,14 +136,72 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
 
     #region Loading and filtering
 
-    private void Reload()
+    private readonly object _reloadGate = new();
+    private bool _reloading;
+    private bool _reloadAgain;
+
+    /// <summary>The reload in flight, or the last one; tests wait on it.</summary>
+    internal Task ReloadTask { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The rebuild waiting for typing to pause, or the last one; tests wait on it.</summary>
+    internal Task SearchTask { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Reads the disk off the UI thread and applies the result on it. A request while a reload runs is
+    /// folded into exactly one more pass after it, however many arrive. Any thread.
+    /// </summary>
+    private void RequestReload()
+    {
+        lock (_reloadGate)
+        {
+            if (_reloading)
+            {
+                _reloadAgain = true;
+                return;
+            }
+            _reloading = true;
+            ReloadTask = Task.Run(ReloadPassesAsync);
+        }
+    }
+
+    private async Task ReloadPassesAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                var loaded = _store.LoadAll();
+                if (!_disposed) await Dispatcher.UIThread.InvokeAsync(() => { if (!_disposed) Apply(loaded); });
+                lock (_reloadGate)
+                {
+                    if (!_reloadAgain || _disposed)
+                    {
+                        _reloading = false;
+                        return;
+                    }
+                    _reloadAgain = false;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lock (_reloadGate)
+            {
+                _reloading = false;
+                _reloadAgain = false;
+            }
+            _logger?.Warn(LogCategory.FileSystem, LogSource, $"The recipes could not be read: {ex.Message}", ex.ToString());
+        }
+    }
+
+    private void Apply(IReadOnlyList<StoredRecipe> loaded)
     {
         var now = _nowLocal();
         var installed = _host.Installed;
         var previous = _cards.ToDictionary(c => c.ImageId);
         var cards = new List<RecipeCardViewModel>();
         _quiet = true;
-        foreach (var stored in _store.LoadAll())
+        foreach (var stored in loaded)
         {
             var card = BuildCard(stored, now);
             card.ApplyStatus(installed);

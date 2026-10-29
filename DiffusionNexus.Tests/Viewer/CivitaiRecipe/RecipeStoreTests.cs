@@ -366,6 +366,22 @@ public sealed class RecipeStoreTests : IDisposable
         File.Exists(fresh).Should().BeTrue("a save may be writing it right now");
     }
 
+    /// <summary>Real recipe.json files are 250–300 KB: one ★ must not parse every other recipe again.</summary>
+    [Fact]
+    public void LoadAll_ReusesUnchangedRecipes_AndReadsAChangedOneAgain()
+    {
+        _store.Save(Recipe(1), PastedAt);
+        _store.Save(Recipe(2), PastedAt);
+        var before = _store.LoadAll().ToDictionary(s => s.ImageId);
+
+        _store.SetKept([1], true);
+        var after = _store.LoadAll().ToDictionary(s => s.ImageId);
+
+        after[2].Should().BeSameAs(before[2]);
+        after[1].Should().NotBeSameAs(before[1]);
+        after[1].Saved!.Kept.Should().BeTrue();
+    }
+
     /// <summary>An original as the recipe service leaves it before the save: in a staging folder of its own.</summary>
     private string Staged(long id, string name, int length = 10)
     {

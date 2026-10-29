@@ -22,6 +22,10 @@ public sealed class RecipeStore
 
     private readonly IUnifiedLogger? _logger;
 
+    // The last parse of each folder's recipe.json; LoadAll runs after every change and must not parse them all again.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ReadStamp Stamp, StoredRecipe Stored)> _parsed =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The read error of a recipe a newer version wrote.</summary>
     public const string NewerFormatText = "Made by a newer version of DiffusionNexus";
 
@@ -91,9 +95,13 @@ public sealed class RecipeStore
         }
     }
 
+    /// <summary>Test seam: runs at the start of every <see cref="LoadAll"/>.</summary>
+    internal Action? LoadingAll { get; set; }
+
     /// <summary>Every folder under the root whose name is an image id, broken ones included.</summary>
     public IReadOnlyList<StoredRecipe> LoadAll()
     {
+        LoadingAll?.Invoke();
         if (!Directory.Exists(Root)) return [];
         var result = new List<StoredRecipe>();
         foreach (var folder in Directory.EnumerateDirectories(Root))
@@ -211,6 +219,7 @@ public sealed class RecipeStore
                 try
                 {
                     Directory.Delete(folder, recursive: true);
+                    _parsed.TryRemove(folder, out _);
                     freed += size;
                     count++;
                 }
@@ -269,10 +278,19 @@ public sealed class RecipeStore
 
     private StoredRecipe Read(long imageId, string folder)
     {
-        var size = SizeOf(folder);
         var path = Path.Combine(folder, JsonName);
         DeleteStaleTemp(path + ".tmp");
-        if (!File.Exists(path)) return new(imageId, folder, null, size, $"{JsonName} is missing.");
+        var files = FilesOf(folder);
+        var size = files.Where(f => f.Extension != ".download").Sum(f => f.Length);
+        var json = files.FirstOrDefault(f => string.Equals(f.Name, JsonName, StringComparison.OrdinalIgnoreCase));
+        if (json is null) return new(imageId, folder, null, size, $"{JsonName} is missing.");
+
+        // The same recipe.json and original as last time: the parsed recipe is still right (they are 250–300 KB).
+        var originalName = OriginalNames.FirstOrDefault(n => files.Any(f => string.Equals(f.Name, n, StringComparison.OrdinalIgnoreCase)));
+        var originalLength = originalName is null ? 0 : files.First(f => string.Equals(f.Name, originalName, StringComparison.OrdinalIgnoreCase)).Length;
+        var stamp = new ReadStamp(json.LastWriteTimeUtc, json.Length, originalName, originalLength, size);
+        if (_parsed.TryGetValue(folder, out var hit) && hit.Stamp == stamp) return hit.Stored;
+
         try
         {
             var saved = JsonSerializer.Deserialize<SavedRecipe>(File.ReadAllText(path), JsonOptions);
@@ -283,8 +301,10 @@ public sealed class RecipeStore
                 return new(imageId, folder, null, size, $"{JsonName} holds no recipe.");
             }
             // The folder is the truth: a moved profile must still find its original.
-            var original = OriginalNames.Select(n => Path.Combine(folder, n)).FirstOrDefault(File.Exists);
-            return new(imageId, folder, saved with { Recipe = saved.Recipe with { OriginalFilePath = original } }, size, null);
+            var original = originalName is null ? null : Path.Combine(folder, originalName);
+            var stored = new StoredRecipe(imageId, folder, saved with { Recipe = saved.Recipe with { OriginalFilePath = original } }, size, null);
+            _parsed[folder] = (stamp, stored);
+            return stored;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -292,6 +312,15 @@ public sealed class RecipeStore
             return new(imageId, folder, null, size, ex.Message);
         }
     }
+
+    private static FileInfo[] FilesOf(string folder)
+    {
+        try { return new DirectoryInfo(folder).GetFiles(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    /// <summary>What a parsed recipe was read from; any change means it is read again.</summary>
+    private readonly record struct ReadStamp(DateTime JsonWrittenUtc, long JsonLength, string? Original, long OriginalLength, long FolderSize);
 
     private static long SizeOf(string folder)
     {

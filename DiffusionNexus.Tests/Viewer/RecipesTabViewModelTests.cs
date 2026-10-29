@@ -41,13 +41,37 @@ public sealed class RecipesTabViewModelTests : IDisposable
         try { Directory.Delete(Path.GetDirectoryName(_root)!, recursive: true); } catch { /* best-effort */ }
     }
 
-    private RecipesTabViewModel Create()
+    private RecipesTabViewModel? _vm;
+
+    private RecipesTabViewModel Create() =>
+        Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now));
+
+    /// <summary>The tab reads the disk off the UI thread; a test sees it once the first reload has landed.</summary>
+    private RecipesTabViewModel Track(RecipesTabViewModel vm)
     {
-        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now);
+        _vm = vm;
+        Pump();
         return vm;
     }
 
-    private static void Pump() => Dispatcher.UIThread.RunJobs();
+    /// <summary>Runs the posted UI work and waits for the tab's reload (and a pending search) to land.</summary>
+    private void Pump()
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        Dispatcher.UIThread.RunJobs();
+        while (_vm is { } vm && !(vm.ReloadTask.IsCompleted && vm.SearchTask.IsCompleted) && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(2);
+            Dispatcher.UIThread.RunJobs();
+        }
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    private void Search(RecipesTabViewModel vm, string text)
+    {
+        vm.SearchText = text;
+        Pump();
+    }
 
     private static CivitaiRecipeResource Lora(int versionId, int modelId, string name)
     {
@@ -217,15 +241,15 @@ public sealed class RecipesTabViewModelTests : IDisposable
         Save(Recipe(3003, prompt: "city", resources: [Lora(100, 10, "Pixel Style")]), Today);
         var vm = Create();
 
-        vm.SearchText = "dragon";
+        Search(vm, "dragon");
         Ids(vm).Should().Equal(1001);
-        vm.SearchText = "BOB";
+        Search(vm, "BOB");
         Ids(vm).Should().Equal(2002);
-        vm.SearchText = "3003";
+        Search(vm, "3003");
         Ids(vm).Should().Equal(3003);
-        vm.SearchText = "pixel";
+        Search(vm, "pixel");
         Ids(vm).Should().Equal(3003);
-        vm.SearchText = "nothing like this";
+        Search(vm, "nothing like this");
         Ids(vm).Should().BeEmpty();
         vm.HiddenText.Should().Be("3 recipes hidden by filters in History");
     }
@@ -271,7 +295,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         Save(Recipe(1), Today);
         Save(Recipe(2), Today);
         var vm = Create();
-        vm.SearchText = "cat";
+        Search(vm, "cat");
         vm.Select(Card(vm, 2), additive: false, range: false);
 
         Save(Recipe(3), Today);
@@ -549,7 +573,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         Save(Recipe(2), Today);
         Save(Recipe(3), Today, kept: true);
         var vm = Create();
-        vm.SearchText = "cat";
+        Search(vm, "cat");
         vm.Select(Card(vm, 2), false, false);
 
         vm.OpenCommand.Execute(Card(vm, 1));
@@ -609,8 +633,8 @@ public sealed class RecipesTabViewModelTests : IDisposable
             .ReturnsAsync(new CivitaiModel { Id = 10, Name = "Foo", Type = CivitaiModelType.LORA, ModelVersions = [version] });
         _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
         Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429 Too Many Requests")]), Today);
-        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null));
+        var vm = Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null)));
 
         vm.OpenCommand.Execute(Card(vm, 1));
         await vm.RetryTask!;
@@ -634,8 +658,8 @@ public sealed class RecipesTabViewModelTests : IDisposable
     private RecipesTabViewModel CreateWithRetry(Mock<DiffusionNexus.Civitai.ICivitaiClient> client)
     {
         _host.Setup(h => h.GetApiKeyAsync()).ReturnsAsync((string?)null);
-        return new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null));
+        return Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(client.Object, new HttpClient(), Path.Combine(_root, "cache"), null)));
     }
 
     /// <summary>A client whose version 100 loads once <paramref name="gate"/> is released.</summary>
@@ -734,8 +758,8 @@ public sealed class RecipesTabViewModelTests : IDisposable
     {
         _host.Setup(h => h.GetApiKeyAsync()).ThrowsAsync(new InvalidOperationException("boom"));
         Save(Recipe(1, resources: [new CivitaiRecipeResource(100, null, null, null, "429")]), Today);
-        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
-            () => new CivitaiImageRecipeService(new Mock<DiffusionNexus.Civitai.ICivitaiClient>().Object, new HttpClient(), _root, null));
+        var vm = Track(new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now, null,
+            () => new CivitaiImageRecipeService(new Mock<DiffusionNexus.Civitai.ICivitaiClient>().Object, new HttpClient(), _root, null)));
 
         vm.OpenCommand.Execute(Card(vm, 1));
         await vm.RetryTask!;
@@ -810,5 +834,82 @@ public sealed class RecipesTabViewModelTests : IDisposable
         vm.EmptyText.Should().Be("No recipe matches. 2 recipes hidden by filters in History");
         vm.StatusFilter = RecipeStatusFilter.All;
         vm.EmptyText.Should().BeNull();
+    }
+
+    [Fact]
+    public void Constructor_DoesNotWaitForTheDisk()
+    {
+        Save(Recipe(1), Today);
+        using var gate = new ManualResetEventSlim();
+        _store.LoadingAll = () => gate.Wait(TimeSpan.FromSeconds(3));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var vm = new RecipesTabViewModel(_store, _host.Object, _dialogs.Object, _logger.Object, () => Now);
+        sw.Stop();
+        _vm = vm;
+
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(1), "the LoRA Viewer is built on the UI thread");
+        Ids(vm).Should().BeEmpty();
+        gate.Set();
+        Pump();
+        Ids(vm).Should().Equal(1);
+    }
+
+    [Fact]
+    public void QuickChanges_CoalesceIntoAtMostTwoReads()
+    {
+        var vm = Create();
+        var reads = 0;
+        using var gate = new ManualResetEventSlim();
+        _store.LoadingAll = () =>
+        {
+            Interlocked.Increment(ref reads);
+            gate.Wait(TimeSpan.FromSeconds(3));
+        };
+
+        Save(Recipe(1), Today);
+        Save(Recipe(2), Today);
+        Save(Recipe(3), Today);
+        gate.Set();
+        Pump();
+
+        reads.Should().BeInRange(1, 2);
+        Ids(vm).Should().BeEquivalentTo([1L, 2L, 3L]);
+    }
+
+    [Fact]
+    public void Kept_DoesNotReparseTheOtherRecipes()
+    {
+        Save(Recipe(1), Today);
+        Save(Recipe(2), Today);
+        var vm = Create();
+        var other = Card(vm, 2).Stored;
+
+        vm.ToggleKeptCommand.Execute(Card(vm, 1));
+        Pump();
+
+        vm.KeptCount.Should().Be(1);
+        Card(vm, 2).Stored.Should().BeSameAs(other);
+    }
+
+    [Fact]
+    public void Typing_RebuildsOnceAfterThePause()
+    {
+        Save(Recipe(1, prompt: "a red dragon"), Today);
+        Save(Recipe(2, prompt: "a forest"), Today);
+        var vm = Create();
+        var rebuilds = 0;
+        vm.Groups.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) rebuilds++;
+        };
+
+        vm.SearchText = "d";
+        vm.SearchText = "dr";
+        vm.SearchText = "dra";
+        Pump();
+
+        rebuilds.Should().Be(1);
+        Ids(vm).Should().Equal(1);
     }
 }

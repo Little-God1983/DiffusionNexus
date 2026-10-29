@@ -5,22 +5,22 @@ using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
-using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using DiffusionNexus.UI.Services;
+using DiffusionNexus.UI.Services.CivitaiRecipe;
 using DiffusionNexus.UI.ViewModels.CivitaiBrowser;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DiffusionNexus.UI.Views.CivitaiBrowser;
 
 /// <summary>
 /// The Recipes tab (#667). Pointer rules live here because they need the modifier keys: a plain click
-/// opens the recipe, Ctrl toggles the card, Shift selects the range from the last click. Thumbnails are
-/// decoded off the UI thread when a card is realised and released when it leaves the tree.
+/// opens the recipe, Ctrl toggles the card, Shift selects the range from the last click. Thumbnails come
+/// from <see cref="RecipeThumbnails"/> (decoded once at card size, off the UI thread) when a card is realised.
 /// </summary>
 public partial class RecipesTabView : UserControl
 {
-    private const int ThumbnailDecodeWidth = 256;
-
     public static readonly IValueConverter IsAll = new FuncValueConverter<RecipeStatusFilter, bool>(f => f == RecipeStatusFilter.All);
     public static readonly IValueConverter IsReady = new FuncValueConverter<RecipeStatusFilter, bool>(f => f == RecipeStatusFilter.Ready);
     public static readonly IValueConverter IsMissing = new FuncValueConverter<RecipeStatusFilter, bool>(f => f == RecipeStatusFilter.Missing);
@@ -39,6 +39,12 @@ public partial class RecipesTabView : UserControl
     public static readonly IValueConverter StarBrush = new FuncValueConverter<bool, IBrush>(kept => kept ? KeptStar : IdleStar);
 
     private static readonly ConditionalWeakTable<Image, CancellationTokenSource> s_loads = new();
+
+    private static RecipeThumbnails? s_thumbnails;
+
+    // The app's shared thumbnail LRU; a private one only where there is no app (the designer).
+    private static RecipeThumbnails Thumbnails => s_thumbnails ??=
+        new RecipeThumbnails(App.Services?.GetService<IThumbnailService>() ?? new ThumbnailService(maxCacheSize: 300));
 
     public RecipesTabView()
     {
@@ -83,27 +89,28 @@ public partial class RecipesTabView : UserControl
 
         var cts = new CancellationTokenSource();
         s_loads.AddOrUpdate(image, cts);
-        var token = cts.Token;
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                if (token.IsCancellationRequested || !File.Exists(path)) return;
-                using var stream = File.OpenRead(path);
-                var bitmap = Bitmap.DecodeToWidth(stream, ThumbnailDecodeWidth);
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (token.IsCancellationRequested) bitmap.Dispose();
-                    else image.Source = bitmap;
-                });
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or NotSupportedException)
-            {
-                // A file Avalonia cannot decode keeps the placeholder.
-            }
-        }, token);
+        _ = ShowThumbnailAsync(image, path, cts.Token);
     }
 
+    private static async Task ShowThumbnailAsync(Image image, string path, CancellationToken token)
+    {
+        try
+        {
+            var bitmap = await Thumbnails.LoadAsync(path, token);
+            if (bitmap is null) return;
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!token.IsCancellationRequested) image.Source = bitmap;
+            });
+        }
+        catch (OperationCanceledException) { /* the card left the screen */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or NotSupportedException)
+        {
+            // A file Avalonia cannot decode keeps the placeholder.
+        }
+    }
+
+    /// <summary>The bitmap belongs to the thumbnail cache, which other cards may share it with: only let go of it.</summary>
     private void OnThumbDetached(object? sender, VisualTreeAttachmentEventArgs e)
     {
         if (sender is not Image image) return;
@@ -112,8 +119,6 @@ public partial class RecipesTabView : UserControl
             cts.Cancel();
             s_loads.Remove(image);
         }
-        var bitmap = image.Source as Bitmap;
         image.Source = null;
-        bitmap?.Dispose();
     }
 }
