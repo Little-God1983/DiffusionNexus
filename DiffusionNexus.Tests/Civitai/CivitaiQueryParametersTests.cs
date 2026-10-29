@@ -156,6 +156,14 @@ public class CivitaiQueryParametersTests
     }
 
     [Fact]
+    public void ImagesQuery_ImageIdAndNsfwLevel_AreSent()
+    {
+        // #628: an NSFW image comes back only with nsfw=X; the level word wins over the bool.
+        Build(new CivitaiImagesQuery { ImageId = 143992601, NsfwLevel = "X", Nsfw = true })
+            .Should().Be("imageId=143992601&nsfw=X");
+    }
+
+    [Fact]
     public void ImagesQuery_Empty_ProducesEmptyString()
     {
         Build(new CivitaiImagesQuery()).Should().BeEmpty();

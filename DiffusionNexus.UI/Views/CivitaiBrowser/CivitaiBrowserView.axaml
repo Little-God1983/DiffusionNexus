@@ -4,6 +4,7 @@
              xmlns:vmRoot="using:DiffusionNexus.UI.ViewModels"
              xmlns:svc="using:DiffusionNexus.UI.Services.CivitaiBrowser"
              xmlns:views="using:DiffusionNexus.UI.Views"
+             xmlns:cb="using:DiffusionNexus.UI.Views.CivitaiBrowser"
              xmlns:converters="using:DiffusionNexus.UI.Converters"
              x:Class="DiffusionNexus.UI.Views.CivitaiBrowser.CivitaiBrowserView"
              x:DataType="vm:CivitaiBrowserViewModel">
@@ -339,7 +340,11 @@
                          VerticalAlignment="Center"/>
             </StackPanel>
           </Border>
-          <ItemsControl ItemsSource="{Binding Results}">
+          <!-- Image link (#628): the recipe view takes the cards' place. -->
+          <Panel IsVisible="{Binding IsRecipeView}">
+            <cb:CivitaiRecipeView DataContext="{Binding Recipe}"/>
+          </Panel>
+          <ItemsControl ItemsSource="{Binding Results}" IsVisible="{Binding !IsRecipeView}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
                 <WrapPanel Orientation="Horizontal"/>

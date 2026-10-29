@@ -1,0 +1,193 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:DiffusionNexus.UI.ViewModels.CivitaiBrowser"
+             x:Class="DiffusionNexus.UI.Views.CivitaiBrowser.CivitaiRecipeView"
+             x:DataType="vm:CivitaiRecipeViewModel">
+
+  <!-- Recipe view for a pasted Civitai image link (#628): image + rating on the left,
+       generation data and the resources it was made with on the right, queue footer below. -->
+  <Grid ColumnDefinitions="280,*" RowDefinitions="*,Auto" Margin="6,0,6,6">
+
+    <!-- Left: image, rating, who made it -->
+    <StackPanel Grid.Column="0" Grid.Row="0" Spacing="6" Margin="0,0,16,0">
+      <Border Background="#0A0A0A" CornerRadius="6" ClipToBounds="True" MinHeight="200">
+        <Grid>
+          <Image Source="{Binding PreviewImage}"
+                 Stretch="Uniform"
+                 MaxHeight="420"/>
+          <StackPanel IsVisible="{Binding IsVideo}"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      Spacing="6">
+            <TextBlock Text="&#x25B6;" FontSize="48" Opacity="0.4" HorizontalAlignment="Center"/>
+            <TextBlock Text="Video post" FontSize="11" Opacity="0.5" HorizontalAlignment="Center"/>
+          </StackPanel>
+          <!-- Civitai's rating, judged by the app's NSFW rule -->
+          <Border Background="#AA22C55E"
+                  IsVisible="{Binding IsSafe}"
+                  CornerRadius="4" Padding="6,2" Margin="8"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  ToolTip.Tip="Civitai rates this image safe for work">
+            <TextBlock Text="{Binding RatingBadge}" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+          </Border>
+          <Border Background="#AADC2626"
+                  IsVisible="{Binding !IsSafe}"
+                  CornerRadius="4" Padding="6,2" Margin="8"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  ToolTip.Tip="Civitai rates this image R or above, or has not rated it">
+            <TextBlock Text="{Binding RatingBadge}" FontSize="10" FontWeight="SemiBold" Foreground="White"/>
+          </Border>
+        </Grid>
+      </Border>
+      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding Details}" FontSize="11" Opacity="0.6" TextWrapping="Wrap"/>
+      <Button Content="Open on Civitai" Command="{Binding OpenOnCivitaiCommand}" HorizontalAlignment="Left"/>
+    </StackPanel>
+
+    <!-- Right: generation data + resources -->
+    <StackPanel Grid.Column="1" Grid.Row="0" Spacing="8">
+      <TextBlock Text="Generation data" FontWeight="SemiBold" FontSize="14"/>
+
+      <TextBlock IsVisible="{Binding HasGenerationData}"
+                 Text="{Binding SourceNote, StringFormat=&#x2713; {0}}"
+                 Foreground="#4ADE80"
+                 FontSize="11"/>
+      <Border IsVisible="{Binding !HasGenerationData}"
+              Background="#1AEAB308"
+              BorderBrush="#66EAB308"
+              BorderThickness="1"
+              CornerRadius="4"
+              Padding="10,8">
+        <StackPanel Spacing="4">
+          <TextBlock Text="{Binding NoDataWarning}" TextWrapping="Wrap"/>
+          <TextBlock IsVisible="{Binding ReadError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                     Text="{Binding ReadError}" TextWrapping="Wrap" FontSize="11" Opacity="0.7"/>
+        </StackPanel>
+      </Border>
+
+      <Grid IsVisible="{Binding HasGenerationData}"
+            ColumnDefinitions="140,*"
+            RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto">
+        <Grid.Styles>
+          <Style Selector="TextBlock.label">
+            <Setter Property="Opacity" Value="0.6"/>
+            <Setter Property="Margin" Value="0,4,8,4"/>
+          </Style>
+          <Style Selector="SelectableTextBlock.value">
+            <Setter Property="Margin" Value="0,4,0,4"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+          </Style>
+        </Grid.Styles>
+
+        <TextBlock Grid.Row="0" Classes="label" Text="Prompt"/>
+        <Border Grid.Row="0" Grid.Column="1" Background="#161616" BorderBrush="#2A2A2A" BorderThickness="1"
+                CornerRadius="4" Padding="8,6" Margin="0,2,0,4">
+          <StackPanel Spacing="4">
+            <SelectableTextBlock Text="{Binding PromptText}" TextWrapping="Wrap" MaxLines="2"
+                                 TextTrimming="CharacterEllipsis"
+                                 IsVisible="{Binding !IsPromptExpanded}"/>
+            <SelectableTextBlock Text="{Binding PromptText}" TextWrapping="Wrap"
+                                 IsVisible="{Binding IsPromptExpanded}"/>
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <Button Classes="link" Padding="0" Background="Transparent" Foreground="#60A5FA"
+                      Content="{Binding PromptToggleText}" Command="{Binding TogglePromptCommand}"/>
+              <Button Classes="link" Padding="0" Background="Transparent" Foreground="#60A5FA"
+                      Content="Copy" Command="{Binding CopyPromptCommand}"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <TextBlock Grid.Row="1" Classes="label" Text="Negative prompt"/>
+        <SelectableTextBlock Grid.Row="1" Grid.Column="1" Classes="value" Text="{Binding NegativePromptText}" MaxLines="3"
+                             TextTrimming="CharacterEllipsis"/>
+        <TextBlock Grid.Row="2" Classes="label" Text="Checkpoint"/>
+        <SelectableTextBlock Grid.Row="2" Grid.Column="1" Classes="value" Text="{Binding CheckpointText}"/>
+        <TextBlock Grid.Row="3" Classes="label" Text="VAE"/>
+        <SelectableTextBlock Grid.Row="3" Grid.Column="1" Classes="value" Text="{Binding VaeText}"/>
+        <TextBlock Grid.Row="4" Classes="label" Text="Sampler / scheduler"/>
+        <SelectableTextBlock Grid.Row="4" Grid.Column="1" Classes="value" Text="{Binding SamplerLine}"/>
+        <TextBlock Grid.Row="5" Classes="label" Text="Steps · CFG · Seed"/>
+        <SelectableTextBlock Grid.Row="5" Grid.Column="1" Classes="value" Text="{Binding StepsCfgSeedLine}"/>
+      </Grid>
+
+      <TextBlock Text="Resources used" FontWeight="SemiBold" FontSize="14" Margin="0,8,0,0"/>
+      <TextBlock IsVisible="{Binding !HasResources}"
+                 Text="{Binding NoResourcesText}"
+                 TextWrapping="Wrap"
+                 Opacity="0.7"/>
+      <Grid ColumnDefinitions="32,48,*,130,120,80" Opacity="0.6" Margin="0,0,0,2" IsVisible="{Binding HasResources}">
+        <TextBlock Grid.Column="2" Text="Name / version" FontSize="11"/>
+        <TextBlock Grid.Column="3" Text="Base model" FontSize="11"/>
+        <TextBlock Grid.Column="4" Text="Weight" FontSize="11"/>
+        <TextBlock Grid.Column="5" Text="Size" FontSize="11"/>
+      </Grid>
+      <ItemsControl ItemsSource="{Binding Rows}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:CivitaiRecipeResourceRowViewModel">
+            <Border BorderBrush="#2A2A2A" BorderThickness="0,1,0,0" Padding="0,6">
+              <Grid ColumnDefinitions="32,48,*,130,120,80" Opacity="{Binding RowOpacity}">
+                <CheckBox Grid.Column="0" VerticalAlignment="Center"
+                          IsVisible="{Binding CanTick}"
+                          IsChecked="{Binding IsSelected, Mode=TwoWay}"/>
+                <Border Grid.Column="1" Width="36" Height="36" CornerRadius="4" ClipToBounds="True"
+                        Background="#2A2A2A" HorizontalAlignment="Left" VerticalAlignment="Center">
+                  <Image Source="{Binding Card.PreviewImage}" Stretch="UniformToFill"/>
+                </Border>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="2" Margin="0,0,8,0">
+                  <WrapPanel ItemSpacing="6">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <Border IsVisible="{Binding TypeBadge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                            Background="#AA6366F1" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding TypeBadge}" FontSize="9" FontWeight="SemiBold" Foreground="White"/>
+                    </Border>
+                    <Border IsVisible="{Binding IsInstalled}"
+                            Background="#AA22C55E" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                      <TextBlock Text="INSTALLED" FontSize="9" FontWeight="SemiBold" Foreground="White"/>
+                    </Border>
+                    <Border IsVisible="{Binding ShowEarlyAccessBadge}"
+                            Background="#AA9333EA" CornerRadius="3" Padding="5,1" VerticalAlignment="Center">
+                      <TextBlock Text="EA" FontSize="9" FontWeight="SemiBold" Foreground="White"/>
+                    </Border>
+                    <Border IsVisible="{Binding IsPermanentlyPaid}"
+                            Background="#AADC2626" CornerRadius="3" Padding="5,1" VerticalAlignment="Center"
+                            ToolTip.Tip="Permanently paid — this model never becomes free; it can only be bought on Civitai">
+                      <TextBlock Text="PAID" FontSize="9" FontWeight="SemiBold" Foreground="White"/>
+                    </Border>
+                  </WrapPanel>
+                  <WrapPanel ItemSpacing="6">
+                    <TextBlock Text="{Binding VersionLabel}" FontSize="11" Opacity="0.6" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock IsVisible="{Binding Note, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                               Text="{Binding Note}" FontSize="11" Foreground="#FBBF24"/>
+                    <Button IsVisible="{Binding !CanTick}"
+                            IsEnabled="{Binding HasCivitaiUrl}"
+                            Padding="0" Background="Transparent" Foreground="#60A5FA" FontSize="11"
+                            Content="Open on Civitai"
+                            Command="{Binding $parent[UserControl].((vm:CivitaiRecipeViewModel)DataContext).OpenResourceCommand}"
+                            CommandParameter="{Binding}"/>
+                  </WrapPanel>
+                </StackPanel>
+                <TextBlock Grid.Column="3" Text="{Binding BaseModel}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="4" Text="{Binding WeightDisplay}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="5" Text="{Binding SizeDisplay}" VerticalAlignment="Center"/>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+
+    <!-- Footer -->
+    <Grid Grid.Row="1" Grid.ColumnSpan="2" ColumnDefinitions="*,Auto,Auto" Margin="0,12,0,0">
+      <TextBlock Grid.Column="0" VerticalAlignment="Center" Opacity="0.7"
+                 Text="{Binding FooterText, StringFormat={}{0} · same destination options as any browser download}"/>
+      <Button Grid.Column="1" Content="Send to ComfyUI" Margin="0,0,8,0"
+              IsEnabled="{Binding CanSendToComfyUi}"
+              ToolTip.Tip="{Binding SendToComfyUiTip}"
+              ToolTip.ShowOnDisabled="True"/>
+      <Button Grid.Column="2" Classes="accent"
+              Content="{Binding AddToQueueText}"
+              Command="{Binding AddToQueueCommand}"
+              IsEnabled="{Binding HasSelection}"/>
+    </Grid>
+  </Grid>
+</UserControl>

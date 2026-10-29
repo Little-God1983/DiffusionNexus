@@ -61,6 +61,8 @@
     <None Include="..\DiffusionNexus.UI\Assets\Pipelines\Krea2-Text2Image-API.json" Link="TestData\Krea2-Text2Image-API.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- #628: text chunks of Civitai image 143992601 (Power Lora Loader graph + A1111 parameters). -->
+    <None Include="Viewer\TestData\CivitaiRecipe\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
