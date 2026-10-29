@@ -27,6 +27,21 @@ public sealed class RecipeStatusTests
     private static IEnumerable<CivitaiRecipeResource> Loras(int from, int count) =>
         Enumerable.Range(from, count).Select(i => Resource(i));
 
+    /// <summary>
+    /// A 429 leaves the version unknown, so the file's entry for that LoRA cannot be linked and sits
+    /// in UnlinkedLoras. It may well be on Civitai: the card must not say it is not.
+    /// </summary>
+    [Fact]
+    public void UnlinkedWhileAResourceFailed_IsNotCalledNotOnCivitai()
+    {
+        var recipe = Recipe([Failed(7)], [new RecipeLoraUse("style", null, 1, null)]);
+
+        var status = RecipeStatus.Compute(recipe, CivitaiInstalledIndex.Empty);
+
+        status.MissingNotOnCivitai.Should().Be(0);
+        status.Text.Should().Be("1 of 1 LoRAs missing · 1 resource could not be loaded");
+    }
+
     [Fact]
     public void AllLorasInstalled_IsReady()
     {

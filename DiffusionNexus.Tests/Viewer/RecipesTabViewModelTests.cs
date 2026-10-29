@@ -374,7 +374,8 @@ public sealed class RecipesTabViewModelTests : IDisposable
         vm.Select(Card(vm, 1), false, false);
 
         vm.QueueButtonText.Should().Be("Queue missing LoRAs (1)");
-        vm.QueueTooltip.Should().Be("1 not on Civitai, 1 could not be loaded");
+        // While a resource of the recipe failed, its unlinked entry may be that LoRA: not "not on Civitai" (card agrees).
+        vm.QueueTooltip.Should().Be("1 could not be loaded");
 
         vm.ClearSelectionCommand.Execute(null);
         Save(Recipe(2, resources: [Lora(100, 10, "Foo")]), Today);
@@ -527,6 +528,16 @@ public sealed class RecipesTabViewModelTests : IDisposable
     }
 
     [Fact]
+    public void QueueTooltip_NamesUnlinkedLoras_WhenEverythingLoaded()
+    {
+        Save(Recipe(1, resources: [Lora(100, 10, "Foo")], unlinked: [new RecipeLoraUse("x", "x.safetensors", 1, null)]), Today);
+        var vm = Create();
+        vm.Select(Card(vm, 1), false, false);
+
+        vm.QueueTooltip.Should().Be("1 not on Civitai");
+    }
+
+    [Fact]
     public void QueueTooltip_CountsEachUnlinkedAndFailedLoraOnce()
     {
         var failed = new CivitaiRecipeResource(300, null, null, null, "429 Too Many Requests");
@@ -537,7 +548,7 @@ public sealed class RecipesTabViewModelTests : IDisposable
         vm.Select(Card(vm, 1), false, false);
         vm.Select(Card(vm, 2), true, false);
 
-        vm.QueueTooltip.Should().Be("1 not on Civitai, 1 could not be loaded");
+        vm.QueueTooltip.Should().Be("1 could not be loaded");
     }
 
     [Fact]

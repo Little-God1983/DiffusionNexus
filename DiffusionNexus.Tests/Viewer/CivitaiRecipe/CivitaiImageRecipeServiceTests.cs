@@ -92,6 +92,25 @@ public sealed class CivitaiImageRecipeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RetryFailedResources_KeepsTheSiteWeight_WhenTheFileGivesNone()
+    {
+        // First paste: the version hit a 429, Civitai's page still gave its strength (0.8).
+        HasLora(100, 1, "style.safetensors");
+        var fileEntry = new RecipeLoraUse("style", null, null, null);
+        var siteUse = new RecipeLoraUse("Version 100", null, 0.8, null, 100);
+        var recipe = new CivitaiImageRecipe(9, new CivitaiModelImage { Id = 9 }, 1, null,
+            new ImageRecipeData { Format = RecipeFileFormat.Png, Source = RecipeDataSource.SettingsText, Loras = [fileEntry] },
+            [new CivitaiRecipeResource(100, null, null, siteUse, "429")], [fileEntry]);
+
+        var result = await Service().RetryFailedResourcesAsync(recipe, null, default);
+
+        var resource = result.Resources.Single();
+        resource.LoadError.Should().BeNull();
+        resource.Use!.Name.Should().Be("style", "the file entry now links to the loaded version");
+        resource.Use.Weight.Should().Be(0.8, "the weight the page gave is not lost");
+    }
+
+    [Fact]
     public async Task UnknownImage_GivesMessageAndNoRecipe()
     {
         _client.Setup(c => c.GetImagesAsync(It.IsAny<CivitaiImagesQuery>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

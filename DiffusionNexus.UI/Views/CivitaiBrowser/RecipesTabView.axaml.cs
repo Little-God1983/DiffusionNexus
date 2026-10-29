@@ -26,14 +26,11 @@ public partial class RecipesTabView : UserControl
     public static readonly IValueConverter IsMissing = new FuncValueConverter<RecipeStatusFilter, bool>(f => f == RecipeStatusFilter.Missing);
     public static readonly IValueConverter IsPositive = new FuncValueConverter<int, bool>(n => n > 0);
 
-    private static readonly IBrush SelectedBorder = new SolidColorBrush(Color.Parse("#3B82F6"));
-    private static readonly IBrush IdleBorder = new SolidColorBrush(Color.Parse("#2E2E2E"));
     private static readonly IBrush SafeBrush = new SolidColorBrush(Color.Parse("#1F9D55"));
     private static readonly IBrush NsfwBrush = new SolidColorBrush(Color.Parse("#C0392B"));
     private static readonly IBrush KeptStar = new SolidColorBrush(Color.Parse("#F5C542"));
     private static readonly IBrush IdleStar = new SolidColorBrush(Color.Parse("#99FFFFFF"));
 
-    public static readonly IValueConverter SelectionBorder = new FuncValueConverter<bool, IBrush>(s => s ? SelectedBorder : IdleBorder);
     public static readonly IValueConverter RatingBrush = new FuncValueConverter<bool, IBrush>(safe => safe ? SafeBrush : NsfwBrush);
     public static readonly IValueConverter StarText = new FuncValueConverter<bool, string>(kept => kept ? "★" : "☆");
     public static readonly IValueConverter StarBrush = new FuncValueConverter<bool, IBrush>(kept => kept ? KeptStar : IdleStar);

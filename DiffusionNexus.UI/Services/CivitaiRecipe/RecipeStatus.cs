@@ -54,7 +54,8 @@ public sealed record RecipeStatus(int Loras, int Missing, int MissingNotOnCivita
             loras++;
             if (installed.HasFileHashPrefix(use.Hash)) continue;
             missing++;
-            notOnCivitai++;
+            // While a resource failed to load, an unlinked entry may be that very LoRA: it is on Civitai.
+            if (failed == 0) notOnCivitai++;
         }
         return new RecipeStatus(loras, missing, notOnCivitai, failed);
     }

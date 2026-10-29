@@ -358,7 +358,8 @@ public sealed partial class RecipesTabViewModel : ObservableObject, IDisposable
         // Each LoRA once across the selection, like the button: unlinked by hash or name, failed by version id.
         var installed = _host.Installed;
         var recipes = selected.Where(c => c.Stored.Saved is not null).Select(c => c.Stored.Saved!.Recipe).ToList();
-        var notOnCivitai = recipes.SelectMany(r => r.UnlinkedLoras)
+        // As on the card: while a recipe has a resource that failed to load, its unlinked entries may be that LoRA.
+        var notOnCivitai = recipes.Where(r => r.Resources.All(x => x.LoadError is null)).SelectMany(r => r.UnlinkedLoras)
             .Where(u => !installed.HasFileHashPrefix(u.Hash))
             .Select(u => (u.Hash ?? u.Name).ToLowerInvariant()).Distinct().Count();
         var failed = recipes.SelectMany(r => r.Resources).Where(r => r.LoadError is not null).Select(r => r.VersionId).Distinct().Count();

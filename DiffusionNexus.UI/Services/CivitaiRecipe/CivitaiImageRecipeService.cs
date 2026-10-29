@@ -121,7 +121,9 @@ public sealed class CivitaiImageRecipeService
         {
             if (!reloaded.TryGetValue(old.VersionId, out var now)) return old;
             if (now.LoadError is not null) return old with { LoadError = now.LoadError, Version = now.Version ?? old.Version };
-            return match.ByVersionId.TryGetValue(old.VersionId, out var use) ? now with { Use = use } : now with { Use = old.Use };
+            if (!match.ByVersionId.TryGetValue(old.VersionId, out var use)) return now with { Use = old.Use };
+            // A weight Civitai's page gave on the first paste stays when the file entry carries none.
+            return now with { Use = use.Weight is null && old.Use?.Weight is { } weight ? use with { Weight = weight } : use };
         }).ToList();
         var claimed = match.ByVersionId.Values.ToList();
         var unlinked = recipe.UnlinkedLoras.Where(u => !claimed.Contains(u)).ToList();
