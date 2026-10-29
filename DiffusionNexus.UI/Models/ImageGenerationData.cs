@@ -14,6 +14,12 @@ public record ImageGenerationData
     public string? PositivePrompt { get; init; }
     public string? NegativePrompt { get; init; }
 
+    /// <summary>
+    /// The traced sampler's negative is a ConditioningZeroOut (no text behind it): there is no negative
+    /// prompt, which a null <see cref="NegativePrompt"/> alone cannot tell apart from "not found" (#670).
+    /// </summary>
+    public bool NegativeZeroedOut { get; init; }
+
     public string? Checkpoint { get; init; }
     public IReadOnlyList<LoraInfo> Loras { get; init; } = [];
 

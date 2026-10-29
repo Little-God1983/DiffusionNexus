@@ -169,6 +169,21 @@ public sealed class ComfyLoraScanTests
     }
 
     [Fact]
+    public void ZeroOutAfterAPassThroughNode_IsZeroedOut()
+    {
+        // WanImageToVideo still gets a real negative, but the sampler takes a zero-out of its output.
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "2":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "3":{"class_type":"WanImageToVideo","inputs":{"positive":["1",0],"negative":["2",0]}},
+             "6":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["3",1]}},
+             "4":{"class_type":"KSamplerAdvanced","inputs":{"positive":["3",0],"negative":["6",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
     public void ZeroOutBehindAConditioningNode_IsZeroedOut()
     {
         var facts = ComfyLoraScan.Scan(Graph("""

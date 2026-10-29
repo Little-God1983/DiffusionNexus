@@ -37,6 +37,7 @@ internal static class ComfyLoraScan
         var classes = new Dictionary<string, string>();
         var inputsById = new Dictionary<string, JsonElement>();
         var negatives = new Dictionary<string, string>(); // node id -> the node its "negative" comes from
+        var consumed = new HashSet<string>(); // nodes whose output feeds a negative or a conditioning input
         var literalNegative = false;
 
         // Node ids are numbers as strings; going in id order keeps the list in the graph's build order.
@@ -59,6 +60,14 @@ internal static class ComfyLoraScan
             {
                 if (LinkTarget(negative) is { } source) negatives[nodeId] = source;
                 else if (String(inputs, "negative") is not null) literalNegative = true;
+            }
+            foreach (var input in inputs.EnumerateObject())
+            {
+                if ((input.Name == "negative" || input.Name.StartsWith("conditioning", StringComparison.OrdinalIgnoreCase))
+                    && LinkTarget(input.Value) is { } feeds)
+                {
+                    consumed.Add(feeds);
+                }
             }
 
             if (CoreLoraLoaders.Contains(classType))
@@ -91,7 +100,7 @@ internal static class ComfyLoraScan
             Merge(loras),
             models.Count == 1 ? models[0] : null,
             vaes.Count == 1 ? vaes[0] : null,
-            !literalNegative && AllNegativesZeroedOut(negatives, classes, inputsById));
+            !literalNegative && AllNegativesZeroedOut(negatives, consumed, classes, inputsById));
     }
 
     /// <summary>
@@ -100,11 +109,11 @@ internal static class ComfyLoraScan
     /// it on, and so do nodes that take "conditioning" inputs (ConditioningSetTimestepRange, FluxGuidance,
     /// ConditioningCombine): every source behind them must be a zero-out. Anything else is a real negative.
     /// </summary>
-    private static bool AllNegativesZeroedOut(
-        Dictionary<string, string> negatives, Dictionary<string, string> classes, Dictionary<string, JsonElement> inputsById)
+    private static bool AllNegativesZeroedOut(Dictionary<string, string> negatives, HashSet<string> consumed,
+        Dictionary<string, string> classes, Dictionary<string, JsonElement> inputsById)
     {
-        var passedOn = negatives.Values.ToHashSet();
-        var ends = negatives.Keys.Where(id => !passedOn.Contains(id)).ToList();
+        // A node whose output conditions something further on (a zero-out after WanImageToVideo) is not where a negative ends.
+        var ends = negatives.Keys.Where(id => !consumed.Contains(id)).ToList();
         if (ends.Count == 0) return false;
 
         var seen = new HashSet<string>();

@@ -58,6 +58,27 @@ public sealed class ImageRecipeReaderTests
     }
 
     [Fact]
+    public void TracedSamplerZeroed_FirstPassReal_IsNoNegativePrompt()
+    {
+        // The recipe shows the traced (final) pass; its negative is zeroed although the first pass has one.
+        var data = Read(
+            ("prompt", """
+                {"1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+                 "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat","clip":["1",1]}},
+                 "3":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry","clip":["1",1]}},
+                 "4":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"negative":["3",0],"seed":7,"steps":20,"cfg":5.0,"sampler_name":"euler","scheduler":"simple","denoise":1.0}},
+                 "5":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+                 "6":{"class_type":"KSampler","inputs":{"model":["1",0],"positive":["2",0],"negative":["5",0],"latent_image":["4",0],"seed":7,"steps":8,"cfg":1.0,"sampler_name":"euler","scheduler":"simple","denoise":0.4}},
+                 "9":{"class_type":"SaveImage","inputs":{"images":["6",0]}}}
+                """),
+            ("parameters", "a cat\nNegative prompt: a cat\nSteps: 8, Seed: 7"));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.NegativePrompt.Should().BeNull();
+        data.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
     public void TracedGraph_ZeroedNegative_IsNoNegativePrompt()
     {
         var data = Read(

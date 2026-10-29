@@ -34,6 +34,7 @@ public class ComfyUiPromptTracerTests
 
         r.PositivePrompt.Should().Be("a cat");
         r.NegativePrompt.Should().BeNull();
+        r.NegativeZeroedOut.Should().BeTrue();
     }
 
     private const string WanI2V = """
@@ -93,6 +94,7 @@ public class ComfyUiPromptTracerTests
         r.Checkpoint.Should().Be("sd_xl");
         r.PositivePrompt.Should().Be("a cat");
         r.NegativePrompt.Should().Be("blurry");
+        r.NegativeZeroedOut.Should().BeFalse();
         r.Steps.Should().Be(20);
         r.Cfg.Should().Be(7.0);
         r.Seed.Should().Be(123);

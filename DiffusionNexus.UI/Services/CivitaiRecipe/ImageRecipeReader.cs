@@ -91,13 +91,16 @@ internal static class ImageRecipeReader
 
         if (trace is { HasData: true })
         {
+            // The traced sampler's own answer comes first: a text it found is real, a zero-out it reached is none (#670).
+            var zeroed = trace.NegativePrompt is null && (trace.NegativeZeroedOut || facts.NegativeZeroedOut);
             return data with
             {
                 Source = RecipeDataSource.ComfyUiWorkflow,
                 SourceNote = $"{NotePrefix} (ComfyUI workflow embedded)",
                 // The graph wins; what its trace could not resolve comes from the text the same file carries.
                 Prompt = trace.PositivePrompt ?? text?.PositivePrompt,
-                NegativePrompt = facts.NegativeZeroedOut ? null : trace.NegativePrompt ?? text?.NegativePrompt,
+                NegativePrompt = zeroed ? null : trace.NegativePrompt ?? text?.NegativePrompt,
+                NegativeZeroedOut = zeroed,
                 // The tracer gives the Distiller's bare stem; the file as the graph wrote it reads better.
                 Checkpoint = facts.Checkpoint ?? trace.Checkpoint ?? text?.Checkpoint ?? civitai.Checkpoint,
                 Vae = facts.Vae ?? textVae,
