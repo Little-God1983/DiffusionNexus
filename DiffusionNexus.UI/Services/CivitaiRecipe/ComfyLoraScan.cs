@@ -35,7 +35,8 @@ internal static class ComfyLoraScan
         var models = new List<string>();
         var vaes = new List<string>();
         var classes = new Dictionary<string, string>();
-        var negatives = new List<string>();
+        var negatives = new Dictionary<string, string>(); // node id -> the node its "negative" comes from
+        var literalNegative = false;
 
         // Node ids are numbers as strings; going in id order keeps the list in the graph's build order.
         foreach (var (nodeId, node) in graph.OrderBy(kv => int.TryParse(kv.Key, out var id) ? id : int.MaxValue))
@@ -51,10 +52,11 @@ internal static class ComfyLoraScan
 
             var classType = classElement.GetString()!;
             classes[nodeId] = classType;
-            // Any sampler, core or custom, names its negative conditioning input "negative".
-            if (inputs.TryGetProperty("negative", out var negative) && LinkTarget(negative) is { } source)
+            // Samplers, core or custom, and the conditioning nodes in front of them name it "negative".
+            if (inputs.TryGetProperty("negative", out var negative))
             {
-                negatives.Add(source);
+                if (LinkTarget(negative) is { } source) negatives[nodeId] = source;
+                else if (String(inputs, "negative") is not null) literalNegative = true;
             }
 
             if (CoreLoraLoaders.Contains(classType))
@@ -87,8 +89,27 @@ internal static class ComfyLoraScan
             Merge(loras),
             models.Count == 1 ? models[0] : null,
             vaes.Count == 1 ? vaes[0] : null,
-            negatives.Count > 0 && negatives.All(id =>
-                classes.TryGetValue(id, out var type) && type.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase)));
+            !literalNegative && AllNegativesZeroedOut(negatives, classes));
+    }
+
+    /// <summary>
+    /// True when every negative that ends in a sampler starts at a ConditioningZeroOut (#670). A node
+    /// whose negative feeds another node's negative (WanImageToVideo, ControlNetApplyAdvanced) only
+    /// passes it on, so the chain is followed through it and only its last node is judged.
+    /// </summary>
+    private static bool AllNegativesZeroedOut(Dictionary<string, string> negatives, Dictionary<string, string> classes)
+    {
+        var passedOn = negatives.Values.ToHashSet();
+        var ends = negatives.Keys.Where(id => !passedOn.Contains(id)).ToList();
+        if (ends.Count == 0) return false;
+        return ends.All(end =>
+        {
+            var seen = new HashSet<string> { end };
+            var source = negatives[end];
+            while (negatives.TryGetValue(source, out var next) && seen.Add(source)) source = next;
+            return classes.TryGetValue(source, out var type)
+                && type.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     /// <summary>The source node id of a link input (<c>["12", 0]</c>); null for a literal.</summary>

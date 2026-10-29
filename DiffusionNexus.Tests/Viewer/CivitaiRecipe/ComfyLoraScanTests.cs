@@ -129,6 +129,46 @@ public sealed class ComfyLoraScanTests
     }
 
     [Fact]
+    public void ZeroOutPassedThroughAConditioningNode_IsZeroedOut()
+    {
+        // Wan 2.2 I2V at CFG 1: WanImageToVideo takes the zeroed negative and hands it to the sampler.
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}},
+             "3":{"class_type":"WanImageToVideo","inputs":{"positive":["1",0],"negative":["2",0]}},
+             "4":{"class_type":"KSamplerAdvanced","inputs":{"positive":["3",0],"negative":["3",1]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
+    public void RealNegativePassedThroughAConditioningNode_IsNotZeroedOut()
+    {
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"CLIPTextEncode","inputs":{"text":"blurry"}},
+             "2":{"class_type":"ControlNetApplyAdvanced","inputs":{"positive":["1",0],"negative":["1",0]}},
+             "3":{"class_type":"KSampler","inputs":{"negative":["2",1]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeFalse();
+    }
+
+    [Fact]
+    public void LiteralNegativeText_WithAZeroedPass_IsNotZeroedOut()
+    {
+        // A pipe loader keeps its negative as a widget string; the sampler it feeds has no negative link.
+        var facts = ComfyLoraScan.Scan(Graph("""
+            {"1":{"class_type":"easy fullLoader","inputs":{"positive":"a cat","negative":"lowres, blurry"}},
+             "2":{"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+             "3":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["2",0]}},
+             "4":{"class_type":"KSampler","inputs":{"negative":["3",0]}}}
+            """));
+
+        facts.NegativeZeroedOut.Should().BeFalse("the base pass has a real negative prompt");
+    }
+
+    [Fact]
     public void NoSampler_IsNotZeroedOut()
     {
         ComfyLoraScan.Scan(Graph("""{"2":{"class_type":"ConditioningZeroOut","inputs":{"conditioning":["1",0]}}}"""))

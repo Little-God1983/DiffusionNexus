@@ -10,6 +10,32 @@ public class ComfyUiPromptTracerTests
     private static Dictionary<string, JsonElement> Graph(string json) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
 
+    /// <summary>
+    /// #670: at CFG 1 the negative is often ConditioningZeroOut of the positive encode. Walking
+    /// through it reached the positive CLIPTextEncode, so the Distiller wrote the positive prompt as
+    /// the negative. A zeroed negative has no text.
+    /// </summary>
+    [Fact]
+    public void Zeroed_out_negative_has_no_prompt()
+    {
+        var g = Graph("""
+        {
+          "3": {"class_type":"KSampler","inputs":{
+                 "model":["4",0],"positive":["6",0],"negative":["8",0],
+                 "steps":8,"cfg":1.0,"seed":5,"sampler_name":"euler","scheduler":"simple","denoise":1.0}},
+          "4": {"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"m.safetensors"}},
+          "6": {"class_type":"CLIPTextEncode","inputs":{"text":"a cat"}},
+          "8": {"class_type":"ConditioningZeroOut","inputs":{"conditioning":["6",0]}},
+          "9": {"class_type":"SaveImage","inputs":{"images":["3",0]}}
+        }
+        """);
+
+        var r = ComfyUiPromptTracer.Trace(g, null, 0, 0);
+
+        r.PositivePrompt.Should().Be("a cat");
+        r.NegativePrompt.Should().BeNull();
+    }
+
     [Fact]
     public void Plain_checkpoint_no_lora()
     {

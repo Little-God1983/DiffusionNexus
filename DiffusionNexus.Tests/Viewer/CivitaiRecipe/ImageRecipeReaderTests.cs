@@ -48,6 +48,16 @@ public sealed class ImageRecipeReaderTests
     }
 
     [Fact]
+    public void GraphOnly_ZeroedNegative_SaysSo()
+    {
+        // No parameters text and a sampler the tracer does not know: the graph alone still proves it.
+        var data = Read(("prompt", ComfyLoraScanTests.Fixture("143992601-prompt.json")));
+
+        data.Source.Should().Be(RecipeDataSource.ComfyUiWorkflow);
+        data.NegativeZeroedOut.Should().BeTrue();
+    }
+
+    [Fact]
     public void TracedGraph_ZeroedNegative_IsNoNegativePrompt()
     {
         var data = Read(

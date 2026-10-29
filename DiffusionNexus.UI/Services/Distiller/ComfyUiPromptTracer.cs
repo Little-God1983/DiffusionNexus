@@ -118,8 +118,9 @@ internal static class ComfyUiPromptTracer
         cls.Contains("Preview", StringComparison.OrdinalIgnoreCase) ||
         cls.Contains("Output", StringComparison.OrdinalIgnoreCase);
 
-    // BFS over input links; checks the start node itself first.
-    private static string? BfsBackward(Dictionary<string, JsonElement> graph, string startId, Func<string, bool> match)
+    // BFS over input links; checks the start node itself first. A node matching stopAt is not walked through.
+    private static string? BfsBackward(Dictionary<string, JsonElement> graph, string startId, Func<string, bool> match,
+        Func<string, bool>? stopAt = null)
     {
         var seen = new HashSet<string>();
         var queue = new Queue<string>();
@@ -130,6 +131,7 @@ internal static class ComfyUiPromptTracer
             if (!seen.Add(id)) continue;
             if (!TryNode(graph, id, out var cls, out var ins)) continue;
             if (match(cls)) return id;
+            if (stopAt?.Invoke(cls) == true) continue;
             foreach (var prop in ins.EnumerateObject())
                 if (IsLink(prop.Value)) queue.Enqueue(OriginId(prop.Value));
         }
@@ -141,8 +143,10 @@ internal static class ComfyUiPromptTracer
     {
         if (!sampler.TryGetProperty(key, out var v) || !IsLink(v)) return null;
 
+        // A ConditioningZeroOut has no text: behind it sits the positive encode it zeroes (#670).
         var encId = BfsBackward(graph, OriginId(v),
-            cls => cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase));
+            cls => cls.Contains("CLIPTextEncode", StringComparison.OrdinalIgnoreCase),
+            cls => cls.Equals("ConditioningZeroOut", StringComparison.OrdinalIgnoreCase));
         if (encId is null || !TryNode(graph, encId, out _, out var enc)) return null;
 
         if (!enc.TryGetProperty("text", out var text)) return null;
