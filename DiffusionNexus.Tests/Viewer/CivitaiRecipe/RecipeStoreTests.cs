@@ -286,6 +286,29 @@ public sealed class RecipeStoreTests : IDisposable
         Directory.GetFiles(store.FolderFor(9)).Should().NotContain(f => f.EndsWith(".tmp"));
     }
 
+    /// <summary>
+    /// #679: Defender or the search indexer opens a just-written recipe.json for a moment; a Keep right after a
+    /// paste must wait that out instead of failing with "Access to the path is denied".
+    /// </summary>
+    [Fact]
+    public void SetKept_WhileAnotherProcessBrieflyHoldsTheJson_StillWrites()
+    {
+        _store.Save(Recipe(3), PastedAt);
+        var json = Path.Combine(_store.FolderFor(3), "recipe.json");
+        var held = new FileStream(json, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var release = Task.Run(async () =>
+        {
+            await Task.Delay(100);
+            held.Dispose();
+        });
+
+        var act = () => _store.SetKept([3], true);
+
+        act.Should().NotThrow();
+        release.Wait();
+        _store.TryLoad(3)!.Saved!.Kept.Should().BeTrue();
+    }
+
     [Fact]
     public void SetKept_WhenALaterOneFails_StillRaisesChanged_ForTheOnesWritten()
     {
