@@ -51,7 +51,8 @@ dotnet test  DiffusionNexus.sln --no-build           # everything: ~7,800 tests,
 
 - All projects: `net10.0`, `Nullable` enable, `ImplicitUsings` enable, no `LangVersion` → C# 14 default.
   No `TreatWarningsAsErrors`. The version lives in `Directory.Build.props`. Don't bump it by hand: a merge into `main` releases.
-- Every file uses file-scoped namespaces. Records, `required` members and collection expressions (`[]`)
+- New files use file-scoped namespaces. Generated migrations and about 20 older files (mostly `DiffusionNexus.Service/Classes`)
+  use block namespaces. Records, `required` members and collection expressions (`[]`)
   are used widely. Primary constructors are rare (fine for small new types, match the file you're in).
 - `.editorconfig` only pins `charset = utf-8`. Keep files UTF-8 (issue #441: mojibake from lossy saves).
 
@@ -66,8 +67,10 @@ dotnet test  DiffusionNexus.sln --no-build           # everything: ~7,800 tests,
   (`DataContext="{Binding Child}"`) or through `ViewLocator` (`…ViewModels.FooViewModel` → `…Views.FooView`).
 - **DI**: `Microsoft.Extensions.DependencyInjection`, composed by hand in `App.ConfigureServices`
   (`App.axaml.cs`), using the `AddXxx()` extensions from the lower layers. VMs take services through optional constructor parameters.
-- **Threading**: marshal through the injected `IUiScheduler` (testable), not `Dispatcher.UIThread`.
-  Async all the way, pass `CancellationToken`, no `.Result` / `.Wait()`.
+- **Threading** (new code): marshal through the injected `IUiScheduler` (testable), not `Dispatcher.UIThread`.
+  Older ViewModels (29 files) still call the dispatcher directly. Leave them unless the task is to convert them.
+  New code is async all the way, passes `CancellationToken` and never blocks with `.Result` / `.Wait()`.
+  About eight such calls remain, e.g. in `App.axaml.cs` shutdown and `OnnxSessionHost`. Don't copy them.
 - **Dialogs**: `IDialogService` (VM implements `IDialogServiceAware`). **Logging**: `IUnifiedLogger` for anything
   the user should see in the Unified Console, static Serilog `Log` for diagnostics.
 - **Styling**: Fluent theme, `RequestedThemeVariant="Dark"`. Styles live in the view (`<UserControl.Styles>`),

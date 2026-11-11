@@ -22,14 +22,18 @@ surrounding code and say so. Short version + build/test commands: `CLAUDE.md` at
 
 ## ViewModel
 
-Field-backed `[ObservableProperty]` (about 500 uses, zero partial-property uses). The class must be `partial`.
-Inject services through the constructor. A parameterless constructor exists only for the designer / `ViewBase<T>`.
+Field-backed `[ObservableProperty]` (661 attributes in `DiffusionNexus.UI`, zero partial-property uses). The class must
+be `partial`. Inject services through the constructor. A parameterless constructor exists only for the designer / `ViewBase<T>`.
 Marshal to the UI thread through `IUiScheduler`.
+
+The example below is a **model for new code**, not a copy of an existing class. It is close to
+`ResourceMonitorViewModel`, which predates the scheduler seam and derives `ObservableObject`. For a real class that
+uses the seam, see `SettingsViewModel` (constructor parameter `uiScheduler`, `_uiScheduler.Post(...)` in `OnExternalSettingsSaved`).
 
 ```csharp
 namespace DiffusionNexus.UI.ViewModels;
 
-public partial class ResourceMonitorViewModel : ViewModelBase
+public partial class GpuStatusViewModel : ViewModelBase   // ViewModelBase: ViewLocator only matches these
 {
     private readonly IResourceMonitorService _service;
     private readonly IUiScheduler _ui;
@@ -41,23 +45,29 @@ public partial class ResourceMonitorViewModel : ViewModelBase
     [ObservableProperty]
     private double _vramPercent;
 
-    public ResourceMonitorViewModel(IResourceMonitorService service, IUiScheduler? uiScheduler = null)
+    public GpuStatusViewModel(IResourceMonitorService service, IUiScheduler? uiScheduler = null)
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _ui = uiScheduler ?? AvaloniaUiScheduler.Instance;
     }
 
     /// <summary>Design-time constructor.</summary>
-    public ResourceMonitorViewModel() : this(new ResourceMonitorService()) { }
+    public GpuStatusViewModel() : this(new ResourceMonitorService()) { }
 
     public bool HasError => ErrorText is not null;
 
-    [RelayCommand]   // generates RefreshCommand (IAsyncRelayCommand)
+    [RelayCommand]   // generates RefreshCommand (IAsyncRelayCommand); the token cancels a running refresh
     private async Task RefreshAsync(CancellationToken ct)
     {
-        var snapshot = await _service.GetSnapshotAsync(ct);   // resumes on the UI thread
-        VramPercent = snapshot.VramTotalMB > 0 ? snapshot.VramUsedMB * 100.0 / snapshot.VramTotalMB : 0;
-        ErrorText = snapshot.GpuAvailable ? null : snapshot.Error;
+        // Sample on the pool so a slow driver call never stalls the UI thread…
+        var snapshot = await Task.Run(() => _service.GetSnapshotAsync(ct), ct);
+
+        // …and apply the result on the UI thread through the seam (inline in tests).
+        await _ui.InvokeAsync(() =>
+        {
+            VramPercent = snapshot.VramTotalMB > 0 ? snapshot.VramUsedMB * 100.0 / snapshot.VramTotalMB : 0;
+            ErrorText = snapshot.GpuAvailable ? null : snapshot.Error;
+        });
     }
 
     partial void OnVramPercentChanged(double value) { /* react to a change here, not in a setter */ }
@@ -72,6 +82,9 @@ public partial class ResourceMonitorViewModel : ViewModelBase
 
 ## View ↔ ViewModel wiring
 
+The view for the model above. It has the same shape as the real `Views/Controls/ResourceMonitorView.axaml`, which binds
+`IsVisible="{Binding !IsGpuAvailable}"` where this binds `HasError`.
+
 ```xml
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -79,9 +92,9 @@ public partial class ResourceMonitorViewModel : ViewModelBase
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:DiffusionNexus.UI.ViewModels"
              mc:Ignorable="d"
-             x:Class="DiffusionNexus.UI.Views.Controls.ResourceMonitorView"
-             x:DataType="vm:ResourceMonitorViewModel">
-  <Design.DataContext><vm:ResourceMonitorViewModel/></Design.DataContext>
+             x:Class="DiffusionNexus.UI.Views.Controls.GpuStatusView"
+             x:DataType="vm:GpuStatusViewModel">
+  <Design.DataContext><vm:GpuStatusViewModel/></Design.DataContext>
   <StackPanel Orientation="Horizontal" Spacing="6">
     <ProgressBar Value="{Binding VramPercent}" Maximum="100" Width="130" Foreground="#0E9C6A"/>
     <TextBlock Text="{Binding ErrorText}" IsVisible="{Binding HasError}" Foreground="#C8A03A"/>
@@ -93,7 +106,8 @@ public partial class ResourceMonitorViewModel : ViewModelBase
 - The parent hands over the DataContext: `<controls:ResourceMonitorView DataContext="{Binding ResourceMonitor}"/>`.
   Content hosts resolve views by name through `ViewLocator` (`…ViewModels.X.FooViewModel` → `…Views.X.FooView`,
   matching only `ViewModelBase`), so a new pair needs no registration if the namespaces mirror each other.
-- Every view declares `x:DataType`. Compiled bindings then catch typos at build time. Don't switch them off,
+- Every new view declares `x:DataType` (98 of 102 `.axaml` files do; `App.axaml`, `ImageCompareControl`,
+  `DownloadLoraMovedDialog` and `VramSelectionDialog` don't). Compiled bindings then catch typos at build time. Don't switch them off,
   and don't use `ReflectionBinding` (the repo has one).
 - Negation and nested paths work in compiled bindings: `IsVisible="{Binding !IsBusy}"`.
 - Feature views that own their VM can derive from `ViewBase<TViewModel>`. Reusable controls that inherit
@@ -141,6 +155,9 @@ services.AddSingleton<IComfyUiClientProvider>(sp =>
 - `App.Services` (static) exists for the composition root and legacy call sites. Don't add new service-locator calls inside ViewModels.
 
 ## Error handling and logging
+
+This is a pattern, not a copy. The real startup catch around `OutputsFolderRegistrar` (`App.axaml.cs`) logs to Serilog
+only. New code should also tell the Unified Console.
 
 ```csharp
 try
