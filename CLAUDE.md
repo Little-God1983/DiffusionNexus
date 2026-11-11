@@ -92,6 +92,6 @@ dotnet test  DiffusionNexus.sln --no-build           # everything: ~7,800 tests,
 - `App.CompleteStartupAsync` must resume on the UI thread: no `ConfigureAwait(false)` there.
 - In `App.ConfigureServices`, ICaptioningBackend / IFeatureBackend registration order prevents a DI cycle. Read its comments before reordering.
 - `.githooks/pre-push` (`core.hooksPath`) blocks pushes to `main`/`develop` and branch names outside
-  `feature/ bug/ hotfix/ release/`.
+  `feature/ bugfix/ hotfix/ release/` (`bug/` still passes, for old branches only).
 - Windows only: no cross-platform code paths or `TODO: Linux` markers.
 - Keyboard shortcuts → document in `DiffusionNexus.UI/Doc/Shortcuts.md`.

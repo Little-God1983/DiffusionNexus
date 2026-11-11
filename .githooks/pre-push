@@ -1,6 +1,7 @@
 #!/bin/sh
 # Enforces branch naming convention and blocks direct pushes to protected branches.
-# Allowed patterns: main, develop, feature/*, bug/*, hotfix/*, release/*
+# Allowed patterns: main, develop, feature/*, bugfix/*, hotfix/*, release/*
+# (bug/* is still accepted only so branches created before bugfix/ can be pushed; new branches use bugfix/)
 # Protected branches (require PR): main, develop
 
 branch=$(git symbolic-ref HEAD 2>/dev/null | sed 's|refs/heads/||')
@@ -14,7 +15,7 @@ if [ "$branch" = "main" ] || [ "$branch" = "develop" ]; then
   exit 1
 fi
 
-valid_pattern='^(main|develop|feature/.+|bug/.+|hotfix/.+|release/.+)$'
+valid_pattern='^(main|develop|feature/.+|bugfix/.+|bug/.+|hotfix/.+|release/.+)$'
 
 if ! echo "$branch" | grep -qE "$valid_pattern"; then
   echo ""
@@ -24,7 +25,7 @@ if ! echo "$branch" | grep -qE "$valid_pattern"; then
   echo "    main"
   echo "    develop"
   echo "    feature/<name>    e.g. feature/wizard-ui"
-  echo "    bug/<name>        e.g. bug/taskbar-null-ref"
+  echo "    bugfix/<name>     e.g. bugfix/taskbar-null-ref"
   echo "    hotfix/<name>     e.g. hotfix/crash-on-install"
   echo "    release/<version> e.g. release/1.3.0"
   echo ""
