@@ -187,15 +187,19 @@ function Test-SamePath {
 # of each folder above the path catches a share or a mapped drive that leads back to this PC.
 function Test-PathUnder {
     param([string]$Path, [string]$Parent, [switch]$OrEqual)
-    $full   = (Resolve-RealPath $Path).TrimEnd('\')
-    $parent = (Resolve-RealPath $Parent).TrimEnd('\')
-    if ($OrEqual -and $full.Equals($parent, [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    if ($full.StartsWith($parent + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    # Names of their own: PowerShell ignores case, so a local $parent would be the parameter $Parent,
+    # and the ID below would be asked of the trimmed path. For a drive root that is "E:", which
+    # Windows reads as the current folder on E:, not as E:\.
+    $realPath   = (Resolve-RealPath $Path).TrimEnd('\')
+    $realParent = (Resolve-RealPath $Parent).TrimEnd('\')
+    if ($OrEqual -and $realPath.Equals($realParent, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($realPath.StartsWith($realParent + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
 
     $parentId = Get-FolderId $Parent
     if (-not $parentId) { return $false }
-    $folder = (Resolve-FullPath $Path).TrimEnd('\')
-    if (-not $OrEqual) { $folder = [System.IO.Path]::GetDirectoryName($folder) }
+    # Untrimmed for the same reason: a drive root stays E:\, never E:.
+    $folder = Resolve-FullPath $Path
+    if (-not $OrEqual) { $folder = [System.IO.Path]::GetDirectoryName($folder.TrimEnd('\')) }
     while ($folder) {
         if ((Get-FolderId $folder) -eq $parentId) { return $true }
         $folder = [System.IO.Path]::GetDirectoryName($folder.TrimEnd('\'))
@@ -453,8 +457,8 @@ function Get-DataDir {
 # put back, so the Start Menu entry and every taskbar pin still open the previous version.
 function Set-CurrentLink {
     param([string]$InstallRoot, [string]$Target)
-    $linkPath = Get-CurrentLinkPath $InstallRoot
-    $target   = (Resolve-FullPath $Target).TrimEnd('\')
+    $linkPath   = Get-CurrentLinkPath $InstallRoot
+    $targetPath = (Resolve-FullPath $Target).TrimEnd('\')
 
     $existingTarget = $null
     if (Test-Path -LiteralPath $linkPath) {
@@ -463,25 +467,32 @@ function Set-CurrentLink {
             Write-Warn "$linkPath is a real folder, not a link to a version - left alone"
             return $false
         }
-        if ((Resolve-FullPath $existingTarget).TrimEnd('\') -ieq $target) { return $true }
+        if ((Resolve-FullPath $existingTarget).TrimEnd('\') -ieq $targetPath) { return $true }
         Remove-DirectoryLink $linkPath
     }
 
-    try { New-Item -ItemType Junction -Path $linkPath -Target $target | Out-Null }
+    # The old link is gone by now. When the new one cannot be made - a virus scanner, access denied -
+    # the old one is put back, so the Start Menu entry and every taskbar pin still open the previous
+    # version instead of nothing. The message says which of the cases it is.
+    try { New-Item -ItemType Junction -Path $linkPath -Target $targetPath | Out-Null }
     catch {
         $reason = $_.Exception.Message
-        $state  = "$linkPath is gone, so the Start Menu entry cannot start DiffusionNexus until a build succeeds."
-        if ($existingTarget) {
+        if (-not $existingTarget) {
+            $state = "There was no current link before, and there is none now."
+        }
+        else {
             try {
                 New-Item -ItemType Junction -Path $linkPath -Target $existingTarget | Out-Null
                 $state = "$linkPath still opens the previous version."
             }
-            catch { }
+            catch {
+                $state = "$linkPath is gone and could not be put back ($($_.Exception.Message)), so the Start Menu entry cannot start DiffusionNexus until a build succeeds."
+            }
         }
-        Fail "Could not point $linkPath at $target - $reason" @(
+        Fail "Could not point $linkPath at $targetPath - $reason" @(
             $state,
-            "$target is published but not current; the next run of this commit rebuilds it.",
-            "Close whatever holds $linkPath (a virus scanner, an Explorer window inside it), then run the build again."
+            "$targetPath is published but not current; the next run of this commit rebuilds it.",
+            "If something holds $linkPath or $targetPath (a virus scanner, an Explorer window inside one), close it, then run the build again."
         )
     }
     return $true
