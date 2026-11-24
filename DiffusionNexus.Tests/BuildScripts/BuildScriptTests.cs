@@ -156,6 +156,51 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
     }
 
     [Fact]
+    public void ADriveRootAsTheParent_IsTheRoot_NotTheFolderTheScriptRunsIn()
+    {
+        // A local $parent was the parameter $Parent (names ignore case), so the ID was asked of "E:",
+        // which Windows reads as the current folder on E:. Only a share path gets as far as the ID,
+        // and only a run from another folder shows it.
+        using var temp = new TempFolder();
+        var drive = temp.Path[..2];
+        var runFrom = Directory.CreateDirectory(Path.Combine(temp.Path, "runFrom")).FullName;
+        var share = @"\\localhost\" + temp.Path[0] + "$" + temp.Path[2..];
+        if (!Directory.Exists(share))
+        {
+            return; // No admin share to this drive for this user: nothing to ask.
+        }
+
+        var result = Pwsh.RunCommon(
+            $"[Environment]::CurrentDirectory = '{runFrom}'; " +
+            $"Test-PathUnder '{share}\\root\\DiffusionNexus-0.11.0.2483' '{drive}\\'; " +
+            $"Test-PathUnder '{share}\\root\\DiffusionNexus-0.11.0.2483' '{runFrom}'");
+
+        Lines(result.Output).Should().Equal("True", "False");
+    }
+
+    [Fact]
+    public void ADriveRootAsThePath_IsTheRoot_NotTheFolderTheScriptRunsIn()
+    {
+        // The same trap on the path side: with -OrEqual the ID loop started at "E:". Run from inside the
+        // stable root, -InstallDir E:\ was the stable root itself. The share spelling of the root as the
+        // parent passes the text check by, so the ID answers the second line.
+        using var temp = new TempFolder();
+        var drive = temp.Path[..3];
+        var shareRoot = @"\\localhost\" + temp.Path[0] + "$";
+        if (!Directory.Exists(shareRoot))
+        {
+            return; // No admin share to this drive for this user: nothing to ask.
+        }
+
+        var result = Pwsh.RunCommon(
+            $"[Environment]::CurrentDirectory = '{temp.Path}'; " +
+            $"Test-PathUnder '{drive}' '{temp.Path}' -OrEqual; " +
+            $"Test-PathUnder '{drive}' '{shareRoot}' -OrEqual");
+
+        Lines(result.Output).Should().Equal("False", "True");
+    }
+
+    [Fact]
     public void OnlyAFolderWithOurMarker_IsOurs()
     {
         using var temp = new TempFolder();
@@ -409,6 +454,44 @@ public sealed class BuildScriptHelperTests : BuildScriptTestBase
         result.ExitCode.Should().Be(1, result.Output);
         result.Output.Should().Contain("still opens the previous version");
         new DirectoryInfo(link).LinkTarget.Should().Be(old);
+    }
+
+    [Fact]
+    public void AFirstCurrentLinkThatCannotBeMade_DoesNotClaimOneWasLost()
+    {
+        // On a first build there was no link to lose, and the Start Menu entry is made only after the
+        // link, so it does not exist yet either: neither may be named as the thing to fix.
+        using var temp = new TempFolder();
+        var root = Directory.CreateDirectory(Path.Combine(temp.Path, "root")).FullName;
+
+        var result = Pwsh.RunCommon($"Set-CurrentLink '{root}' '{Path.Combine(root, "no|such|folder")}'");
+
+        result.ExitCode.Should().Be(1, result.Output);
+        result.Output.Should().Contain("There was no current link before");
+        result.Output.Should().NotContain("is gone");
+        result.Output.Should().NotContain("Start Menu");
+    }
+
+    [Fact]
+    public void ACurrentLinkThatCannotBePutBack_SaysWhy()
+    {
+        // When the old link cannot be made again either, its reason was swallowed, so the message never
+        // said why the link is gone. New-Item is replaced after the first junction: a function wins
+        // over the cmdlet, so every later junction is refused.
+        using var temp = new TempFolder();
+        var root = Directory.CreateDirectory(Path.Combine(temp.Path, "root")).FullName;
+        var old = Directory.CreateDirectory(Path.Combine(root, "DiffusionNexus-0.11.0.2482")).FullName;
+        var next = Directory.CreateDirectory(Path.Combine(root, "DiffusionNexus-0.11.0.2483")).FullName;
+        var link = Path.Combine(root, "DiffusionNexus");
+
+        var result = Pwsh.RunCommon(
+            $"New-Item -ItemType Junction -Path '{link}' -Target '{old}' | Out-Null; " +
+            "function New-Item { throw 'every junction is refused' }; " +
+            $"Set-CurrentLink '{root}' '{next}'");
+
+        result.ExitCode.Should().Be(1, result.Output);
+        result.Output.Should().Contain("could not be put back (every junction is refused)");
+        Directory.Exists(link).Should().BeFalse();
     }
 
     [Fact]
